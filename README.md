@@ -1,6 +1,6 @@
 # Zorp Wiggles: Alien Adventure
 
-You are **Zorp**, a squishy green alien who crash-landed on a bizarre procedurally-generated planet. Run around an open world, collect weird alien gloop, complete bonkers missions, and blast enemies with your tentacle laser!
+You are **Zorp**, a squishy green alien who crash-landed on a bizarre procedurally-generated 3D planet. Run around a 3D open world, collect weird alien gloop, complete bonkers missions, and blast enemies with your tentacle laser!
 
 This game **evolves on its own**. Every 10 hours, an AI enhances the code to make it more awesome. Every day at noon, the AI hunts bugs. It only gets better.
 
@@ -20,6 +20,7 @@ python game.py
 | Key | Action |
 |-----|--------|
 | **WASD / Arrow Keys** | Move Zorp |
+| **Mouse** | Aim / Look direction |
 | **Left Click** | Shoot tentacle laser |
 | **M** | Toggle minimap |
 | **TAB** | Toggle missions panel |
@@ -27,18 +28,23 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v1.0.0)
+## Features (v2.0.0 — 3D!)
 
-- Procedurally-generated open world with 6 biomes: Grass, Desert, Water, Lava, Forest, Crystal
-- 5 collectible item types with different point values
-- 5 enemy types that chase and attack you
+- Full 3D open world with third-person camera
+- Procedurally generated terrain with 8 biomes: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp
+- 6 collectible item types with different point values
+- 6 enemy types that chase, attack, and drop loot
 - Tentacle laser shooting with particle effects
 - Mission system with collection and kill objectives
 - XP and leveling system (get stronger over time!)
-- Minimap with enemy and collectible tracking
-- Enemy respawning and loot drops
+- Minimap with player tracking
+- Enemy HP bars and floating combat effects
+- 3D trees in forests, crystal spires in crystal biomes
+- Atmospheric fog and lighting
 - Smooth camera follow
-- Invincibility frames and HP system
+- Invincibility frames on damage
+- Enemy respawning and loot drops
+- Particle system for hits, kills, and pickups
 
 ## The Self-Improving Game
 
@@ -51,14 +57,16 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 
 ## World Biomes
 
-| Biome | Color | Walkable | Notes |
-|-------|-------|----------|-------|
+| Biome | Color | Walkable | Features |
+|-------|-------|----------|----------|
 | Grass | Green | Yes | Safe starting zone |
 | Desert | Sandy | Yes | Open and exposed |
 | Water | Blue | No | Blocks movement |
 | Lava | Red | No | Blocks movement |
-| Forest | Dark Green | Yes | Has trees |
+| Forest | Dark Green | Yes | 3D trees |
 | Crystal | Cyan | Yes | Crystal spires |
+| Snow | White | Yes | Icy terrain |
+| Swamp | Murky Green | Yes | Squishy ground |
 
 ## Collectibles
 
@@ -69,17 +77,25 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Quantum Fuzz | 50 pts | Rare |
 | Nebula Dust | 100 pts | Very Rare |
 | Cosmic Jelly | 200 pts | Legendary |
+| Plasma Core | 350 pts | Mythic |
 
 ## Enemies
 
-| Enemy | HP | Speed | Damage |
-|-------|----|-------|--------|
-| Slime Blob | 30 | Slow | 15 |
-| Space Beetle | 50 | Medium | 20 |
-| Void Wraith | 80 | Slow | 30 |
-| Lava Crawler | 120 | Fast | 35 |
-| Crystal Guardian | 200 | Medium | 50 |
+| Enemy | HP | Speed | Damage | Notes |
+|-------|----|-------|--------|-------|
+| Slime Blob | 30 | Slow | 10 | Common, easy |
+| Space Beetle | 50 | Medium | 15 | Aggressive |
+| Void Wraith | 80 | Medium | 25 | Spooky |
+| Lava Crawler | 120 | Fast | 30 | Hot-headed |
+| Crystal Guardian | 200 | Slow | 40 | Tough |
+| Plasma Drake | 350 | Very Fast | 50 | Endgame boss |
+
+## Tech Stack
+
+- **Ursina** (Panda3D-based Python game engine)
+- **Python 3** — no other dependencies
+- Pure Python — no assets needed, all procedural
 
 ## License
 
-MIT - Zorp is free to wiggle wherever it wants.
+MIT — Zorp is free to wiggle wherever it wants.

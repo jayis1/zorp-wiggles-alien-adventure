@@ -1,293 +1,319 @@
 """
-Zorp Wiggles: Alien Adventure
-An open-world game where you play as Zorp, a squishy alien,
-running around collecting weird stuff, completing missions, and blasting enemies.
+Zorp Wiggles: Alien Adventure — 3D Open World
+You are Zorp, a squishy green alien exploring a 3D procedurally-generated planet.
+Collect weird stuff, complete missions, blast enemies with your tentacle laser.
+Built with Ursina engine (Panda3D).
 """
 
-import pygame
-import random
+from ursina import *
 import math
-import sys
+import random
 import json
-import os
+
+app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-SCREEN_WIDTH = 1200
-SCREEN_HEIGHT = 800
-FPS = 60
-TILE_SIZE = 64
-WORLD_WIDTH = 200  # tiles
-WORLD_HEIGHT = 200
+VERSION = "2.0.0"
+WORLD_SIZE = 80        # world grid dimensions (tiles)
+TILE_SCALE = 4         # size of each terrain tile
+PLAYER_SPEED = 12
+ENEMY_DETECT_RANGE = 40
+ENEMY_ATTACK_RANGE = 2.5
+SHOOT_COOLDOWN = 0.15
+COLLECT_RADIUS = 2.5
 
-# Colors
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-GREEN = (0, 200, 0)
-DARK_GREEN = (0, 100, 0)
-RED = (220, 50, 50)
-BLUE = (50, 50, 220)
-YELLOW = (255, 255, 0)
-PURPLE = (150, 0, 200)
-CYAN = (0, 255, 255)
-ORANGE = (255, 165, 0)
-PINK = (255, 105, 180)
-BROWN = (139, 69, 19)
-SAND = (210, 180, 140)
-WATER_BLUE = (30, 144, 255)
-LAVA_RED = (207, 16, 32)
-GRAY = (128, 128, 128)
-DARK_GRAY = (64, 64, 64)
+# ─── Colors ───────────────────────────────────────────────────────────────────
+C_GRASS    = color.rgb(34, 139, 34)
+C_DESERT   = color.rgb(210, 180, 100)
+C_WATER    = color.rgb(30, 100, 200)
+C_LAVA     = color.rgb(200, 30, 30)
+C_FOREST   = color.rgb(0, 80, 0)
+C_CRYSTAL  = color.rgb(0, 200, 210)
+C_SNOW     = color.rgb(220, 220, 240)
+C_SWAMP    = color.rgb(60, 90, 40)
+C_ALIEN    = color.rgb(0, 230, 70)
+C_ENEMY    = color.rgb(200, 30, 30)
+C_LASER    = color.rgb(0, 255, 255)
+C_GOLD     = color.rgb(255, 215, 0)
+C_PURPLE   = color.rgb(170, 0, 255)
+C_PINK     = color.rgb(255, 80, 180)
 
-# Biome types
-BIOME_GRASS = 0
-BIOME_DESERT = 1
-BIOME_WATER = 2
-BIOME_LAVA = 3
-BIOME_FOREST = 4
-BIOME_CRYSTAL = 5
+BIOME_COLORS = {
+    'grass':   C_GRASS,
+    'desert':  C_DESERT,
+    'water':   C_WATER,
+    'lava':    C_LAVA,
+    'forest':  C_FOREST,
+    'crystal': C_CRYSTAL,
+    'snow':    C_SNOW,
+    'swamp':   C_SWAMP,
+}
 
-# ─── World Generation ────────────────────────────────────────────────────────
+WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp'}
+
+# ─── World Generation ─────────────────────────────────────────────────────────
 class WorldGenerator:
-    """Procedural world generation using simple noise."""
+    """Procedural terrain generation for a 3D open world."""
 
     @staticmethod
-    def generate(width, height, seed=None):
+    def generate(size, seed=None):
         if seed is not None:
             random.seed(seed)
-        world = [[BIOME_GRASS for _ in range(width)] for _ in range(height)]
-        # Place biome regions using random walk clusters
-        biome_centers = []
-        num_biomes = 40
-        for _ in range(num_biomes):
-            bx = random.randint(0, width - 1)
-            by = random.randint(0, height - 1)
-            btype = random.choice([BIOME_GRASS, BIOME_DESERT, BIOME_WATER,
-                                   BIOME_LAVA, BIOME_FOREST, BIOME_CRYSTAL])
-            biome_centers.append((bx, by, btype))
-            radius = random.randint(5, 20)
+        grid = [['grass' for _ in range(size)] for _ in range(size)]
+
+        # Place biome blobs
+        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp']
+        num_blobs = 50
+        for _ in range(num_blobs):
+            bx = random.randint(0, size - 1)
+            by = random.randint(0, size - 1)
+            btype = random.choice(biomes)
+            radius = random.randint(3, 10)
             for dy in range(-radius, radius + 1):
                 for dx in range(-radius, radius + 1):
                     nx, ny = bx + dx, by + dy
-                    if 0 <= nx < width and 0 <= ny < height:
+                    if 0 <= nx < size and 0 <= ny < size:
                         dist = math.sqrt(dx * dx + dy * dy)
-                        if dist <= radius + random.randint(-2, 2):
-                            if btype == BIOME_WATER or world[ny][nx] != BIOME_WATER:
-                                if not (0 <= nx < 5 or 0 <= ny < 5 or nx >= width - 5 or ny >= height - 5):
-                                    world[ny][nx] = btype
+                        if dist <= radius + random.uniform(-1.5, 1.5):
+                            # Keep spawn area clear
+                            spawn = size // 2
+                            if abs(nx - spawn) < 5 and abs(ny - spawn) < 5:
+                                continue
+                            grid[ny][nx] = btype
+
         # Ensure spawn area is grass
+        spawn = size // 2
         for dy in range(-3, 4):
             for dx in range(-3, 4):
-                world[100 + dy][100 + dx] = BIOME_GRASS
-        return world
+                grid[spawn + dy][spawn + dx] = 'grass'
 
-    @staticmethod
-    def get_tile_color(biome):
-        return {
-            BIOME_GRASS: GREEN,
-            BIOME_DESERT: SAND,
-            BIOME_WATER: WATER_BLUE,
-            BIOME_LAVA: LAVA_RED,
-            BIOME_FOREST: DARK_GREEN,
-            BIOME_CRYSTAL: CYAN,
-        }.get(biome, GREEN)
-
-    @staticmethod
-    def is_walkable(biome):
-        return biome not in (BIOME_WATER, BIOME_LAVA)
+        return grid
 
 
-# ─── Entities ─────────────────────────────────────────────────────────────────
-class Particle:
-    def __init__(self, x, y, color, vx=0, vy=0, lifetime=30):
-        self.x = x
-        self.y = y
-        self.color = color
-        self.vx = vx + random.uniform(-1, 1)
-        self.vy = vy + random.uniform(-1, 1)
-        self.x = float(self.x)
-        self.y = float(self.y)
-        self.lifetime = lifetime
-        self.max_lifetime = lifetime
+# ─── Player ───────────────────────────────────────────────────────────────────
+class Player(Entity):
+    def __init__(self, position):
+        super().__init__(
+            model='sphere',
+            color=C_ALIEN,
+            scale=1.2,
+            position=position,
+            collider='sphere',
+        )
+        self.hp = 100
+        self.max_hp = 100
+        self.speed = PLAYER_SPEED
+        self.score = 0
+        self.level = 1
+        self.xp = 0
+        self.xp_to_next = 100
+        self.shoot_timer = 0
+        self.invuln_timer = 0
+        self.inventory = {}
+        self.kills = {}
+        self.completed_missions = 0
+        self.facing = Vec3(0, 0, 1)
 
-    def update(self):
-        self.x += self.vx
-        self.y += self.vy
-        self.lifetime -= 1
-        return self.lifetime > 0
+        # Tentacle entities
+        self.tentacles = []
+        for i in range(4):
+            t = Entity(
+                model='cube',
+                color=color.rgb(0, 200, 80),
+                scale=(0.15, 0.15, 1.2),
+                parent=self,
+            )
+            self.tentacles.append(t)
 
-    def draw(self, surface, cam_x, cam_y):
-        alpha = self.lifetime / self.max_lifetime
-        size = max(2, int(6 * alpha))
-        sx = int(self.x - cam_x)
-        sy = int(self.y - cam_y)
-        if 0 <= sx < SCREEN_WIDTH and 0 <= sy < SCREEN_HEIGHT:
-            pygame.draw.circle(surface, self.color, (sx, sy), size)
+        # Eyes
+        self.eye_l = Entity(model='sphere', color=color.white, scale=(0.4, 0.5, 0.4),
+                            parent=self, position=(-0.3, 0.4, -0.6))
+        self.eye_r = Entity(model='sphere', color=color.white, scale=(0.4, 0.5, 0.4),
+                            parent=self, position=(0.3, 0.4, -0.6))
+        self.pupil_l = Entity(model='sphere', color=color.black, scale=(0.2, 0.25, 0.2),
+                              parent=self.eye_l, position=(0, 0, -0.3))
+        self.pupil_r = Entity(model='sphere', color=color.black, scale=(0.2, 0.25, 0.2),
+                              parent=self.eye_r, position=(0, 0, -0.3))
+
+    def gain_xp(self, amount):
+        self.xp += amount
+        while self.xp >= self.xp_to_next:
+            self.xp -= self.xp_to_next
+            self.level += 1
+            self.xp_to_next = int(self.xp_to_next * 1.5)
+            self.max_hp += 10
+            self.hp = min(self.hp + 20, self.max_hp)
+            self.speed += 0.3
+
+    def take_damage(self, amount):
+        if self.invuln_timer > 0:
+            return False
+        self.hp -= amount
+        self.invuln_timer = 0.5
+        # Flash red
+        self.color = color.rgb(255, 100, 100)
+        invoke(setattr, self, 'color', C_ALIEN, delay=0.15)
+        if self.hp <= 0:
+            self.hp = 0
+            return True  # dead
+        return False
+
+    def add_item(self, name, count=1):
+        self.inventory[name] = self.inventory.get(name, 0) + count
+
+    def add_kill(self, name):
+        self.kills[name] = self.kills.get(name, 0) + 1
+
+    def update_tentacles(self, t):
+        for i, tent in enumerate(self.tentacles):
+            angle_offset = (i - 1.5) * 0.5
+            wave = math.sin(t * 5 + i * 1.5) * 0.3
+            tent.rotation_x = wave * 40
+            tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
+
+    def animate_bob(self, t):
+        self.y = 1.2 + math.sin(t * 3) * 0.15
+
+    def set_facing_from_mouse(self, cam_pivot):
+        """Point the alien toward where the mouse ray hits the ground."""
+        hit_info = mouse.world_point
+        if hit_info:
+            direction = Vec3(hit_info.x - self.x, 0, hit_info.z - self.z)
+            if direction.length() > 0.1:
+                self.facing = direction.normalized()
+                self.look_at_2d(Vec3(hit_info.x, self.y, hit_info.z))
 
 
-class Collectible:
-    TYPES = [
-        ("Space Gloop", PURPLE, 10),
-        ("Meteor Shard", ORANGE, 25),
-        ("Quantum Fuzz", CYAN, 50),
-        ("Nebula Dust", PINK, 100),
-        ("Cosmic Jelly", YELLOW, 200),
-    ]
+# ─── Enemy ─────────────────────────────────────────────────────────────────────
+class Enemy(Entity):
+    TYPES = {
+        'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0},
+        'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2},
+        'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4},
+        'Lava Crawler':    {'color': color.orange,         'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1},
+        'Crystal Guardian': {'color': color.cyan,          'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8},
+        'Plasma Drake':    {'color': color.magenta,        'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2},
+    }
 
-    def __init__(self, x, y, item_type=None):
-        if item_type is None:
-            item_type = random.choice(self.TYPES)
-        self.name, self.color, self.value = item_type
-        self.x = x
-        self.y = y
-        self.bob_offset = random.uniform(0, math.pi * 2)
-        self.collected = False
-        self.radius = 10
-
-    def update(self, tick):
-        pass
-
-    def draw(self, surface, cam_x, cam_y, tick):
-        if self.collected:
-            return
-        bob = math.sin(tick * 0.05 + self.bob_offset) * 4
-        sx = int(self.x - cam_x)
-        sy = int(self.y - cam_y + bob)
-        if -20 < sx < SCREEN_WIDTH + 20 and -20 < sy < SCREEN_HEIGHT + 20:
-            # Glow
-            glow_surf = pygame.Surface((30, 30), pygame.SRCALPHA)
-            pygame.draw.circle(glow_surf, (*self.color, 80), (15, 15), 15)
-            surface.blit(glow_surf, (sx - 15, sy - 15))
-            pygame.draw.circle(surface, self.color, (sx, sy), self.radius)
-            pygame.draw.circle(surface, WHITE, (sx, sy), self.radius, 2)
-            # Sparkle
-            angle = tick * 0.1 + self.bob_offset
-            for i in range(3):
-                a = angle + i * 2.094
-                px = sx + int(math.cos(a) * 14)
-                py = sy + int(math.sin(a) * 14)
-                pygame.draw.circle(surface, WHITE, (px, py), 2)
-
-
-class Enemy:
-    TYPES = [
-        ("Slime Blob", GREEN, 30, 1.5, 15),
-        ("Space Beetle", BROWN, 50, 2.0, 20),
-        ("Void Wraith", PURPLE, 80, 1.0, 30),
-        ("Lava Crawler", ORANGE, 120, 2.5, 35),
-        ("Crystal Guardian", CYAN, 200, 1.2, 50),
-    ]
-
-    def __init__(self, x, y, enemy_type=None):
+    def __init__(self, position, enemy_type=None):
         if enemy_type is None:
-            enemy_type = random.choice(self.TYPES)
-        self.name, self.color, self.hp, self.speed, self.damage = enemy_type
-        self.max_hp = self.hp
-        self.x = x
-        self.y = y
-        self.radius = 18
+            enemy_type = random.choice(list(self.TYPES.keys()))
+        info = self.TYPES[enemy_type]
+        super().__init__(
+            model='sphere',
+            color=info['color'],
+            scale=info['scale'],
+            position=position,
+            collider='sphere',
+        )
+        self.name = enemy_type
+        self.hp = info['hp']
+        self.max_hp = info['hp']
+        self.speed = info['speed']
+        self.damage = info['damage']
         self.alive = True
+        self.attack_cd = 0
+        self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+        self.wander_timer = random.uniform(1, 3)
         self.hit_flash = 0
-        self.attack_cooldown = 0
-        self.direction = random.uniform(0, math.pi * 2)
-        self.wander_timer = random.randint(30, 120)
 
-    def update(self, player_x, player_y, world):
-        if not self.alive:
-            return
-        if self.hit_flash > 0:
-            self.hit_flash -= 1
-        if self.attack_cooldown > 0:
-            self.attack_cooldown -= 1
+        # Eyes for all enemies
+        self.eye_l = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(-0.25, 0.3, -0.5))
+        self.eye_r = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(0.25, 0.3, -0.5))
 
-        dist_to_player = math.sqrt((self.x - player_x) ** 2 + (self.y - player_y) ** 2)
-
-        if dist_to_player < 400:
-            # Chase player
-            dx = player_x - self.x
-            dy = player_y - self.y
-            dist = max(1, math.sqrt(dx * dx + dy * dy))
-            self.x += (dx / dist) * self.speed
-            self.y += (dy / dist) * self.speed
-        else:
-            # Wander
-            self.wander_timer -= 1
-            if self.wander_timer <= 0:
-                self.direction = random.uniform(0, math.pi * 2)
-                self.wander_timer = random.randint(30, 120)
-            self.x += math.cos(self.direction) * self.speed * 0.5
-            self.y += math.sin(self.direction) * self.speed * 0.5
-
-        # Keep in world bounds
-        self.x = max(0, min(self.x, WORLD_WIDTH * TILE_SIZE - 10))
-        self.y = max(0, min(self.y, WORLD_HEIGHT * TILE_SIZE - 10))
+        # HP bar
+        self.hp_bar_bg = Entity(model='quad', color=color.red, scale=(2, 0.15), parent=self, position=(0, 1.5, 0), billboard=True)
+        self.hp_bar = Entity(model='quad', color=color.green, scale=(2, 0.15), parent=self, position=(0, 1.5, -0.01), billboard=True)
 
     def take_damage(self, amount):
         self.hp -= amount
-        self.hit_flash = 8
+        self.hit_flash = 0.1
+        self.color = color.white
+        invoke(setattr, self, 'color', self.TYPES[self.name]['color'], delay=0.1)
         if self.hp <= 0:
             self.alive = False
             return True
         return False
 
-    def can_attack(self):
-        if self.attack_cooldown <= 0:
-            self.attack_cooldown = 60
-            return True
-        return False
-
-    def draw(self, surface, cam_x, cam_y, tick):
-        if not self.alive:
-            return
-        sx = int(self.x - cam_x)
-        sy = int(self.y - cam_y)
-        if -30 < sx < SCREEN_WIDTH + 30 and -30 < sy < SCREEN_HEIGHT + 30:
-            color = WHITE if self.hit_flash > 0 else self.color
-            # Body
-            pygame.draw.circle(surface, color, (sx, sy), self.radius)
-            pygame.draw.circle(surface, WHITE, (sx, sy), self.radius, 2)
-            # Eyes
-            eye_offset_x = int(math.cos(0) * 6)
-            pygame.draw.circle(surface, RED, (sx - 5, sy - 4), 4)
-            pygame.draw.circle(surface, RED, (sx + 5, sy - 4), 4)
-            pygame.draw.circle(surface, WHITE, (sx - 4, sy - 5), 2)
-            pygame.draw.circle(surface, WHITE, (sx + 6, sy - 5), 2)
-            # HP bar
-            bar_w = 30
-            bar_h = 4
-            hp_ratio = self.hp / self.max_hp
-            pygame.draw.rect(surface, RED, (sx - bar_w // 2, sy - self.radius - 10, bar_w, bar_h))
-            pygame.draw.rect(surface, GREEN, (sx - bar_w // 2, sy - self.radius - 10, int(bar_w * hp_ratio), bar_h))
+    def update_hp_bar(self):
+        ratio = max(0, self.hp / self.max_hp)
+        self.hp_bar.scale_x = 2 * ratio
+        self.hp_bar.x = -1 * (1 - ratio)
 
 
-class Projectile:
-    def __init__(self, x, y, angle, speed=10, damage=20, color=CYAN, owner="player"):
-        self.x = x
-        self.y = y
-        self.vx = math.cos(angle) * speed
-        self.vy = math.sin(angle) * speed
+# ─── Collectible ───────────────────────────────────────────────────────────────
+class Collectible(Entity):
+    ITEMS = {
+        'Space Gloop':    {'color': C_PURPLE, 'value': 10,  'model': 'sphere'},
+        'Meteor Shard':   {'color': color.orange, 'value': 25,  'model': 'diamond'},
+        'Quantum Fuzz':   {'color': color.cyan,   'value': 50,  'model': 'sphere'},
+        'Nebula Dust':    {'color': C_PINK,       'value': 100, 'model': 'diamond'},
+        'Cosmic Jelly':   {'color': C_GOLD,       'value': 200, 'model': 'diamond'},
+        'Plasma Core':    {'color': color.magenta, 'value': 350, 'model': 'diamond'},
+    }
+
+    def __init__(self, position, item_type=None):
+        if item_type is None:
+            item_type = random.choice(list(self.ITEMS.keys()))
+        info = self.ITEMS[item_type]
+        super().__init__(
+            model=info['model'],
+            color=info['color'],
+            scale=0.6,
+            position=position,
+            collider='sphere',
+        )
+        self.name = item_type
+        self.value = info['value']
+        self.bob_offset = random.uniform(0, math.pi * 2)
+        # Glow ring
+        self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, 80),
+                           scale=3, parent=self, rotation_x=90, position=(0, -0.3, 0))
+
+    def animate(self, t):
+        self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
+        self.rotation_y += 60 * time.dt
+
+
+# ─── Projectile ────────────────────────────────────────────────────────────────
+class Projectile(Entity):
+    def __init__(self, position, direction, damage=20, speed=50):
+        super().__init__(
+            model='sphere',
+            color=C_LASER,
+            scale=0.3,
+            position=position,
+        )
+        self.direction = direction.normalized()
         self.damage = damage
-        self.color = color
-        self.owner = owner
-        self.lifetime = 120
-        self.radius = 5
+        self.speed = speed
+        self.lifetime = 2.0
 
-    def update(self):
-        self.x += self.vx
-        self.y += self.vy
-        self.lifetime -= 1
+        # Trail
+        self.trail = []
+
+    def move(self, dt):
+        self.position += self.direction * self.speed * dt
+        self.lifetime -= dt
         return self.lifetime > 0
 
-    def draw(self, surface, cam_x, cam_y):
-        sx = int(self.x - cam_x)
-        sy = int(self.y - cam_y)
-        if 0 <= sx < SCREEN_WIDTH and 0 <= sy < SCREEN_HEIGHT:
-            pygame.draw.circle(surface, self.color, (sx, sy), self.radius)
-            pygame.draw.circle(surface, WHITE, (sx, sy), self.radius, 1)
 
+# ─── Mission ───────────────────────────────────────────────────────────────────
+MISSION_TEMPLATES = [
+    ("Gloop Harvest",        "Collect Space Gloop for the Mothership",     "Space Gloop",    5, "collect", 100),
+    ("Beetle B Gone",        "Defeat Space Beetles invading the sector",  "Space Beetle",   3, "kill",    200),
+    ("Shard Collection",     "Gather Meteor Shards for the Lab",           "Meteor Shard",   5, "collect", 150),
+    ("Wraith Hunter",        "Eliminate Void Wraiths from the dark zones","Void Wraith",    2, "kill",    300),
+    ("Fuzz Finder",          "Find Quantum Fuzz in the wild",             "Quantum Fuzz",   3, "collect", 250),
+    ("Jelly Jam",            "Collect Cosmic Jelly — it's delicious",      "Cosmic Jelly",   2, "collect", 400),
+    ("Crawler Crisis",       "Take out Lava Crawlers near volcanic zones", "Lava Crawler",  3, "kill",    350),
+    ("Crystal Clear",        "Defeat Crystal Guardians in crystal biomes", "Crystal Guardian",2,"kill",    500),
+    ("Plasma Pursuit",       "Hunt down the elusive Plasma Drakes",        "Plasma Drake",  1, "kill",    700),
+    ("Core Collector",       "Gather Plasma Cores for the warp drive",     "Plasma Core",    2, "collect", 600),
+]
 
-# ─── Missions ──────────────────────────────────────────────────────────────────
 class Mission:
-    def __init__(self, title, description, target, reward, mission_type="collect", target_count=1):
+    def __init__(self, title, description, target, reward, mission_type, target_count):
         self.title = title
         self.description = description
         self.target = target
@@ -298,632 +324,568 @@ class Mission:
         self.completed = False
         self.turned_in = False
 
-    def check_completion(self, player):
-        if self.completed:
-            return
-        if self.mission_type == "collect":
-            self.progress = player.inventory.get(self.target, 0)
-            if self.progress >= self.target_count:
-                self.completed = True
-        elif self.mission_type == "kill":
-            self.progress = player.kills.get(self.target, 0)
-            if self.progress >= self.target_count:
-                self.completed = True
-        elif self.mission_type == "explore":
-            self.progress = 1 if getattr(player, self.target, False) else 0
-            if self.progress >= self.target_count:
-                self.completed = True
 
-
-MISSION_TEMPLATES = [
-    ("Gloop Harvest", "Collect Space Gloop for the Mothership", "Space Gloop", 5, "collect", 100),
-    ("Beetle B Gone", "Defeat Space Beetles invading the sector", "Space Beetle", 3, "kill", 200),
-    ("Shard Collection", "Gather Meteor Shards for the Lab", "Meteor Shard", 5, "collect", 150),
-    ("Wraith Hunter", "Eliminate Void Wraiths from the dark zones", "Void Wraith", 2, "kill", 300),
-    ("Fuzz Finder", "Find Quantum Fuzz in the wild", "Quantum Fuzz", 3, "collect", 250),
-    ("Jelly Jam", "Collect Cosmic Jelly — it's delicious", "Cosmic Jelly", 2, "collect", 400),
-    ("Crawler Crisis", "Take out Lava Crawlers near volcanic zones", "Lava Crawler", 3, "kill", 350),
-    ("Crystal Clear", "Defeat Crystal Guardians in crystal biomes", "Crystal Guardian", 2, "kill", 500),
-]
-
-
-# ─── Player ───────────────────────────────────────────────────────────────────
-class Player:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.speed = 4.0
-        self.hp = 100
-        self.max_hp = 100
-        self.radius = 16
-        self.inventory = {}
-        self.kills = {}
-        self.score = 0
-        self.level = 1
-        self.xp = 0
-        self.xp_to_next = 100
-        self.shoot_cooldown = 0
-        self.invincible_timer = 0
-        self.facing_angle = 0
-        self.tentacle_anim = 0
-        self.missions = []
-        self.completed_missions = 0
-
-    def add_item(self, name, count=1):
-        self.inventory[name] = self.inventory.get(name, 0) + count
-
-    def add_kill(self, name):
-        self.kills[name] = self.kills.get(name, 0) + 1
-
-    def gain_xp(self, amount):
-        self.xp += amount
-        while self.xp >= self.xp_to_next:
-            self.xp -= self.xp_to_next
-            self.level += 1
-            self.xp_to_next = int(self.xp_to_next * 1.5)
-            self.max_hp += 10
-            self.hp = min(self.hp + 20, self.max_hp)
-            self.speed += 0.1
-
-    def take_damage(self, amount):
-        if self.invincible_timer > 0:
-            return False
-        self.hp -= amount
-        self.invincible_timer = 30
-        if self.hp <= 0:
-            self.hp = 0
-            return True  # Dead
-        return False
-
-    def update(self, keys, world):
-        dx, dy = 0, 0
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            dy -= self.speed
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            dy += self.speed
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            dx -= self.speed
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            dx += self.speed
-
-        # Diagonal normalization
-        if dx != 0 and dy != 0:
-            factor = self.speed / math.sqrt(dx * dx + dy * dy)
-            dx *= factor
-            dy *= factor
-
-        if dx != 0 or dy != 0:
-            self.facing_angle = math.atan2(dy, dx)
-
-        # Try move with collision
-        new_x = self.x + dx
-        new_y = self.y + dy
-        tile_x = int(new_x // TILE_SIZE)
-        tile_y = int(new_y // TILE_SIZE)
-        if 0 <= tile_x < WORLD_WIDTH and 0 <= tile_y < WORLD_HEIGHT:
-            if WorldGenerator.is_walkable(world[tile_y][tile_x]):
-                self.x = max(self.radius, min(new_x, WORLD_WIDTH * TILE_SIZE - self.radius))
-                self.y = max(self.radius, min(new_y, WORLD_HEIGHT * TILE_SIZE - self.radius))
-
-        if self.shoot_cooldown > 0:
-            self.shoot_cooldown -= 1
-        if self.invincible_timer > 0:
-            self.invincible_timer -= 1
-
-        self.tentacle_anim += 1
-
-    def draw(self, surface, cam_x, cam_y, tick):
-        sx = int(self.x - cam_x)
-        sy = int(self.y - cam_y)
-
-        if self.invincible_timer > 0 and self.invincible_timer % 4 < 2:
-            return  # Blink when invincible
-
-        # Glow aura
-        glow_surf = pygame.Surface((80, 80), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surf, (0, 255, 100, 40), (40, 40), 35)
-        surface.blit(glow_surf, (sx - 40, sy - 40))
-
-        # Tentacles (4 wiggly)
-        for i in range(4):
-            angle = self.facing_angle + (i - 1.5) * 0.4
-            wave = math.sin(tick * 0.15 + i * 1.5) * 6
-            tx = sx + int(math.cos(angle) * (20 + wave))
-            ty = sy + int(math.sin(angle) * (20 + wave))
-            pygame.draw.line(surface, GREEN, (sx, sy), (tx, ty), 3)
-            pygame.draw.circle(surface, (0, 255, 150), (tx, ty), 4)
-
-        # Body
-        body_pulse = math.sin(tick * 0.08) * 2
-        pygame.draw.circle(surface, (0, 220, 0), (sx, sy), int(self.radius + body_pulse))
-        pygame.draw.circle(surface, (0, 255, 100), (sx, sy), int(self.radius + body_pulse), 2)
-
-        # Eyes (big alien eyes)
-        eye_angle = self.facing_angle
-        ex1 = sx + int(math.cos(eye_angle - 0.4) * 7)
-        ey1 = sy + int(math.sin(eye_angle - 0.4) * 7)
-        ex2 = sx + int(math.cos(eye_angle + 0.4) * 7)
-        ey2 = sy + int(math.sin(eye_angle + 0.4) * 7)
-        pygame.draw.circle(surface, WHITE, (ex1, ey1), 6)
-        pygame.draw.circle(surface, WHITE, (ex2, ey2), 6)
-        # Pupils
-        px = int(math.cos(eye_angle) * 2)
-        py = int(math.sin(eye_angle) * 2)
-        pygame.draw.circle(surface, BLACK, (ex1 + px, ey1 + py), 3)
-        pygame.draw.circle(surface, BLACK, (ex2 + px, ey2 + py), 3)
-
-        # Mouth
-        mouth_x = sx + int(math.cos(eye_angle) * 10)
-        mouth_y = sy + int(math.sin(eye_angle) * 10)
-        pygame.draw.circle(surface, (0, 100, 0), (mouth_x, mouth_y), 3)
-
-
-# ─── Main Game ────────────────────────────────────────────────────────────────
+# ─── Game ──────────────────────────────────────────────────────────────────────
 class Game:
     def __init__(self):
-        pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("Zorp Wiggles: Alien Adventure v1.0")
-        self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("monospace", 16)
-        self.big_font = pygame.font.SysFont("monospace", 24, bold=True)
-        self.title_font = pygame.font.SysFont("monospace", 48, bold=True)
-
-        # World
         self.seed = random.randint(0, 999999)
-        self.world = WorldGenerator.generate(WORLD_WIDTH, WORLD_HEIGHT, self.seed)
-
-        # Player
-        spawn_x = 100 * TILE_SIZE + TILE_SIZE // 2
-        spawn_y = 100 * TILE_SIZE + TILE_SIZE // 2
-        self.player = Player(spawn_x, spawn_y)
-
-        # Entities
+        self.world_grid = WorldGenerator.generate(WORLD_SIZE, self.seed)
+        self.terrain_entities = []
+        self.tree_entities = []
+        self.crystal_entities = []
         self.enemies = []
         self.collectibles = []
         self.projectiles = []
         self.particles = []
         self.missions = []
-
-        # Populate
-        self._spawn_initial_entities()
-
-        # Camera
-        self.cam_x = spawn_x - SCREEN_WIDTH // 2
-        self.cam_y = spawn_y - SCREEN_HEIGHT // 2
-
-        # Game state
-        self.tick = 0
-        self.show_minimap = True
-        self.show_missions = False
+        self.messages = []
         self.game_over = False
         self.paused = False
-        self.message_log = []
+        self.t = 0
         self.spawn_timer = 0
+        self.mission_timer = 0
 
-        # Version tracking
-        self.version = "1.0.0"
+        # Build terrain
+        self._build_terrain()
+
+        # Player
+        spawn = Vec3(WORLD_SIZE // 2 * TILE_SCALE, 2, WORLD_SIZE // 2 * TILE_SCALE)
+        self.player = Player(position=spawn)
+
+        # Camera rig: third-person camera
+        self.cam_pivot = Entity(position=spawn)
+        camera.parent = self.cam_pivot
+        camera.position = (0, 18, -22)
+        camera.rotation = (30, 0, 0)
+
+        # Populate world
+        self._spawn_initial_entities()
+        self._assign_missions(count=3)
+
+        # Lighting
+        self.sun = DirectionalLight()
+        self.sun.look_at(Vec3(1, -1, 1))
+        AmbientLight(color=color.rgba(100, 100, 100, 255))
+
+        # Sky
+        Sky(color=color.rgb(40, 0, 80))
+
+        # Fog for atmosphere
+        scene.fog_color = color.rgb(40, 0, 80)
+        scene.fog_density = 0.008
+
+        # HUD
+        self._create_hud()
+
+        # Crosshair
+        self.crosshair = Entity(parent=camera.ui, model='quad', color=color.rgba(255, 255, 255, 128),
+                                scale=(0.003, 0.04), position=(0, 0))
+        self.crosshair2 = Entity(parent=camera.ui, model='quad', color=color.rgba(255, 255, 255, 128),
+                                 scale=(0.04, 0.003), position=(0, 0))
+
+    def _build_terrain(self):
+        """Build the 3D terrain from the world grid."""
+        for y in range(WORLD_SIZE):
+            for x in range(WORLD_SIZE):
+                biome = self.world_grid[y][x]
+                c = BIOME_COLORS.get(biome, C_GRASS)
+                tile = Entity(
+                    model='cube',
+                    color=c,
+                    position=(x * TILE_SCALE, 0, y * TILE_SCALE),
+                    scale=(TILE_SCALE, 1, TILE_SCALE),
+                    collider='box',
+                )
+                self.terrain_entities.append(tile)
+
+                # Decorations
+                if biome == 'forest' and random.random() < 0.3:
+                    tree = Entity(
+                        model='cube',
+                        color=color.rgb(80, 50, 20),
+                        position=(x * TILE_SCALE, 3, y * TILE_SCALE),
+                        scale=(0.6, 6, 0.6),
+                    )
+                    canopy = Entity(
+                        model='sphere',
+                        color=color.rgb(0, 130, 0),
+                        position=(x * TILE_SCALE, 7, y * TILE_SCALE),
+                        scale=3,
+                    )
+                    self.tree_entities.extend([tree, canopy])
+
+                elif biome == 'crystal' and random.random() < 0.2:
+                    height = random.uniform(3, 8)
+                    crystal = Entity(
+                        model='cube',
+                        color=color.rgb(0, 220, 230),
+                        position=(x * TILE_SCALE, height / 2 + 0.5, y * TILE_SCALE),
+                        scale=(0.5, height, 0.5),
+                    )
+                    self.crystal_entities.append(crystal)
+
+    def _is_walkable(self, world_x, world_z):
+        """Check if a world position is on walkable terrain."""
+        tx = int(world_x / TILE_SCALE)
+        tz = int(world_z / TILE_SCALE)
+        if 0 <= tx < WORLD_SIZE and 0 <= tz < WORLD_SIZE:
+            return self.world_grid[tz][tx] in WALKABLE
+        return False
 
     def _spawn_initial_entities(self):
+        spawn_x = WORLD_SIZE // 2 * TILE_SCALE
+        spawn_z = WORLD_SIZE // 2 * TILE_SCALE
+
         # Spawn collectibles
-        for _ in range(150):
-            x = random.randint(5, WORLD_WIDTH * TILE_SIZE - 5)
-            y = random.randint(5, WORLD_HEIGHT * TILE_SIZE - 5)
-            self.collectibles.append(Collectible(x, y))
+        for _ in range(200):
+            x = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
+            z = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
+            if self._is_walkable(x, z):
+                dist = math.sqrt((x - spawn_x) ** 2 + (z - spawn_z) ** 2)
+                if dist > 15:
+                    c = Collectible(position=Vec3(x, 1, z))
+                    self.collectibles.append(c)
 
         # Spawn enemies
-        for _ in range(50):
-            x = random.randint(5, WORLD_WIDTH * TILE_SIZE - 5)
-            y = random.randint(5, WORLD_HEIGHT * TILE_SIZE - 5)
-            # Don't spawn too close to player
-            if math.sqrt((x - self.player.x) ** 2 + (y - self.player.y) ** 2) > 300:
-                self.enemies.append(Enemy(x, y))
+        for _ in range(60):
+            x = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
+            z = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
+            if self._is_walkable(x, z):
+                dist = math.sqrt((x - spawn_x) ** 2 + (z - spawn_z) ** 2)
+                if dist > 30:
+                    e = Enemy(position=Vec3(x, 1, z))
+                    self.enemies.append(e)
 
-        # Assign initial missions
+    def _assign_missions(self, count=1):
         templates = list(MISSION_TEMPLATES)
         random.shuffle(templates)
-        for template in templates[:3]:
-            m = Mission(template[0], template[1], template[2], template[5], template[4])
-            if template[4] == "collect":
-                m.target_count = template[3]
-            elif template[4] == "kill":
-                m.target_count = template[3]
-            else:
-                m.target_count = 1
-            self.missions.append(m)
-
-    def add_message(self, msg):
-        self.message_log.append((self.tick, msg))
-        if len(self.message_log) > 50:
-            self.message_log = self.message_log[-50:]
-
-    def spawn_particles(self, x, y, color, count=10, speed=3):
-        for _ in range(count):
-            angle = random.uniform(0, math.pi * 2)
-            spd = random.uniform(1, speed)
-            self.particles.append(
-                Particle(x, y, color, math.cos(angle) * spd, math.sin(angle) * spd, random.randint(15, 40))
-            )
-
-    def handle_events(self):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return False
-                if event.key == pygame.K_m:
-                    self.show_minimap = not self.show_minimap
-                if event.key == pygame.K_TAB:
-                    self.show_missions = not self.show_missions
-                if event.key == pygame.K_r and self.game_over:
-                    self.__init__()
-                    return True
-                if event.key == pygame.K_p:
-                    self.paused = not self.paused
-        return True
-
-    def update(self):
-        if self.game_over or self.paused:
-            return
-
-        self.tick += 1
-        keys = pygame.key.get_pressed()
-
-        # Player movement
-        self.player.update(keys, self.world)
-
-        # Shooting
-        mouse_buttons = pygame.mouse.get_pressed()
-        if mouse_buttons[0] and self.player.shoot_cooldown <= 0:
-            mx, my = pygame.mouse.get_pos()
-            world_mx = mx + self.cam_x
-            world_my = my + self.cam_y
-            angle = math.atan2(world_my - self.player.y, world_mx - self.player.x)
-            self.projectiles.append(
-                Projectile(self.player.x, self.player.y, angle, speed=12, damage=20, color=CYAN)
-            )
-            self.player.shoot_cooldown = 10
-            self.spawn_particles(self.player.x, self.player.y, CYAN, count=3, speed=2)
-
-        # Update projectiles
-        alive_projectiles = []
-        for proj in self.projectiles:
-            if proj.update():
-                alive_projectiles.append(proj)
-        self.projectiles = alive_projectiles
-
-        # Update enemies
-        for enemy in self.enemies:
-            if enemy.alive:
-                enemy.update(self.player.x, self.player.y, self.world)
-                # Enemy attack
-                dist = math.sqrt((enemy.x - self.player.x) ** 2 + (enemy.y - self.player.y) ** 2)
-                if dist < enemy.radius + self.player.radius + 5:
-                    if enemy.can_attack():
-                        died = self.player.take_damage(enemy.damage)
-                        self.spawn_particles(self.player.x, self.player.y, RED, count=5, speed=4)
-                        if died:
-                            self.game_over = True
-
-        # Projectile-enemy collisions
-        for proj in self.projectiles:
-            if proj.owner != "player":
-                continue
-            for enemy in self.enemies:
-                if not enemy.alive:
-                    continue
-                dist = math.sqrt((proj.x - enemy.x) ** 2 + (proj.y - enemy.y) ** 2)
-                if dist < enemy.radius + proj.radius:
-                    killed = enemy.take_damage(proj.damage)
-                    self.spawn_particles(enemy.x, enemy.y, enemy.color, count=8, speed=4)
-                    proj.lifetime = 0
-                    if killed:
-                        self.player.add_kill(enemy.name)
-                        self.player.gain_xp(25)
-                        self.player.score += enemy.max_hp
-                        # Drop loot
-                        for _ in range(random.randint(1, 3)):
-                            ox = random.uniform(-20, 20)
-                            oy = random.uniform(-20, 20)
-                            self.collectibles.append(Collectible(enemy.x + ox, enemy.y + oy))
-                        self.spawn_particles(enemy.x, enemy.y, YELLOW, count=15, speed=5)
-                        self.add_message(f"Defeated {enemy.name}! +25 XP")
-                    break
-
-        # Collectible pickup
-        for col in self.collectibles:
-            if col.collected:
-                continue
-            dist = math.sqrt((col.x - self.player.x) ** 2 + (col.y - self.player.y) ** 2)
-            if dist < col.radius + self.player.radius + 10:
-                col.collected = True
-                self.player.add_item(col.name)
-                self.player.score += col.value
-                self.player.gain_xp(col.value // 10)
-                self.spawn_particles(col.x, col.y, col.color, count=8, speed=3)
-                self.add_message(f"Found {col.name}! +{col.value} pts")
-
-        # Remove collected
-        self.collectibles = [c for c in self.collectibles if not c.collected]
-
-        # Check missions
-        for m in self.missions:
-            if not m.completed and not m.turned_in:
-                old_progress = m.progress
-                if m.mission_type == "collect":
-                    m.progress = self.player.inventory.get(m.target, 0)
-                elif m.mission_type == "kill":
-                    m.progress = self.player.kills.get(m.target, 0)
-                if m.progress >= m.target_count and not m.completed:
-                    m.completed = True
-                    self.add_message(f"Mission Complete: {m.title}!")
-
-        # Turn in completed missions (auto)
-        for m in self.missions:
-            if m.completed and not m.turned_in:
-                m.turned_in = True
-                self.player.gain_xp(m.reward)
-                self.player.score += m.reward
-                self.player.completed_missions += 1
-                self.add_message(f"Turned in: {m.title}! +{m.reward} XP")
-
-        # Respawn enemies periodically
-        self.spawn_timer += 1
-        if self.spawn_timer >= 600:  # Every 10 seconds
-            self.spawn_timer = 0
-            alive_enemies = sum(1 for e in self.enemies if e.alive)
-            if alive_enemies < 30:
-                angle = random.uniform(0, math.pi * 2)
-                dist = random.randint(500, 800)
-                ex = self.player.x + math.cos(angle) * dist
-                ey = self.player.y + math.sin(angle) * dist
-                ex = max(0, min(ex, WORLD_WIDTH * TILE_SIZE - 10))
-                ey = max(0, min(ey, WORLD_HEIGHT * TILE_SIZE - 10))
-                self.enemies.append(Enemy(ex, ey))
-
-        # Respawn collectibles
-        if len(self.collectibles) < 80 and self.tick % 300 == 0:
-            angle = random.uniform(0, math.pi * 2)
-            dist = random.randint(200, 600)
-            cx = self.player.x + math.cos(angle) * dist
-            cy = self.player.y + math.sin(angle) * dist
-            cx = max(0, min(cx, WORLD_WIDTH * TILE_SIZE - 10))
-            cy = max(0, min(cy, WORLD_HEIGHT * TILE_SIZE - 10))
-            self.collectibles.append(Collectible(cx, cy))
-
-        # New missions
-        active_missions = sum(1 for m in self.missions if not m.turned_in)
-        if active_missions < 3 and self.tick % 600 == 0:
-            template = random.choice(MISSION_TEMPLATES)
-            m = Mission(template[0], template[1], template[2], template[5], template[4])
-            if template[4] == "collect":
-                m.target_count = template[3]
-            elif template[4] == "kill":
-                m.target_count = template[3]
-            else:
-                m.target_count = 1
+        for template in templates[:count]:
+            m = Mission(template[0], template[1], template[2], template[5], template[4], template[3])
             self.missions.append(m)
             self.add_message(f"New Mission: {m.title}")
 
-        # Update particles
-        self.particles = [p for p in self.particles if p.update()]
+    def add_message(self, msg):
+        self.messages.append((self.t, msg))
+        if len(self.messages) > 50:
+            self.messages = self.messages[-50:]
 
-        # Remove dead enemies (cleanup)
-        if self.tick % 300 == 0:
-            self.enemies = [e for e in self.enemies if e.alive]
+    def _create_hud(self):
+        """Create HUD elements as UI entities."""
+        self.hp_bar_bg = Entity(parent=camera.ui, model='quad', color=color.dark_gray,
+                                scale=(0.4, 0.03), position=(-0.55, 0.46))
+        self.hp_bar = Entity(parent=camera.ui, model='quad', color=color.green,
+                             scale=(0.4, 0.03), position=(-0.55, 0.46), origin=(-0.5, 0))
 
-        # Camera follow
-        target_cam_x = self.player.x - SCREEN_WIDTH // 2
-        target_cam_y = self.player.y - SCREEN_HEIGHT // 2
-        self.cam_x += (target_cam_x - self.cam_x) * 0.1
-        self.cam_y += (target_cam_y - self.cam_y) * 0.1
+        self.xp_bar_bg = Entity(parent=camera.ui, model='quad', color=color.dark_gray,
+                                scale=(0.4, 0.015), position=(-0.55, 0.43))
+        self.xp_bar = Entity(parent=camera.ui, model='quad', color=C_PURPLE,
+                             scale=(0.4, 0.015), position=(-0.55, 0.43), origin=(-0.5, 0))
 
-    def draw_world(self):
-        # Only draw visible tiles
-        start_tx = max(0, int(self.cam_x // TILE_SIZE) - 1)
-        start_ty = max(0, int(self.cam_y // TILE_SIZE) - 1)
-        end_tx = min(WORLD_WIDTH, start_tx + SCREEN_WIDTH // TILE_SIZE + 3)
-        end_ty = min(WORLD_HEIGHT, start_ty + SCREEN_HEIGHT // TILE_SIZE + 3)
+        self.level_text = Text(text='Lv.1', position=(-0.75, 0.46), scale=1.5, color=color.yellow)
+        self.score_text = Text(text='Score: 0', position=(-0.75, 0.41), scale=1.2, color=color.white)
+        self.hp_text = Text(text='HP: 100/100', position=(-0.37, 0.46), scale=1.0, color=color.white)
 
-        for ty in range(start_ty, end_ty):
-            for tx in range(start_tx, end_tx):
-                biome = self.world[ty][tx]
-                color = WorldGenerator.get_tile_color(biome)
-                sx = tx * TILE_SIZE - int(self.cam_x)
-                sy = ty * TILE_SIZE - int(self.cam_y)
-                pygame.draw.rect(self.screen, color, (sx, sy, TILE_SIZE, TILE_SIZE))
+        self.msg_texts = []
+        for i in range(5):
+            t = Text(text='', position=(-0.85, -0.3 - i * 0.04), scale=0.9, color=color.yellow)
+            self.msg_texts.append(t)
 
-                # Add detail based on biome
-                if biome == BIOME_FOREST and (tx + ty) % 3 == 0:
-                    # Draw a little tree
-                    pygame.draw.rect(self.screen, BROWN, (sx + 28, sy + 32, 8, 20))
-                    pygame.draw.circle(self.screen, (0, 150, 0), (sx + 32, sy + 26), 14)
-                elif biome == BIOME_CRYSTAL and (tx + ty) % 4 == 0:
-                    # Crystal spire
-                    points = [(sx + 32, sy + 10), (sx + 20, sy + 50), (sx + 44, sy + 50)]
-                    pygame.draw.polygon(self.screen, (100, 200, 255), points)
-                elif biome == BIOME_WATER:
-                    # Water shimmer
-                    if (tx + ty + self.tick // 30) % 5 == 0:
-                        pygame.draw.line(self.screen, (100, 200, 255),
-                                         (sx + 10, sy + 32), (sx + 54, sy + 32), 1)
+        self.mission_panel_shown = False
+        self.mission_text = Text(text='', position=(-0.15, 0.35), scale=1.0, color=color.cyan, visible=False)
+        self.controls_text = Text(
+            text='WASD:Move | Click:Shoot | M:Minimap | Tab:Missions | P:Pause',
+            position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
+        )
+        self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
+        self.game_over_text = Text(text='', position=(0, 0.05), origin=(0, 0), scale=4, color=color.red, visible=False)
+        self.game_over_sub = Text(text='', position=(0, -0.08), origin=(0, 0), scale=2, color=color.white, visible=False)
+        self.game_over_restart = Text(text='', position=(0, -0.15), origin=(0, 0), scale=1.5, color=color.yellow, visible=False)
 
-    def draw_hud(self):
+        # Minimap
+        self.minimap_shown = True
+        self.minimap_entity = None
+        self.minimap_player_dot = None
+        self.minimap_enemy_dots = []
+        self._build_minimap()
+
+    def _build_minimap(self):
+        """Create minimap as a UI texture."""
+        self.minimap_entity = Entity(parent=camera.ui, model='quad',
+                                     color=color.black, scale=(0.22, 0.22),
+                                     position=(0.72, 0.37))
+        # Player dot on minimap
+        self.minimap_player_dot = Entity(parent=camera.ui, model='quad',
+                                          color=color.white, scale=(0.005, 0.005),
+                                          position=(0.72, 0.37))
+        self._update_minimap_colors()
+
+    def _update_minimap_colors(self):
+        """Color-code minimap terrain."""
+        # Simplified: just set base color, overlay will be drawn in update
+        pass
+
+    def _spawn_particles(self, pos, col, count=8):
+        for _ in range(count):
+            vel = Vec3(random.uniform(-3, 3), random.uniform(1, 5), random.uniform(-3, 3))
+            p = Entity(model='sphere', color=col, scale=random.uniform(0.1, 0.3),
+                       position=pos)
+            self.particles.append((p, vel, random.uniform(0.5, 1.5)))
+
+    def shoot(self):
+        """Fire tentacle laser toward mouse."""
+        if self.player.shoot_timer > 0 or self.game_over:
+            return
+        self.player.shoot_timer = SHOOT_COOLDOWN
+
+        # Get shooting direction from mouse world point
+        hit = mouse.world_point
+        if hit:
+            direction = Vec3(hit.x - self.player.x, 0, hit.z - self.player.z).normalized()
+        else:
+            direction = self.player.facing
+
+        proj = Projectile(
+            position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5,
+            direction=direction,
+            damage=20 + self.player.level * 2,
+            speed=50,
+        )
+        self.projectiles.append(proj)
+        self._spawn_particles(proj.position, C_LASER, count=3)
+
+    def _update_hud(self):
+        """Update HUD elements each frame."""
+        p = self.player
         # HP bar
-        bar_x, bar_y = 20, 20
-        bar_w, bar_h = 200, 20
-        hp_ratio = self.player.hp / self.player.max_hp
-        pygame.draw.rect(self.screen, DARK_GRAY, (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4))
-        pygame.draw.rect(self.screen, RED, (bar_x, bar_y, bar_w, bar_h))
-        pygame.draw.rect(self.screen, GREEN, (bar_x, bar_y, int(bar_w * hp_ratio), bar_h))
-        hp_text = self.font.render(f"HP: {self.player.hp}/{self.player.max_hp}", True, WHITE)
-        self.screen.blit(hp_text, (bar_x + 5, bar_y + 2))
+        hp_ratio = max(0, p.hp / p.max_hp)
+        self.hp_bar.scale_x = 0.4 * hp_ratio
+        self.hp_bar.x = -0.55 - 0.2 * (1 - hp_ratio)
+        self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
         # XP bar
-        xp_y = bar_y + bar_h + 5
-        xp_ratio = self.player.xp / self.player.xp_to_next
-        pygame.draw.rect(self.screen, DARK_GRAY, (bar_x - 2, xp_y - 2, bar_w + 4, 12))
-        pygame.draw.rect(self.screen, (80, 0, 120), (bar_x, xp_y, bar_w, 8))
-        pygame.draw.rect(self.screen, PURPLE, (bar_x, xp_y, int(bar_w * xp_ratio), 8))
+        xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
+        self.xp_bar.scale_x = 0.4 * xp_ratio
+        self.xp_bar.x = -0.55 - 0.2 * (1 - xp_ratio)
 
-        # Level & Score
-        lvl_text = self.font.render(f"Lv.{self.player.level}", True, YELLOW)
-        self.screen.blit(lvl_text, (bar_x + bar_w + 10, bar_y))
-        score_text = self.font.render(f"Score: {self.player.score}", True, WHITE)
-        self.screen.blit(score_text, (bar_x + bar_w + 10, bar_y + 20))
-
-        # Speed
-        speed_text = self.font.render(f"Speed: {self.player.speed:.1f}", True, CYAN)
-        self.screen.blit(speed_text, (bar_x + bar_w + 10, bar_y + 40))
+        self.level_text.text = f'Lv.{p.level}'
+        self.score_text.text = f'Score: {p.score}'
 
         # Messages
-        visible_messages = self.message_log[-5:]
-        for i, (tick, msg) in enumerate(visible_messages):
-            alpha = max(0, 255 - (self.tick - tick) * 3)
-            if alpha > 0:
-                msg_surf = self.font.render(msg, True, YELLOW)
-                self.screen.blit(msg_surf, (20, SCREEN_HEIGHT - 100 + i * 18))
+        visible = self.messages[-5:]
+        for i, (tick, msg) in enumerate(visible):
+            age = self.t - tick
+            if age < 5:
+                self.msg_texts[i].text = msg
+                self.msg_texts[i].color = color.rgba(255, 255, 0, max(0, 255 - int(age * 50)))
+            else:
+                self.msg_texts[i].text = ''
 
-        # Controls hint
-        hint = self.font.render("WASD:Move  Click:Shoot  M:Minimap  TAB:Missions  P:Pause", True, GRAY)
-        self.screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 25))
+        # Minimap player dot
+        mm_cx = 0.72
+        mm_cy = 0.37
+        mm_scale = 0.22 / (WORLD_SIZE * TILE_SCALE)
+        px = mm_cx + (p.x * mm_scale) - 0.11
+        pz = mm_cy + (p.z * mm_scale) - 0.11
+        self.minimap_player_dot.position = (px, pz)
 
-    def draw_minimap(self):
-        if not self.show_minimap:
-            return
-        mm_size = 160
-        mm_x = SCREEN_WIDTH - mm_size - 10
-        mm_y = 10
-        mm_surface = pygame.Surface((mm_size, mm_size))
-        mm_surface.fill(BLACK)
-
-        scale_x = mm_size / (WORLD_WIDTH * TILE_SIZE)
-        scale_y = mm_size / (WORLD_HEIGHT * TILE_SIZE)
-
-        # Simplified minimap - just draw biome dots sparsely
-        for ty in range(0, WORLD_HEIGHT, 4):
-            for tx in range(0, WORLD_WIDTH, 4):
-                biome = self.world[ty][tx]
-                color = WorldGenerator.get_tile_color(biome)
-                mx = int(tx * TILE_SIZE * scale_x)
-                my = int(ty * TILE_SIZE * scale_y)
-                pygame.draw.rect(mm_surface, color, (mx, my, max(1, int(4 * TILE_SIZE * scale_x)), max(1, int(4 * TILE_SIZE * scale_y))))
-
-        # Player dot
-        px = int(self.player.x * scale_x)
-        py = int(self.player.y * scale_y)
-        pygame.draw.circle(mm_surface, WHITE, (px, py), 3)
-
-        # Enemy dots
-        for e in self.enemies:
-            if e.alive:
-                ex = int(e.x * scale_x)
-                ey = int(e.y * scale_y)
-                pygame.draw.circle(mm_surface, RED, (ex, ey), 2)
-
-        # Collectible dots
-        for c in self.collectibles:
-            cx = int(c.x * scale_x)
-            cy = int(c.y * scale_y)
-            pygame.draw.circle(mm_surface, YELLOW, (cx, cy), 1)
-
-        pygame.draw.rect(mm_surface, WHITE, (0, 0, mm_size, mm_size), 2)
-        self.screen.blit(mm_surface, (mm_x, mm_y))
-
-    def draw_missions_panel(self):
-        if not self.show_missions:
-            return
-        panel_w, panel_h = 400, 300
-        panel_x = SCREEN_WIDTH // 2 - panel_w // 2
-        panel_y = SCREEN_HEIGHT // 2 - panel_h // 2
-        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-        panel.fill((0, 0, 0, 200))
-        self.screen.blit(panel, (panel_x, panel_y))
-        pygame.draw.rect(self.screen, CYAN, (panel_x, panel_y, panel_w, panel_h), 2)
-
-        title = self.big_font.render("MISSIONS", True, CYAN)
-        self.screen.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 10))
-
-        y = panel_y + 45
+    def _update_missions(self):
+        p = self.player
         for m in self.missions:
+            if m.completed and not m.turned_in:
+                continue
             if m.turned_in:
                 continue
-            status = "[DONE]" if m.completed else f"[{m.progress}/{m.target_count}]"
-            color = YELLOW if m.completed else WHITE
-            text = self.font.render(f"{status} {m.title}", True, color)
-            self.screen.blit(text, (panel_x + 15, y))
-            desc = self.font.render(f"  {m.description}", True, GRAY)
-            self.screen.blit(desc, (panel_x + 15, y + 16))
-            reward = self.font.render(f"  Reward: {m.reward} XP", True, GREEN)
-            self.screen.blit(reward, (panel_x + 15, y + 32))
-            y += 55
+            if m.mission_type == 'collect':
+                m.progress = p.inventory.get(m.target, 0)
+            elif m.mission_type == 'kill':
+                m.progress = p.kills.get(m.target, 0)
+            if m.progress >= m.target_count and not m.completed:
+                m.completed = True
+                self.add_message(f"Mission Complete: {m.title}!")
 
-    def draw_game_over(self):
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 150))
-        self.screen.blit(overlay, (0, 0))
+        # Auto-turn-in
+        for m in self.missions:
+            if m.completed and not m.turned_in:
+                m.turned_in = True
+                p.gain_xp(m.reward)
+                p.score += m.reward
+                p.completed_missions += 1
+                self.add_message(f"Turned in: {m.title}! +{m.reward} XP")
 
-        go_text = self.title_font.render("GAME OVER", True, RED)
-        self.screen.blit(go_text, (SCREEN_WIDTH // 2 - go_text.get_width() // 2, SCREEN_HEIGHT // 2 - 60))
-
-        score_text = self.big_font.render(f"Final Score: {self.player.score}  Level: {self.player.level}", True, WHITE)
-        self.screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, SCREEN_HEIGHT // 2))
-
-        restart_text = self.font.render("Press R to Restart", True, YELLOW)
-        self.screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, SCREEN_HEIGHT // 2 + 50))
-
-    def draw(self):
-        self.screen.fill(BLACK)
-        self.draw_world()
-
-        # Draw collectibles
-        for col in self.collectibles:
-            col.draw(self.screen, self.cam_x, self.cam_y, self.tick)
-
-        # Draw enemies
-        for enemy in self.enemies:
-            enemy.draw(self.screen, self.cam_x, self.cam_y, self.tick)
-
-        # Draw projectiles
-        for proj in self.projectiles:
-            proj.draw(self.screen, self.cam_x, self.cam_y)
-
-        # Draw particles
-        for p in self.particles:
-            p.draw(self.screen, self.cam_x, self.cam_y)
-
-        # Draw player
-        self.player.draw(self.screen, self.cam_x, self.cam_y, self.tick)
-
-        # HUD
-        self.draw_hud()
-        self.draw_minimap()
-        self.draw_missions_panel()
-
-        if self.game_over:
-            self.draw_game_over()
-
-        # Version watermark
-        ver_text = self.font.render(f"v{self.version}", True, DARK_GRAY)
-        self.screen.blit(ver_text, (SCREEN_WIDTH - 60, SCREEN_HEIGHT - 20))
-
-        pygame.display.flip()
-
-    def run(self):
-        running = True
-        while running:
-            running = self.handle_events()
-            self.update()
-            self.draw()
-            self.clock.tick(FPS)
-        pygame.quit()
+        # Assign new missions if needed
+        active = sum(1 for m in self.missions if not m.turned_in)
+        if active < 3:
+            self._assign_missions(count=1)
 
 
-def main():
-    game = Game()
-    game.run()
+def game_update():
+    """Main update loop — called every frame."""
+    global game
+
+    if game.game_over:
+        # Check for restart
+        if held_keys['r']:
+            for e in scene.entities[:]:
+                destroy(e)
+            game = Game()
+            return
+        return
+
+    if game.paused:
+        if held_keys['p'] and not hasattr(game, '_p_held'):
+            game.paused = False
+            game._p_held = True
+        elif not held_keys['p']:
+            game._p_held = False
+        return
+    else:
+        if held_keys['p'] and not hasattr(game, '_p_held'):
+            game.paused = True
+            game._p_held = True
+            return
+        elif not held_keys['p']:
+            game._p_held = False
+
+    game.t += time.dt
+    p = game.player
+
+    # ── Player Movement ──
+    move_dir = Vec3(0, 0, 0)
+    if held_keys['w'] or held_keys['up arrow']:
+        move_dir += Vec3(0, 0, 1)
+    if held_keys['s'] or held_keys['down arrow']:
+        move_dir += Vec3(0, 0, -1)
+    if held_keys['a'] or held_keys['left arrow']:
+        move_dir += Vec3(-1, 0, 0)
+    if held_keys['d'] or held_keys['right arrow']:
+        move_dir += Vec3(1, 0, 0)
+
+    if move_dir.length() > 0:
+        move_dir = move_dir.normalized()
+        new_pos = p.position + move_dir * p.speed * time.dt
+        if game._is_walkable(new_pos.x, new_pos.z):
+            p.x = max(1, min(new_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
+            p.z = max(1, min(new_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
+            p.facing = move_dir
+
+    # Face mouse
+    hit = mouse.world_point
+    if hit:
+        face_dir = Vec3(hit.x - p.x, 0, hit.z - p.z)
+        if face_dir.length() > 0.1:
+            p.facing = face_dir.normalized()
+            p.look_at_2d(Vec3(hit.x, p.y, hit.z))
+
+    # Bob animation
+    p.animate_bob(game.t)
+    p.update_tentacles(game.t)
+
+    # Invulnerability timer
+    if p.invuln_timer > 0:
+        p.invuln_timer -= time.dt
+        # Blink
+        p.visible = int(game.t * 20) % 2 == 0
+    else:
+        p.visible = True
+
+    # Shoot cooldown
+    if p.shoot_timer > 0:
+        p.shoot_timer -= time.dt
+
+    # Shooting
+    if mouse.left and not game.game_over:
+        game.shoot()
+
+    # ── Camera Follow ──
+    game.cam_pivot.position = lerp(game.cam_pivot.position, p.position + Vec3(0, 0, 0), time.dt * 5)
+
+    # ── Update Enemies ──
+    for enemy in game.enemies[:]:
+        if not enemy.alive:
+            destroy(enemy)
+            destroy(enemy.eye_l)
+            destroy(enemy.eye_r)
+            destroy(enemy.hp_bar_bg)
+            destroy(enemy.hp_bar)
+            game.enemies.remove(enemy)
+            continue
+
+        dist_to_player = (enemy.position - p.position).length()
+
+        if dist_to_player < ENEMY_DETECT_RANGE:
+            # Chase player
+            direction = (p.position - enemy.position).normalized()
+            direction.y = 0
+            new_pos = enemy.position + direction * enemy.speed * time.dt
+            if game._is_walkable(new_pos.x, new_pos.z):
+                enemy.position = new_pos
+            enemy.look_at_2d(p.position)
+        else:
+            # Wander
+            enemy.wander_timer -= time.dt
+            if enemy.wander_timer <= 0:
+                enemy.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+                enemy.wander_timer = random.uniform(2, 5)
+            new_pos = enemy.position + enemy.wander_dir * enemy.speed * 0.3 * time.dt
+            if game._is_walkable(new_pos.x, new_pos.z):
+                enemy.position = new_pos
+            else:
+                enemy.wander_dir = -enemy.wander_dir
+
+        # Attack player
+        if dist_to_player < ENEMY_ATTACK_RANGE:
+            if enemy.attack_cd <= 0:
+                died = p.take_damage(enemy.damage)
+                game._spawn_particles(p.position, color.red, count=6)
+                enemy.attack_cd = 1.0
+                if died:
+                    game.game_over = True
+                    game.game_over_text.visible = True
+                    game.game_over_text.text = 'GAME OVER'
+                    game.game_over_sub.visible = True
+                    game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+                    game.game_over_restart.visible = True
+                    game.game_over_restart.text = 'Press R to Restart'
+        else:
+            enemy.attack_cd = max(0, enemy.attack_cd - time.dt)
+
+        # Float enemies
+        enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
+        enemy.update_hp_bar()
+
+    # ── Update Projectiles ──
+    for proj in game.projectiles[:]:
+        alive = proj.move(time.dt)
+        if not alive:
+            destroy(proj)
+            game.projectiles.remove(proj)
+            continue
+
+        # Check collision with enemies
+        for enemy in game.enemies:
+            if not enemy.alive:
+                continue
+            if (proj.position - enemy.position).length() < enemy.scale_x + 0.5:
+                killed = enemy.take_damage(proj.damage)
+                game._spawn_particles(enemy.position, color.yellow, count=10)
+                destroy(proj)
+                if proj in game.projectiles:
+                    game.projectiles.remove(proj)
+                if killed:
+                    p.add_kill(enemy.name)
+                    p.gain_xp(25 + enemy.max_hp // 10)
+                    p.score += enemy.max_hp
+                    # Drop loot
+                    for _ in range(random.randint(1, 3)):
+                        offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
+                        c = Collectible(position=enemy.position + offset)
+                        game.collectibles.append(c)
+                    game.add_message(f"Defeated {enemy.name}!")
+                break
+
+        # Remove if out of world
+        if proj.x < -10 or proj.x > WORLD_SIZE * TILE_SCALE + 10 or proj.z < -10 or proj.z > WORLD_SIZE * TILE_SCALE + 10:
+            destroy(proj)
+            if proj in game.projectiles:
+                game.projectiles.remove(proj)
+
+    # ── Update Collectibles ──
+    for col in game.collectibles[:]:
+        col.animate(game.t)
+        dist = (col.position - p.position).length()
+        if dist < COLLECT_RADIUS:
+            p.add_item(col.name)
+            p.score += col.value
+            p.gain_xp(col.value // 10)
+            game._spawn_particles(col.position, col.color, count=6)
+            game.add_message(f"Found {col.name}! +{col.value} pts")
+            destroy(col.glow)
+            destroy(col)
+            game.collectibles.remove(col)
+
+    # ── Update Particles ──
+    for item in game.particles[:]:
+        p_ent, vel, lifetime = item
+        p_ent.position += vel * time.dt
+        vel.y -= 9.8 * time.dt
+        lifetime -= time.dt
+        p_ent.scale *= 0.97
+        if lifetime <= 0:
+            destroy(p_ent)
+            game.particles.remove(item)
+
+    # ── Spawn Timer ──
+    game.spawn_timer += time.dt
+    if game.spawn_timer >= 10:
+        game.spawn_timer = 0
+        alive = len([e for e in game.enemies if e.alive])
+        if alive < 40:
+            angle = random.uniform(0, math.pi * 2)
+            dist = random.uniform(30, 60)
+            ex = p.x + math.cos(angle) * dist
+            ez = p.z + math.sin(angle) * dist
+            ex = max(5, min(ex, (WORLD_SIZE - 5) * TILE_SCALE))
+            ez = max(5, min(ez, (WORLD_SIZE - 5) * TILE_SCALE))
+            if game._is_walkable(ex, ez):
+                e = Enemy(position=Vec3(ex, 1, ez))
+                game.enemies.append(e)
+
+    # Respawn collectibles
+    if len(game.collectibles) < 120 and random.random() < 0.01:
+        angle = random.uniform(0, math.pi * 2)
+        dist = random.uniform(20, 50)
+        cx = p.x + math.cos(angle) * dist
+        cz = p.z + math.sin(angle) * dist
+        cx = max(2, min(cx, (WORLD_SIZE - 2) * TILE_SCALE))
+        cz = max(2, min(cz, (WORLD_SIZE - 2) * TILE_SCALE))
+        if game._is_walkable(cx, cz):
+            c = Collectible(position=Vec3(cx, 1, cz))
+            game.collectibles.append(c)
+
+    # ── Missions ──
+    game._update_missions()
+
+    # ── Toggle minimap ──
+    if held_keys['m'] and not hasattr(game, '_m_held'):
+        game.minimap_shown = not game.minimap_shown
+        game.minimap_entity.visible = game.minimap_shown
+        game.minimap_player_dot.visible = game.minimap_shown
+        game._m_held = True
+    elif not held_keys['m']:
+        game._m_held = False
+
+    # ── Toggle mission panel ──
+    if held_keys['tab'] and not hasattr(game, '_tab_held'):
+        game.mission_panel_shown = not game.mission_panel_shown
+        game.mission_text.visible = game.mission_panel_shown
+        game._tab_held = True
+        if game.mission_panel_shown:
+            lines = ["== MISSIONS =="]
+            for m in game.missions:
+                if m.turned_in:
+                    continue
+                status = "[DONE]" if m.completed else f"[{m.progress}/{m.target_count}]"
+                lines.append(f"{status} {m.title}")
+                lines.append(f"  {m.description}")
+                lines.append(f"  Reward: {m.reward} XP")
+                lines.append("")
+            game.mission_text.text = '\n'.join(lines)
+    elif not held_keys['tab']:
+        game._tab_held = False
+
+    # ── Update HUD ──
+    game._update_hud()
 
 
-if __name__ == "__main__":
-    main()
+# ─── Initialize & Run ─────────────────────────────────────────────────────────
+game = Game()
+
+def input(key):
+    global game
+    if key == 'escape':
+        application.quit()
+    if key == 'p' and not game.game_over:
+        game.paused = not game.paused
+
+app.update = game_update
+app.run()
