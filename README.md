@@ -28,7 +28,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.0.0 — 3D!)
+## Features (v2.0.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with 8 biomes: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp
@@ -37,11 +37,15 @@ python game.py
 - Tentacle laser shooting with particle effects
 - Mission system with collection and kill objectives
 - XP and leveling system (get stronger over time!)
+- Distance-based difficulty scaling (harder enemies farther from spawn)
 - Minimap with player tracking
-- Enemy HP bars and floating combat effects
+- Enemy HP bars with green→yellow→red color gradient
 - 3D trees in forests, crystal spires in crystal biomes
-- Atmospheric fog and lighting
-- Smooth camera follow
+- Atmospheric fog and lighting with starfield sky
+- Smooth camera follow with screen shake on hits and kills
+- Enemy death animations (shrink + flash)
+- Level-up flash effect and scale pulse
+- Satisfying collectible pickup burst particles
 - Invincibility frames on damage
 - Enemy respawning and loot drops
 - Particle system for hits, kills, and pickups

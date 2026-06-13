@@ -12,15 +12,98 @@ import json
 
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
-# ─── Constants ────────────────────────────────────────────────────────────────
-VERSION = "2.0.0"
-WORLD_SIZE = 80        # world grid dimensions (tiles)
-TILE_SCALE = 4         # size of each terrain tile
+# ─── Version ──────────────────────────────────────────────────────────────────
+VERSION = "2.0.1"
+
+# ─── World Generation ─────────────────────────────────────────────────────────
+WORLD_SIZE = 80
+TILE_SCALE = 4
+
+# ─── Player ───────────────────────────────────────────────────────────────────
 PLAYER_SPEED = 12
-ENEMY_DETECT_RANGE = 40
-ENEMY_ATTACK_RANGE = 2.5
+PLAYER_INVULN_DURATION = 0.5
+PLAYER_BLINK_RATE = 20
+PLAYER_START_HP = 100
+
+# ─── Combat ───────────────────────────────────────────────────────────────────
 SHOOT_COOLDOWN = 0.15
 COLLECT_RADIUS = 2.5
+PROJECTILE_BASE_DAMAGE = 20
+PROJECTILE_LEVEL_DAMAGE_BONUS = 2
+PROJECTILE_SPEED = 50
+PROJECTILE_LIFETIME = 2.0
+ENEMY_DETECT_RANGE = 40
+ENEMY_ATTACK_RANGE = 2.5
+ENEMY_ATTACK_COOLDOWN = 1.0
+
+# ─── Enemy Behavior ───────────────────────────────────────────────────────────
+ENEMY_WANDER_SPEED_FACTOR = 0.3
+ENEMY_WANDER_INTERVAL_MIN = 2.0
+ENEMY_WANDER_INTERVAL_MAX = 5.0
+ENEMY_WANDER_DIR_JITTER = 1.5
+
+# ─── Spawning ─────────────────────────────────────────────────────────────────
+MAX_ACTIVE_ENEMIES = 40
+MIN_COLLECTIBLES = 120
+COLLECTIBLE_RESPAWN_CHANCE = 0.01
+ENEMY_SPAWN_INTERVAL = 10
+ENEMY_SPAWN_DISTANCE_MIN = 30
+ENEMY_SPAWN_DISTANCE_MAX = 60
+LOOT_DROP_MIN = 1
+LOOT_DROP_MAX = 3
+INITIAL_COLLECTIBLES = 200
+INITIAL_ENEMIES = 60
+SPAWN_SAFE_RADIUS = 15
+ENEMY_SPAWN_SAFE_RADIUS = 30
+
+# ─── Leveling ─────────────────────────────────────────────────────────────────
+LEVEL_UP_HEAL_AMOUNT = 20
+LEVEL_UP_HP_BONUS = 10
+LEVEL_UP_SPEED_BONUS = 0.3
+XP_SCALE_FACTOR = 1.5
+BASE_KILL_XP = 25
+KILL_XP_HP_DIVISOR = 10
+
+# ─── Visual Effects ───────────────────────────────────────────────────────────
+DEATH_ANIM_DURATION = 0.4
+SCREEN_SHAKE_DAMAGE = 0.35
+SCREEN_SHAKE_KILL = 0.6
+SCREEN_SHAKE_DECAY = 10.0
+LEVEL_UP_FLASH_DURATION = 1.5
+CAMERA_LERP_SPEED = 5.0
+CAMERA_HEIGHT = 18
+CAMERA_DISTANCE = 22
+CAMERA_ANGLE = 30
+
+# ─── Particles ────────────────────────────────────────────────────────────────
+PARTICLE_GRAVITY = 9.8
+PARTICLE_SCALE_DECAY = 0.97
+MAX_PARTICLES = 150
+PARTICLE_HIT_COUNT = 8
+PARTICLE_KILL_COUNT = 14
+PARTICLE_DAMAGE_COUNT = 6
+PARTICLE_COLLECT_COUNT = 10
+PARTICLE_LEVELUP_COUNT = 20
+
+# ─── Stars ────────────────────────────────────────────────────────────────────
+STAR_COUNT = 50
+STAR_HEIGHT_MIN = 80
+STAR_HEIGHT_MAX = 150
+STAR_SPREAD = 200
+
+# ─── Biome Generation ─────────────────────────────────────────────────────────
+BIOME_BLOB_COUNT = 50
+BIOME_BLOB_RADIUS_MIN = 3
+BIOME_BLOB_RADIUS_MAX = 10
+BIOME_BLOB_JITTER = 1.5
+SPAWN_CLEAR_RADIUS = 5
+SPAWN_PAD_RADIUS = 3
+
+# ─── Difficulty Scaling ──────────────────────────────────────────────────────
+EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake']
+DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 C_GRASS    = color.rgb(34, 139, 34)
@@ -57,34 +140,42 @@ class WorldGenerator:
 
     @staticmethod
     def generate(size, seed=None):
+        """Generate a 2D grid of biome names for the world.
+
+        Args:
+            size: World grid dimensions (tiles per side).
+            seed: Optional random seed for reproducibility.
+
+        Returns:
+            2D list of biome name strings.
+        """
         if seed is not None:
             random.seed(seed)
         grid = [['grass' for _ in range(size)] for _ in range(size)]
 
         # Place biome blobs
         biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp']
-        num_blobs = 50
-        for _ in range(num_blobs):
+        for _ in range(BIOME_BLOB_COUNT):
             bx = random.randint(0, size - 1)
             by = random.randint(0, size - 1)
             btype = random.choice(biomes)
-            radius = random.randint(3, 10)
+            radius = random.randint(BIOME_BLOB_RADIUS_MIN, BIOME_BLOB_RADIUS_MAX)
             for dy in range(-radius, radius + 1):
                 for dx in range(-radius, radius + 1):
                     nx, ny = bx + dx, by + dy
                     if 0 <= nx < size and 0 <= ny < size:
                         dist = math.sqrt(dx * dx + dy * dy)
-                        if dist <= radius + random.uniform(-1.5, 1.5):
+                        if dist <= radius + random.uniform(-BIOME_BLOB_JITTER, BIOME_BLOB_JITTER):
                             # Keep spawn area clear
                             spawn = size // 2
-                            if abs(nx - spawn) < 5 and abs(ny - spawn) < 5:
+                            if abs(nx - spawn) < SPAWN_CLEAR_RADIUS and abs(ny - spawn) < SPAWN_CLEAR_RADIUS:
                                 continue
                             grid[ny][nx] = btype
 
         # Ensure spawn area is grass
         spawn = size // 2
-        for dy in range(-3, 4):
-            for dx in range(-3, 4):
+        for dy in range(-SPAWN_PAD_RADIUS, SPAWN_PAD_RADIUS + 1):
+            for dx in range(-SPAWN_PAD_RADIUS, SPAWN_PAD_RADIUS + 1):
                 grid[spawn + dy][spawn + dx] = 'grass'
 
         return grid
@@ -92,6 +183,8 @@ class WorldGenerator:
 
 # ─── Player ───────────────────────────────────────────────────────────────────
 class Player(Entity):
+    """The player-controlled alien character with HP, XP, and tentacle aesthetics."""
+
     def __init__(self, position):
         super().__init__(
             model='sphere',
@@ -100,8 +193,8 @@ class Player(Entity):
             position=position,
             collider='sphere',
         )
-        self.hp = 100
-        self.max_hp = 100
+        self.hp = PLAYER_START_HP
+        self.max_hp = PLAYER_START_HP
         self.speed = PLAYER_SPEED
         self.score = 0
         self.level = 1
@@ -113,6 +206,7 @@ class Player(Entity):
         self.kills = {}
         self.completed_missions = 0
         self.facing = Vec3(0, 0, 1)
+        self.level_up_pending = False
 
         # Tentacle entities
         self.tentacles = []
@@ -136,20 +230,30 @@ class Player(Entity):
                               parent=self.eye_r, position=(0, 0, -0.3))
 
     def gain_xp(self, amount):
+        """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
         while self.xp >= self.xp_to_next:
             self.xp -= self.xp_to_next
             self.level += 1
-            self.xp_to_next = int(self.xp_to_next * 1.5)
-            self.max_hp += 10
-            self.hp = min(self.hp + 20, self.max_hp)
-            self.speed += 0.3
+            self.xp_to_next = int(self.xp_to_next * XP_SCALE_FACTOR)
+            self.max_hp += LEVEL_UP_HP_BONUS
+            self.hp = min(self.hp + LEVEL_UP_HEAL_AMOUNT, self.max_hp)
+            self.speed += LEVEL_UP_SPEED_BONUS
+            self.level_up_pending = True
 
     def take_damage(self, amount):
+        """Apply damage to the player. Returns True if player died.
+
+        Args:
+            amount: Damage points to subtract from HP.
+
+        Returns:
+            True if HP dropped to 0 (player is dead), False otherwise.
+        """
         if self.invuln_timer > 0:
             return False
         self.hp -= amount
-        self.invuln_timer = 0.5
+        self.invuln_timer = PLAYER_INVULN_DURATION
         # Flash red
         self.color = color.rgb(255, 100, 100)
         invoke(setattr, self, 'color', C_ALIEN, delay=0.15)
@@ -159,12 +263,15 @@ class Player(Entity):
         return False
 
     def add_item(self, name, count=1):
+        """Add an item to the player's inventory."""
         self.inventory[name] = self.inventory.get(name, 0) + count
 
     def add_kill(self, name):
+        """Record an enemy kill in the player's kill log."""
         self.kills[name] = self.kills.get(name, 0) + 1
 
     def update_tentacles(self, t):
+        """Animate tentacles with a sinusoidal wave pattern."""
         for i, tent in enumerate(self.tentacles):
             angle_offset = (i - 1.5) * 0.5
             wave = math.sin(t * 5 + i * 1.5) * 0.3
@@ -172,6 +279,7 @@ class Player(Entity):
             tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
 
     def animate_bob(self, t):
+        """Apply vertical bob animation to the player."""
         self.y = 1.2 + math.sin(t * 3) * 0.15
 
     def set_facing_from_mouse(self, cam_pivot):
@@ -186,13 +294,15 @@ class Player(Entity):
 
 # ─── Enemy ─────────────────────────────────────────────────────────────────────
 class Enemy(Entity):
+    """An enemy entity that chases the player when in detection range."""
+
     TYPES = {
         'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0},
         'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2},
         'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4},
-        'Lava Crawler':    {'color': color.orange,         'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1},
-        'Crystal Guardian': {'color': color.cyan,          'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8},
-        'Plasma Drake':    {'color': color.magenta,        'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2},
+        'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1},
+        'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8},
+        'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -212,9 +322,13 @@ class Enemy(Entity):
         self.speed = info['speed']
         self.damage = info['damage']
         self.alive = True
+        self.dying = False
+        self.death_timer = 0.0
+        self.original_scale = info['scale']
+        self.original_color = info['color']
         self.attack_cd = 0
         self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
-        self.wander_timer = random.uniform(1, 3)
+        self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
 
         # Eyes for all enemies
@@ -226,23 +340,55 @@ class Enemy(Entity):
         self.hp_bar = Entity(model='quad', color=color.green, scale=(2, 0.15), parent=self, position=(0, 1.5, -0.01), billboard=True)
 
     def take_damage(self, amount):
+        """Apply damage to the enemy. Returns True if killed."""
         self.hp -= amount
         self.hit_flash = 0.1
         self.color = color.white
-        invoke(setattr, self, 'color', self.TYPES[self.name]['color'], delay=0.1)
+        invoke(setattr, self, 'color', self.original_color, delay=0.1)
         if self.hp <= 0:
             self.alive = False
+            self.dying = True
+            self.death_timer = DEATH_ANIM_DURATION
             return True
         return False
 
     def update_hp_bar(self):
+        """Update the HP bar scale and color based on current health ratio."""
         ratio = max(0, self.hp / self.max_hp)
         self.hp_bar.scale_x = 2 * ratio
         self.hp_bar.x = -1 * (1 - ratio)
+        # Color gradient: green → yellow → red
+        if ratio > 0.5:
+            t = (ratio - 0.5) * 2  # 1.0 at full, 0.0 at half
+            self.hp_bar.color = color.rgb(int(255 * (1 - t)), 255, 0)
+        else:
+            t = ratio * 2  # 1.0 at half, 0.0 at empty
+            self.hp_bar.color = color.rgb(255, int(255 * t), 0)
+
+    def update_death_animation(self, dt):
+        """Animate enemy death: shrink and flash. Returns True when animation is complete."""
+        if not self.dying:
+            return True
+        self.death_timer -= dt
+        # Shrink over death animation duration
+        progress = 1.0 - (self.death_timer / DEATH_ANIM_DURATION)
+        shrink = max(0.01, self.original_scale * (1.0 - progress))
+        self.scale = shrink
+        # Flash between white and original color
+        if int(self.death_timer * 15) % 2 == 0:
+            self.color = color.white
+        else:
+            self.color = self.original_color
+        # Hide HP bar during death
+        self.hp_bar_bg.visible = False
+        self.hp_bar.visible = False
+        return self.death_timer <= 0
 
 
 # ─── Collectible ───────────────────────────────────────────────────────────────
 class Collectible(Entity):
+    """A collectible item that bobs and spins in the world."""
+
     ITEMS = {
         'Space Gloop':    {'color': C_PURPLE, 'value': 10,  'model': 'sphere'},
         'Meteor Shard':   {'color': color.orange, 'value': 25,  'model': 'diamond'},
@@ -266,18 +412,22 @@ class Collectible(Entity):
         self.name = item_type
         self.value = info['value']
         self.bob_offset = random.uniform(0, math.pi * 2)
+        self.item_color = info['color']
         # Glow ring
         self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, 80),
                            scale=3, parent=self, rotation_x=90, position=(0, -0.3, 0))
 
     def animate(self, t):
+        """Bob and spin the collectible each frame."""
         self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
         self.rotation_y += 60 * time.dt
 
 
 # ─── Projectile ────────────────────────────────────────────────────────────────
 class Projectile(Entity):
-    def __init__(self, position, direction, damage=20, speed=50):
+    """A laser projectile fired by the player."""
+
+    def __init__(self, position, direction, damage=PROJECTILE_BASE_DAMAGE, speed=PROJECTILE_SPEED):
         super().__init__(
             model='sphere',
             color=C_LASER,
@@ -287,12 +437,13 @@ class Projectile(Entity):
         self.direction = direction.normalized()
         self.damage = damage
         self.speed = speed
-        self.lifetime = 2.0
+        self.lifetime = PROJECTILE_LIFETIME
 
         # Trail
         self.trail = []
 
     def move(self, dt):
+        """Move the projectile forward. Returns False when lifetime expires."""
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
         return self.lifetime > 0
@@ -313,6 +464,7 @@ MISSION_TEMPLATES = [
 ]
 
 class Mission:
+    """A mission objective with progress tracking."""
     def __init__(self, title, description, target, reward, mission_type, target_count):
         self.title = title
         self.description = description
@@ -327,6 +479,8 @@ class Mission:
 
 # ─── Game ──────────────────────────────────────────────────────────────────────
 class Game:
+    """Main game controller: manages world, entities, HUD, and game state."""
+
     def __init__(self):
         self.seed = random.randint(0, 999999)
         self.world_grid = WorldGenerator.generate(WORLD_SIZE, self.seed)
@@ -345,6 +499,10 @@ class Game:
         self.spawn_timer = 0
         self.mission_timer = 0
 
+        # Visual effects state
+        self.screen_shake = 0.0
+        self.level_up_timer = 0.0
+
         # Build terrain
         self._build_terrain()
 
@@ -355,8 +513,8 @@ class Game:
         # Camera rig: third-person camera
         self.cam_pivot = Entity(position=spawn)
         camera.parent = self.cam_pivot
-        camera.position = (0, 18, -22)
-        camera.rotation = (30, 0, 0)
+        camera.position = (0, CAMERA_HEIGHT, -CAMERA_DISTANCE)
+        camera.rotation = (CAMERA_ANGLE, 0, 0)
 
         # Populate world
         self._spawn_initial_entities()
@@ -368,11 +526,31 @@ class Game:
         AmbientLight(color=color.rgba(100, 100, 100, 255))
 
         # Sky
-        Sky(color=color.rgb(40, 0, 80))
+        Sky(color=color.rgb(25, 0, 60))
+
+        # Stars in the sky
+        self.stars = []
+        for _ in range(STAR_COUNT):
+            angle_h = random.uniform(0, math.pi * 2)
+            angle_v = random.uniform(0.15, math.pi * 0.45)
+            dist = random.uniform(STAR_HEIGHT_MIN, STAR_HEIGHT_MAX)
+            sx = math.cos(angle_h) * math.cos(angle_v) * STAR_SPREAD
+            sy = abs(math.sin(angle_v)) * dist + STAR_HEIGHT_MIN
+            sz = math.sin(angle_h) * math.cos(angle_v) * STAR_SPREAD
+            brightness = random.uniform(0.5, 1.0)
+            star_size = random.uniform(1, 3)
+            star = Entity(
+                model='quad',
+                color=color.rgba(255, 255, 255, int(255 * brightness)),
+                scale=star_size,
+                position=(sx, sy, sz),
+                billboard=True,
+            )
+            self.stars.append(star)
 
         # Fog for atmosphere
-        scene.fog_color = color.rgb(40, 0, 80)
-        scene.fog_density = 0.008
+        scene.fog_color = color.rgb(25, 0, 60)
+        scene.fog_density = 0.007
 
         # HUD
         self._create_hud()
@@ -433,30 +611,44 @@ class Game:
         return False
 
     def _spawn_initial_entities(self):
+        """Populate the world with initial collectibles and enemies."""
         spawn_x = WORLD_SIZE // 2 * TILE_SCALE
         spawn_z = WORLD_SIZE // 2 * TILE_SCALE
 
         # Spawn collectibles
-        for _ in range(200):
+        for _ in range(INITIAL_COLLECTIBLES):
             x = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
             z = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
             if self._is_walkable(x, z):
                 dist = math.sqrt((x - spawn_x) ** 2 + (z - spawn_z) ** 2)
-                if dist > 15:
+                if dist > SPAWN_SAFE_RADIUS:
                     c = Collectible(position=Vec3(x, 1, z))
                     self.collectibles.append(c)
 
         # Spawn enemies
-        for _ in range(60):
+        for _ in range(INITIAL_ENEMIES):
             x = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
             z = random.uniform(2, (WORLD_SIZE - 2) * TILE_SCALE)
             if self._is_walkable(x, z):
                 dist = math.sqrt((x - spawn_x) ** 2 + (z - spawn_z) ** 2)
-                if dist > 30:
-                    e = Enemy(position=Vec3(x, 1, z))
+                if dist > ENEMY_SPAWN_SAFE_RADIUS:
+                    # Distance-based difficulty scaling for initial spawn
+                    enemy_type = self._pick_enemy_type(dist)
+                    e = Enemy(position=Vec3(x, 1, z), enemy_type=enemy_type)
                     self.enemies.append(e)
 
+    def _pick_enemy_type(self, distance_from_spawn):
+        """Pick an enemy type based on distance from spawn (farther = harder)."""
+        tier = min(int(distance_from_spawn / DIFFICULTY_SCALE_DISTANCE), 2)
+        if tier == 0:
+            return random.choice(EASY_ENEMY_TYPES)
+        elif tier == 1:
+            return random.choice(MEDIUM_ENEMY_TYPES)
+        else:
+            return random.choice(HARD_ENEMY_TYPES)
+
     def _assign_missions(self, count=1):
+        """Assign new random missions from templates."""
         templates = list(MISSION_TEMPLATES)
         random.shuffle(templates)
         for template in templates[:count]:
@@ -465,6 +657,7 @@ class Game:
             self.add_message(f"New Mission: {m.title}")
 
     def add_message(self, msg):
+        """Add a timed message to the HUD message queue."""
         self.messages.append((self.t, msg))
         if len(self.messages) > 50:
             self.messages = self.messages[-50:]
@@ -501,6 +694,9 @@ class Game:
         self.game_over_sub = Text(text='', position=(0, -0.08), origin=(0, 0), scale=2, color=color.white, visible=False)
         self.game_over_restart = Text(text='', position=(0, -0.15), origin=(0, 0), scale=1.5, color=color.yellow, visible=False)
 
+        # Level-up popup
+        self.level_up_text = Text(text='', position=(0, 0.2), origin=(0, 0), scale=3, color=color.yellow, visible=False)
+
         # Minimap
         self.minimap_shown = True
         self.minimap_entity = None
@@ -521,15 +717,29 @@ class Game:
 
     def _update_minimap_colors(self):
         """Color-code minimap terrain."""
-        # Simplified: just set base color, overlay will be drawn in update
         pass
 
     def _spawn_particles(self, pos, col, count=8):
+        """Spawn burst particles at a position. Respects MAX_PARTICLES limit."""
+        count = min(count, MAX_PARTICLES - len(self.particles))
+        if count <= 0:
+            return
         for _ in range(count):
             vel = Vec3(random.uniform(-3, 3), random.uniform(1, 5), random.uniform(-3, 3))
             p = Entity(model='sphere', color=col, scale=random.uniform(0.1, 0.3),
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.5, 1.5)))
+
+    def _spawn_collect_burst(self, pos, col):
+        """Spawn a ring burst effect when collecting an item."""
+        count = min(PARTICLE_COLLECT_COUNT, MAX_PARTICLES - len(self.particles))
+        for i in range(count):
+            angle = (i / count) * math.pi * 2
+            spread = random.uniform(1.5, 3.5)
+            vel = Vec3(math.cos(angle) * spread, random.uniform(2, 5), math.sin(angle) * spread)
+            p = Entity(model='sphere', color=col, scale=random.uniform(0.15, 0.35),
+                       position=pos)
+            self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
     def shoot(self):
         """Fire tentacle laser toward mouse."""
@@ -547,8 +757,8 @@ class Game:
         proj = Projectile(
             position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5,
             direction=direction,
-            damage=20 + self.player.level * 2,
-            speed=50,
+            damage=PROJECTILE_BASE_DAMAGE + self.player.level * PROJECTILE_LEVEL_DAMAGE_BONUS,
+            speed=PROJECTILE_SPEED,
         )
         self.projectiles.append(proj)
         self._spawn_particles(proj.position, C_LASER, count=3)
@@ -560,6 +770,13 @@ class Game:
         hp_ratio = max(0, p.hp / p.max_hp)
         self.hp_bar.scale_x = 0.4 * hp_ratio
         self.hp_bar.x = -0.55 - 0.2 * (1 - hp_ratio)
+        # HP bar color gradient: green → yellow → red
+        if hp_ratio > 0.5:
+            t = (hp_ratio - 0.5) * 2
+            self.hp_bar.color = color.rgb(int(255 * (1 - t)), 255, 0)
+        else:
+            t = hp_ratio * 2
+            self.hp_bar.color = color.rgb(255, int(255 * t), 0)
         self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
         # XP bar
@@ -569,6 +786,14 @@ class Game:
 
         self.level_text.text = f'Lv.{p.level}'
         self.score_text.text = f'Score: {p.score}'
+
+        # Level-up flash
+        if self.level_up_timer > 0:
+            self.level_up_text.visible = True
+            alpha = min(1.0, self.level_up_timer / 0.5)
+            self.level_up_text.color = color.rgba(255, 255, 0, int(255 * alpha))
+        else:
+            self.level_up_text.visible = False
 
         # Messages
         visible = self.messages[-5:]
@@ -589,6 +814,7 @@ class Game:
         self.minimap_player_dot.position = (px, pz)
 
     def _update_missions(self):
+        """Check and update mission progress for all active missions."""
         p = self.player
         for m in self.missions:
             if m.completed and not m.turned_in:
@@ -684,7 +910,7 @@ def game_update():
     if p.invuln_timer > 0:
         p.invuln_timer -= time.dt
         # Blink
-        p.visible = int(game.t * 20) % 2 == 0
+        p.visible = int(game.t * PLAYER_BLINK_RATE) % 2 == 0
     else:
         p.visible = True
 
@@ -696,11 +922,51 @@ def game_update():
     if mouse.left and not game.game_over:
         game.shoot()
 
-    # ── Camera Follow ──
-    game.cam_pivot.position = lerp(game.cam_pivot.position, p.position + Vec3(0, 0, 0), time.dt * 5)
+    # ── Level-up visual feedback ──
+    if p.level_up_pending:
+        p.level_up_pending = False
+        game.level_up_timer = LEVEL_UP_FLASH_DURATION
+        game.level_up_text.text = f'LEVEL UP! Lv.{p.level}'
+        game.level_up_text.visible = True
+        game._spawn_particles(p.position, color.yellow, count=PARTICLE_LEVELUP_COUNT)
+        # Brief scale pulse on player
+        p.scale = 1.8
+        invoke(setattr, p, 'scale', 1.2, delay=0.3)
+        game.add_message(f"Level Up! Now Lv.{p.level}!")
+
+    if game.level_up_timer > 0:
+        game.level_up_timer -= time.dt
+        if game.level_up_timer <= 0:
+            game.level_up_text.visible = False
+
+    # ── Camera Follow with Screen Shake ──
+    target_pos = p.position + Vec3(0, 0, 0)
+    shake_offset = Vec3(0, 0, 0)
+    if game.screen_shake > 0.01:
+        shake_offset = Vec3(
+            random.uniform(-1, 1) * game.screen_shake,
+            random.uniform(-1, 1) * game.screen_shake,
+            random.uniform(-0.5, 0.5) * game.screen_shake,
+        )
+        game.screen_shake -= game.screen_shake * SCREEN_SHAKE_DECAY * time.dt
+    else:
+        game.screen_shake = 0
+    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * CAMERA_LERP_SPEED) + shake_offset
 
     # ── Update Enemies ──
     for enemy in game.enemies[:]:
+        # Handle death animation
+        if enemy.dying:
+            if enemy.update_death_animation(time.dt):
+                # Death animation complete, remove enemy
+                destroy(enemy)
+                destroy(enemy.eye_l)
+                destroy(enemy.eye_r)
+                destroy(enemy.hp_bar_bg)
+                destroy(enemy.hp_bar)
+                game.enemies.remove(enemy)
+            continue
+
         if not enemy.alive:
             destroy(enemy)
             destroy(enemy.eye_l)
@@ -712,6 +978,7 @@ def game_update():
 
         dist_to_player = (enemy.position - p.position).length()
 
+        # Skip AI updates for very distant enemies (performance)
         if dist_to_player < ENEMY_DETECT_RANGE:
             # Chase player
             direction = (p.position - enemy.position).normalized()
@@ -725,8 +992,8 @@ def game_update():
             enemy.wander_timer -= time.dt
             if enemy.wander_timer <= 0:
                 enemy.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
-                enemy.wander_timer = random.uniform(2, 5)
-            new_pos = enemy.position + enemy.wander_dir * enemy.speed * 0.3 * time.dt
+                enemy.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
+            new_pos = enemy.position + enemy.wander_dir * enemy.speed * ENEMY_WANDER_SPEED_FACTOR * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
             else:
@@ -736,8 +1003,9 @@ def game_update():
         if dist_to_player < ENEMY_ATTACK_RANGE:
             if enemy.attack_cd <= 0:
                 died = p.take_damage(enemy.damage)
-                game._spawn_particles(p.position, color.red, count=6)
-                enemy.attack_cd = 1.0
+                game.screen_shake = SCREEN_SHAKE_DAMAGE
+                game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
                 if died:
                     game.game_over = True
                     game.game_over_text.visible = True
@@ -763,23 +1031,27 @@ def game_update():
 
         # Check collision with enemies
         for enemy in game.enemies:
-            if not enemy.alive:
+            if not enemy.alive or enemy.dying:
                 continue
             if (proj.position - enemy.position).length() < enemy.scale_x + 0.5:
                 killed = enemy.take_damage(proj.damage)
-                game._spawn_particles(enemy.position, color.yellow, count=10)
+                game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
+                game.screen_shake = max(game.screen_shake, 0.15)
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
                 if killed:
                     p.add_kill(enemy.name)
-                    p.gain_xp(25 + enemy.max_hp // 10)
+                    xp_gain = BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR
+                    p.gain_xp(xp_gain)
                     p.score += enemy.max_hp
+                    game.screen_shake = SCREEN_SHAKE_KILL
                     # Drop loot
-                    for _ in range(random.randint(1, 3)):
+                    for _ in range(random.randint(LOOT_DROP_MIN, LOOT_DROP_MAX)):
                         offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
                         c = Collectible(position=enemy.position + offset)
                         game.collectibles.append(c)
+                    game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game.add_message(f"Defeated {enemy.name}!")
                 break
 
@@ -797,7 +1069,7 @@ def game_update():
             p.add_item(col.name)
             p.score += col.value
             p.gain_xp(col.value // 10)
-            game._spawn_particles(col.position, col.color, count=6)
+            game._spawn_collect_burst(col.position, col.item_color)
             game.add_message(f"Found {col.name}! +{col.value} pts")
             destroy(col.glow)
             destroy(col)
@@ -807,31 +1079,36 @@ def game_update():
     for item in game.particles[:]:
         p_ent, vel, lifetime = item
         p_ent.position += vel * time.dt
-        vel.y -= 9.8 * time.dt
+        vel = Vec3(vel.x, vel.y - PARTICLE_GRAVITY * time.dt, vel.z)
         lifetime -= time.dt
-        p_ent.scale *= 0.97
+        p_ent.scale *= PARTICLE_SCALE_DECAY
         if lifetime <= 0:
             destroy(p_ent)
             game.particles.remove(item)
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
-    if game.spawn_timer >= 10:
+    if game.spawn_timer >= ENEMY_SPAWN_INTERVAL:
         game.spawn_timer = 0
-        alive = len([e for e in game.enemies if e.alive])
-        if alive < 40:
+        alive_count = len([e for e in game.enemies if e.alive or e.dying])
+        if alive_count < MAX_ACTIVE_ENEMIES:
             angle = random.uniform(0, math.pi * 2)
-            dist = random.uniform(30, 60)
+            dist = random.uniform(ENEMY_SPAWN_DISTANCE_MIN, ENEMY_SPAWN_DISTANCE_MAX)
             ex = p.x + math.cos(angle) * dist
             ez = p.z + math.sin(angle) * dist
             ex = max(5, min(ex, (WORLD_SIZE - 5) * TILE_SCALE))
             ez = max(5, min(ez, (WORLD_SIZE - 5) * TILE_SCALE))
             if game._is_walkable(ex, ez):
-                e = Enemy(position=Vec3(ex, 1, ez))
+                # Distance-based difficulty scaling
+                spawn_center_x = WORLD_SIZE // 2 * TILE_SCALE
+                spawn_center_z = WORLD_SIZE // 2 * TILE_SCALE
+                dist_from_spawn = math.sqrt((ex - spawn_center_x) ** 2 + (ez - spawn_center_z) ** 2)
+                enemy_type = game._pick_enemy_type(dist_from_spawn)
+                e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
                 game.enemies.append(e)
 
     # Respawn collectibles
-    if len(game.collectibles) < 120 and random.random() < 0.01:
+    if len(game.collectibles) < MIN_COLLECTIBLES and random.random() < COLLECTIBLE_RESPAWN_CHANCE:
         angle = random.uniform(0, math.pi * 2)
         dist = random.uniform(20, 50)
         cx = p.x + math.cos(angle) * dist
