@@ -29,17 +29,20 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.1.2 — 3D!)
+## Features (v2.2.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **9 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, **Alien Mushroom Forest**
-- 9 collectible item types — including **3 power-ups**: Health Potion, Speed Boost, Shield Crystal
-- **9 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny)
+- 10 collectible item types — including **4 power-ups**: Health Potion, Speed Boost, Shield Crystal, **Weapon Upgrade (Spread Shot)**
+- **10 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!)
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
+- **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 4 seconds
 - **Speed Boost** — 1.8x speed for 5 seconds
 - **Health Potion** — restores 30 HP instantly
+- **Combo system** — chain kills within 4 seconds for XP and score multipliers! Combo counter displayed on HUD with escalating colors
+- **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes
 - Mission system with collection and kill objectives
 - XP and leveling system (get stronger over time!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
@@ -82,14 +85,14 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 
 | Biome | Color | Walkable | Features |
 |-------|-------|----------|----------|
-| Grass | Green | Yes | Safe starting zone |
+| Grass | Green | Yes | Safe starting zone, rain weather |
 | Desert | Sandy | Yes | Open and exposed |
 | Water | Blue | No | Blocks movement |
-| Lava | Red | No | Blocks movement |
-| Forest | Dark Green | Yes | 3D trees |
+| Lava | Red | No | Blocks movement, rising ember particles |
+| Forest | Dark Green | Yes | 3D trees, rain weather |
 | Crystal | Cyan | Yes | Crystal spires |
-| Snow | White | Yes | Icy terrain |
-| Swamp | Murky Green | Yes | Squishy ground |
+| Snow | White | Yes | Icy terrain, snowfall weather |
+| Swamp | Murky Green | Yes | Squishy ground, rain weather |
 | Mushroom | Alien Green | Yes | Colorful alien mushrooms with spore glow |
 
 ## Collectibles
@@ -105,6 +108,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Health Potion** | 15 pts | Restores 30 HP | Uncommon |
 | **Speed Boost** | 15 pts | 1.8x speed for 5s | Uncommon |
 | **Shield Crystal** | 15 pts | Blocks all damage for 4s | Rare |
+| **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
 
 ## Enemies
 
@@ -114,11 +118,20 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Swarm Mite | 15 | Very Fast | 5 | — | Tiny & fast, spawns in groups |
 | Space Beetle | 50 | Medium | 15 | — | Aggressive |
 | Phase Shifter | 70 | Medium | 20 | **Teleports** | Warps near player periodically |
+| **Void Bomber** | 60 | Medium | 20 | **Kamikaze!** | Explodes near player, also damages other enemies |
 | Void Wraith | 80 | Medium | 25 | — | Spooky |
 | Spore Spitter | 90 | Medium | 15 | **Shoots back** | Fires projectiles at player |
 | Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
 | Crystal Guardian | 200 | Slow | 40 | — | Tough |
 | Plasma Drake | 350 | Very Fast | 50 | — | Endgame boss |
+
+## Combo System
+
+Chain kills within 4 seconds to build combos! Each combo tier grants:
+- **+10% XP bonus** per tier (up to 10 tiers)
+- **+5% score bonus** per tier (up to 10 tiers)
+- HUD display with escalating colors: yellow → orange → red
+- Combo counter scales up visually as it grows
 
 ## Tech Stack
 

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.1.2"
+VERSION = "2.2.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -151,10 +151,37 @@ SPEED_BOOST_MULTIPLIER = 1.8
 SHIELD_DURATION = 4.0
 HEALTH_POTION_HEAL = 30
 
+# ─── Combo System ────────────────────────────────────────────────────────────
+COMBO_TIMEOUT = 4.0        # seconds before combo resets
+COMBO_XP_BONUS_PER_TIER = 0.1  # +10% XP per combo tier
+COMBO_SCORE_BONUS_PER_TIER = 0.05  # +5% score per combo tier
+COMBO_DISPLAY_LIFETIME = 2.5
+
+# ─── Weapon Upgrade (Spread Shot) ────────────────────────────────────────────
+WEAPON_UPGRADE_DURATION = 8.0
+SPREAD_ANGLE = 12  # degrees between spread shot projectiles
+
+# ─── Weather ────────────────────────────────────────────────────────────────
+WEATHER_PARTICLE_COUNT = 60
+WEATHER_SNOW_COUNT = 40
+WEATHER_EMBER_COUNT = 30
+WEATHER_FALL_SPEED_RAIN = 25
+WEATHER_FALL_SPEED_SNOW = 5
+WEATHER_FALL_SPEED_EMBER = 3
+WEATHER_DRIFT_SNOW = 2
+WEATHER_DRIFT_EMBER = 4
+
+# ─── Void Bomber (New Enemy) ────────────────────────────────────────────────
+VOID_BOMBER_DETECT_RANGE = 30
+VOID_BOMBER_FUSE_RANGE = 6
+VOID_BOMBER_FUSE_TIME = 1.2
+VOID_BOMBER_EXPLOSION_RADIUS = 5.5
+VOID_BOMBER_EXPLOSION_DAMAGE = 40
+
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
@@ -270,6 +297,7 @@ class Player(Entity):
         # Power-up timers
         self.speed_boost_timer = 0
         self.shield_timer = 0
+        self.weapon_upgrade_timer = 0  # Spread shot duration
 
         # Tentacle entities
         self.tentacles = []
@@ -373,6 +401,7 @@ class Enemy(Entity):
         'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
         'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 45},
+        'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -410,6 +439,12 @@ class Enemy(Entity):
         self.is_spore_spitter = (enemy_type == 'Spore Spitter')
         self.spit_timer = random.uniform(2, 4) if self.is_spore_spitter else 0
         self.is_swarm_mite = (enemy_type == 'Swarm Mite')
+
+        # Void Bomber: kamikaze that explodes near player
+        self.is_void_bomber = (enemy_type == 'Void Bomber')
+        self.fuse_timer = 0
+        self.fuse_active = False
+        self.pulse_speed = 0
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -538,6 +573,7 @@ class Collectible(Entity):
         'Health Potion':  {'color': color.rgb(255, 50, 50),  'value': 15,  'model': 'sphere'},
         'Speed Boost':    {'color': color.rgb(50, 255, 50),  'value': 15,  'model': 'diamond'},
         'Shield Crystal': {'color': color.rgb(100, 200, 255),'value': 15,  'model': 'diamond'},
+        'Weapon Upgrade': {'color': color.rgb(255, 150, 0),  'value': 20,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -737,6 +773,14 @@ class Game:
         self.hit_stop_timer = 0.0
         self.current_biome = 'grass'
 
+        # Combo system
+        self.combo_count = 0
+        self.combo_timer = 0.0
+        self.combo_display_timer = 0.0
+
+        # Weather particles
+        self.weather_particles = []
+
         # Build terrain
         self._build_terrain()
 
@@ -790,6 +834,9 @@ class Game:
         # Fog for atmosphere
         scene.fog_color = color.rgb(25, 0, 60)
         scene.fog_density = 0.007
+
+        # Weather particles (rain, snow, embers)
+        self._init_weather()
 
         # HUD
         self._create_hud()
@@ -878,7 +925,8 @@ class Game:
                       'mission_text', 'controls_text', 'version_text',
                       'game_over_text', 'game_over_sub', 'game_over_stats',
                       'game_over_restart', 'level_up_text', 'dash_text',
-                      'powerup_text', 'crosshair', 'crosshair2'):
+                      'powerup_text', 'crosshair', 'crosshair2',
+                      'combo_text', 'weapon_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -900,6 +948,12 @@ class Game:
         # Destroy lights
         if hasattr(self, 'sun') and self.sun:
             destroy(self.sun)
+
+        # Destroy weather particles
+        for wp in self.weather_particles:
+            if wp and hasattr(wp, 'enabled'):
+                destroy(wp)
+        self.weather_particles.clear()
 
         # Destroy Sky (Ursina's Sky is a special entity)
         for e in scene.entities[:]:
@@ -1126,6 +1180,12 @@ class Game:
         self.dash_text = Text(text='DASH READY', position=(-0.75, 0.37), scale=0.9, color=color.cyan)
         self.powerup_text = Text(text='', position=(-0.75, 0.33), scale=0.85, color=color.green)
 
+        # Combo counter display
+        self.combo_text = Text(text='', position=(0.35, 0.3), scale=2.0, color=color.yellow, visible=False, origin=(0, 0))
+
+        # Weapon upgrade indicator
+        self.weapon_text = Text(text='', position=(-0.75, 0.29), scale=0.85, color=color.orange)
+
         # Minimap
         self.minimap_shown = True
         self.minimap_entity = None
@@ -1147,6 +1207,108 @@ class Game:
     def _update_minimap_colors(self):
         """Color-code minimap terrain."""
         pass
+
+    def _init_weather(self):
+        """Create weather particle entities that appear based on current biome."""
+        self.weather_particles = []
+        # Rain particles (used in grass, forest, swamp biomes)
+        for _ in range(WEATHER_PARTICLE_COUNT):
+            p = Entity(
+                model='cube',
+                color=color.rgba(100, 150, 255, 80),
+                scale=(0.03, 0.4, 0.03),
+                position=Vec3(0, -100, 0),  # hidden below world
+                visible=False,
+            )
+            p.fall_speed = WEATHER_FALL_SPEED_RAIN + random.uniform(-3, 3)
+            p.drift = random.uniform(-0.5, 0.5)
+            p.weather_type = 'rain'
+            self.weather_particles.append(p)
+
+        # Snow particles (used in snow biome)
+        for _ in range(WEATHER_SNOW_COUNT):
+            p = Entity(
+                model='sphere',
+                color=color.rgba(240, 240, 255, 120),
+                scale=0.12,
+                position=Vec3(0, -100, 0),
+                visible=False,
+            )
+            p.fall_speed = WEATHER_FALL_SPEED_SNOW + random.uniform(-1, 1)
+            p.drift = random.uniform(-WEATHER_DRIFT_SNOW, WEATHER_DRIFT_SNOW)
+            p.drift_phase = random.uniform(0, math.pi * 2)
+            p.weather_type = 'snow'
+            self.weather_particles.append(p)
+
+        # Ember particles (used in lava biome)
+        for _ in range(WEATHER_EMBER_COUNT):
+            p = Entity(
+                model='sphere',
+                color=color.rgba(255, 120, 30, 150),
+                scale=random.uniform(0.05, 0.15),
+                position=Vec3(0, -100, 0),
+                visible=False,
+            )
+            p.fall_speed = WEATHER_FALL_SPEED_EMBER + random.uniform(-1, 1)
+            p.drift = random.uniform(-WEATHER_DRIFT_EMBER, WEATHER_DRIFT_EMBER)
+            p.rise_speed = random.uniform(2, 6)
+            p.weather_type = 'ember'
+            self.weather_particles.append(p)
+
+    def _update_weather(self, dt, player_pos):
+        """Update weather particles based on current biome."""
+        biome = self.current_biome
+        # Determine which weather type is active
+        if biome == 'snow':
+            active_type = 'snow'
+        elif biome == 'lava':
+            active_type = 'ember'
+        elif biome in ('grass', 'forest', 'swamp'):
+            active_type = 'rain'
+        else:
+            active_type = None
+
+        for wp in self.weather_particles:
+            if wp.weather_type == active_type:
+                wp.visible = True
+                if wp.weather_type == 'rain':
+                    # Rain: falls straight down in a column around the player
+                    if wp.y < 0:
+                        # Respawn above player
+                        wp.x = player_pos.x + random.uniform(-30, 30)
+                        wp.z = player_pos.z + random.uniform(-30, 30)
+                        wp.y = player_pos.y + random.uniform(15, 30)
+                    wp.y -= wp.fall_speed * dt
+                    wp.x += wp.drift * dt
+                    # Hide if fell below ground
+                    if wp.y < 0:
+                        wp.visible = False
+                elif wp.weather_type == 'snow':
+                    # Snow: falls slowly with lateral drift
+                    if wp.y < 0:
+                        wp.x = player_pos.x + random.uniform(-35, 35)
+                        wp.z = player_pos.z + random.uniform(-35, 35)
+                        wp.y = player_pos.y + random.uniform(10, 25)
+                    wp.y -= wp.fall_speed * dt
+                    wp.drift_phase += dt * 2
+                    wp.x += math.sin(wp.drift_phase) * wp.drift * dt
+                    wp.z += wp.drift * 0.3 * dt
+                    if wp.y < 0:
+                        wp.visible = False
+                elif wp.weather_type == 'ember':
+                    # Embers: rise upward from ground
+                    if wp.y < 0:
+                        wp.x = player_pos.x + random.uniform(-25, 25)
+                        wp.z = player_pos.z + random.uniform(-25, 25)
+                        wp.y = random.uniform(0, 2)
+                    wp.y += wp.rise_speed * dt
+                    wp.x += math.sin(self.t * 2 + wp.drift_phase) * wp.drift * dt
+                    wp.z += wp.drift * 0.5 * dt
+                    # Fade and respawn after rising too high
+                    if wp.y > player_pos.y + 20:
+                        wp.visible = False
+            else:
+                wp.visible = False
 
     def _spawn_particles(self, pos, col, count=8):
         """Spawn burst particles at a position. Respects MAX_PARTICLES limit."""
@@ -1171,7 +1333,7 @@ class Game:
             self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
     def shoot(self):
-        """Fire tentacle laser toward mouse."""
+        """Fire tentacle laser toward mouse. Supports spread shot when weapon upgrade active."""
         if self.player.shoot_timer > 0 or self.game_over:
             return
         self.player.shoot_timer = SHOOT_COOLDOWN
@@ -1183,14 +1345,32 @@ class Game:
         else:
             direction = self.player.facing
 
-        proj = Projectile(
-            position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5,
-            direction=direction,
-            damage=PROJECTILE_BASE_DAMAGE + self.player.level * PROJECTILE_LEVEL_DAMAGE_BONUS,
-            speed=PROJECTILE_SPEED,
-        )
-        self.projectiles.append(proj)
-        self._spawn_particles(proj.position, C_LASER, count=3)
+        base_damage = PROJECTILE_BASE_DAMAGE + self.player.level * PROJECTILE_LEVEL_DAMAGE_BONUS
+
+        if self.player.weapon_upgrade_timer > 0:
+            # Spread shot: fire 3 projectiles in a fan pattern
+            base_angle = math.atan2(direction.x, direction.z)
+            for offset in [-SPREAD_ANGLE, 0, SPREAD_ANGLE]:
+                angle = base_angle + math.radians(offset)
+                spread_dir = Vec3(math.sin(angle), 0, math.cos(angle)).normalized()
+                proj = Projectile(
+                    position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5,
+                    direction=spread_dir,
+                    damage=base_damage,
+                    speed=PROJECTILE_SPEED,
+                )
+                self.projectiles.append(proj)
+            self._spawn_particles(self.player.position + Vec3(0, 1, 0), color.rgb(255, 150, 0), count=5)
+        else:
+            # Normal single shot
+            proj = Projectile(
+                position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5,
+                direction=direction,
+                damage=base_damage,
+                speed=PROJECTILE_SPEED,
+            )
+            self.projectiles.append(proj)
+            self._spawn_particles(proj.position, C_LASER, count=3)
 
     def _update_hud(self):
         """Update HUD elements each frame."""
@@ -1258,6 +1438,38 @@ class Game:
             pu_lines.append(f'SHIELD: {p.shield_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
+
+        # Combo display
+        if game.combo_display_timer > 0:
+            game.combo_display_timer -= time.dt
+            if game.combo_count >= 2:
+                self.combo_text.visible = True
+                tier = min(game.combo_count, 10)
+                alpha = min(1.0, game.combo_display_timer / 0.5)
+                # Color shifts from yellow to orange to red as combo grows
+                if tier < 4:
+                    self.combo_text.color = color.rgba(255, 255, 0, int(255 * alpha))
+                elif tier < 7:
+                    self.combo_text.color = color.rgba(255, 150, 0, int(255 * alpha))
+                else:
+                    self.combo_text.color = color.rgba(255, 50, 50, int(255 * alpha))
+                scale_bonus = 1.0 + min(game.combo_count * 0.15, 1.5)
+                self.combo_text.scale = 2.0 * scale_bonus
+                self.combo_text.text = f'COMBO x{game.combo_count}'
+            else:
+                self.combo_text.visible = False
+        else:
+            self.combo_text.visible = False
+            if game.combo_count > 0:
+                game.combo_count = 0
+
+        # Weapon upgrade indicator
+        if p.weapon_upgrade_timer > 0:
+            self.weapon_text.text = f'SPREAD SHOT: {p.weapon_upgrade_timer:.1f}s'
+            self.weapon_text.color = color.orange
+        else:
+            self.weapon_text.text = ''
+            self.weapon_text.color = color.gray
 
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
@@ -1415,6 +1627,16 @@ def game_update():
         p.shield_timer -= time.dt
         # Pulsing shield effect
         p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
+
+    # Weapon upgrade timer
+    if p.weapon_upgrade_timer > 0:
+        p.weapon_upgrade_timer -= time.dt
+
+    # Combo timer
+    if game.combo_timer > 0:
+        game.combo_timer -= time.dt
+        if game.combo_timer <= 0:
+            game.combo_count = 0
 
     if move_dir.length() > 0 and p.dash_timer <= 0:
         move_dir = move_dir.normalized()
@@ -1576,6 +1798,57 @@ def game_update():
                     game.enemy_projectiles.append(ep)
                     game._spawn_particles(enemy.position, color.rgb(200, 100, 0), count=4)
                     enemy.spit_timer = random.uniform(2.5, 4.5)
+
+            # ── Void Bomber: Kamikaze explosion near player ──
+            if enemy.is_void_bomber:
+                if dist_to_player < VOID_BOMBER_FUSE_RANGE and not enemy.fuse_active:
+                    # Start fuse countdown
+                    enemy.fuse_active = True
+                    enemy.fuse_timer = VOID_BOMBER_FUSE_TIME
+                    game.add_message("Void Bomber is about to explode!")
+                if enemy.fuse_active:
+                    enemy.fuse_timer -= time.dt
+                    # Pulsing red glow as fuse counts down
+                    pulse = 1.0 - (enemy.fuse_timer / VOID_BOMBER_FUSE_TIME)
+                    enemy.pulse_speed += time.dt * 30
+                    if int(enemy.pulse_speed) % 2 == 0:
+                        enemy.color = color.rgb(255, int(50 * (1 - pulse)), 0)
+                    else:
+                        enemy.color = color.rgb(200, 0, 0)
+                    enemy.scale = enemy.original_scale * (1.0 + pulse * 0.4)
+                    if enemy.fuse_timer <= 0:
+                        # EXPLODE!
+                        game._spawn_particles(enemy.position, color.rgb(255, 100, 0), count=20)
+                        game._spawn_particles(enemy.position, color.yellow, count=10)
+                        game.screen_shake = max(game.screen_shake, 1.0)
+                        # Damage player if in range
+                        if dist_to_player < VOID_BOMBER_EXPLOSION_RADIUS:
+                            if p.shield_timer > 0:
+                                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                                game.add_message("Shield absorbed explosion!")
+                            else:
+                                died = p.take_damage(VOID_BOMBER_EXPLOSION_DAMAGE)
+                                game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                                game.damage_numbers.append(DamageNumber(p.position, VOID_BOMBER_EXPLOSION_DAMAGE, is_kill=False))
+                                if died:
+                                    game._show_death_screen(p)
+                        # Damage other nearby enemies too (friendly fire!)
+                        for other_enemy in game.enemies:
+                            if other_enemy is enemy or not other_enemy.alive or other_enemy.dying:
+                                continue
+                            edist = (other_enemy.position - enemy.position).length()
+                            if edist < VOID_BOMBER_EXPLOSION_RADIUS:
+                                other_killed = other_enemy.take_damage(VOID_BOMBER_EXPLOSION_DAMAGE // 2)
+                                if other_killed:
+                                    p.add_kill(other_enemy.name)
+                                    xp_gain = BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR
+                                    p.gain_xp(xp_gain)
+                                    p.score += other_enemy.max_hp
+                                    game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True))
+                        # Kill the bomber
+                        enemy.alive = False
+                        enemy.dying = True
+                        enemy.death_timer = DEATH_ANIM_DURATION
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -1636,9 +1909,15 @@ def game_update():
                     game.projectiles.remove(proj)
                 if killed:
                     p.add_kill(enemy.name)
-                    xp_gain = BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR
+                    # Combo system: increment combo and apply bonus
+                    game.combo_count += 1
+                    game.combo_timer = COMBO_TIMEOUT
+                    game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
+                    combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult)
                     p.gain_xp(xp_gain)
-                    p.score += enemy.max_hp
+                    p.score += int(enemy.max_hp * combo_score_mult)
                     game.screen_shake = SCREEN_SHAKE_KILL
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -1744,6 +2023,10 @@ def game_update():
                 p.shield_timer = SHIELD_DURATION
                 game.add_message(f"Shield Crystal! {SHIELD_DURATION}s of protection!")
                 game._spawn_particles(col.position, color.rgb(100, 200, 255), count=12)
+            elif col.name == 'Weapon Upgrade':
+                p.weapon_upgrade_timer = WEAPON_UPGRADE_DURATION
+                game.add_message(f"Weapon Upgrade! Spread shot for {WEAPON_UPGRADE_DURATION}s!")
+                game._spawn_particles(col.position, color.rgb(255, 150, 0), count=12)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -1751,7 +2034,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
             # Start pop animation instead of immediate destroy
@@ -1801,6 +2084,9 @@ def game_update():
     b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 2)
     scene.fog_color = color.rgb(int(r), int(g), int(b))
     scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 2)
+
+    # ── Weather Effects ──
+    game._update_weather(time.dt, p.position)
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
