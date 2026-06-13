@@ -29,7 +29,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.1.1 — 3D!)
+## Features (v2.1.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **9 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, **Alien Mushroom Forest**
@@ -64,6 +64,10 @@ python game.py
 - **Collectible pop animation** — items scale up and spin before disappearing
 - **Biome-aware fog** — fog color and density smoothly transition as you walk between biomes
 - **Twinkling starfield** — stars pulse in brightness for an immersive alien sky
+- **Enemy knockback** — enemies get pushed back when hit by projectiles for satisfying combat feel
+- **Elastic collectible pop** — items flash white and scale up with a bouncy overshoot before disappearing
+- **Player-level difficulty scaling** — newly spawned enemies gain HP and damage as you level up, keeping the challenge fresh
+- **Per-type enemy detection ranges** — Swarm Mites detect from further away (swarm behavior), others tuned for fairer encounters
 
 ## The Self-Improving Game
 

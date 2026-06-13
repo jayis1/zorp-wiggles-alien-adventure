@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -34,7 +34,7 @@ PROJECTILE_BASE_DAMAGE = 20
 PROJECTILE_LEVEL_DAMAGE_BONUS = 2
 PROJECTILE_SPEED = 50
 PROJECTILE_LIFETIME = 2.0
-ENEMY_DETECT_RANGE = 40
+ENEMY_DETECT_RANGE = 35
 ENEMY_ATTACK_RANGE = 2.5
 ENEMY_ATTACK_COOLDOWN = 1.0
 
@@ -90,6 +90,19 @@ PARTICLE_LEVELUP_COUNT = 20
 # ─── Hit-Stop ────────────────────────────────────────────────────────────────
 HIT_STOP_KILL_DURATION = 0.06  # Brief freeze on kills for impact feel
 
+# ─── Enemy Knockback ──────────────────────────────────────────────────────────
+ENEMY_KNOCKBACK_FORCE = 4.0    # How far enemies get pushed on hit
+ENEMY_KNOCKBACK_UP = 2.0       # Upward component of knockback
+
+# ─── Collectible Pop ──────────────────────────────────────────────────────────
+COLLECT_POP_DURATION = 0.18    # Seconds for the scale-up animation before destruction
+COLLECT_POP_MAX_SCALE = 2.2    # Peak scale multiplier during pop (elastic overshoot)
+
+# ─── Player-Level Difficulty Scaling ──────────────────────────────────────────
+PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
+ENEMY_HP_SCALE_PER_TIER = 0.15        # +15% enemy HP per difficulty tier above base
+ENEMY_DAMAGE_SCALE_PER_TIER = 0.10    # +10% enemy damage per difficulty tier above base
+
 # ─── Damage Numbers ──────────────────────────────────────────────────────────
 DMG_NUMBER_LIFETIME = 1.0
 DMG_NUMBER_RISE_SPEED = 3.0
@@ -117,9 +130,6 @@ BIOME_FOG = {
     'swamp':   {'color': color.rgb(25, 35, 15),    'density': 0.014},
     'mushroom': {'color': color.rgb(20, 10, 40),   'density': 0.011},
 }
-
-# ─── Collectible Pop ──────────────────────────────────────────────────────────
-COLLECT_POP_DURATION = 0.15  # Seconds for the scale-up animation before destruction
 
 # ─── Biome Generation ─────────────────────────────────────────────────────────
 BIOME_BLOB_COUNT = 50
@@ -362,7 +372,7 @@ class Enemy(Entity):
         'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
         'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
-        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none'},
+        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 45},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -387,10 +397,12 @@ class Enemy(Entity):
         self.original_scale = info['scale']
         self.original_color = info['color']
         self.attack_cd = 0
+        self.detect_range = info.get('detect', ENEMY_DETECT_RANGE)
         self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
         self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
         self.decor_entities = []
+        self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
 
         # Type-specific special behaviors
         self.is_phase_shifter = (enemy_type == 'Phase Shifter')
@@ -435,12 +447,25 @@ class Enemy(Entity):
         self.hp_bar_bg = Entity(model='quad', color=color.red, scale=(2, 0.15), parent=self, position=(0, 1.5, 0), billboard=True)
         self.hp_bar = Entity(model='quad', color=color.green, scale=(2, 0.15), parent=self, position=(0, 1.5, -0.01), billboard=True)
 
-    def take_damage(self, amount):
-        """Apply damage to the enemy. Returns True if killed."""
+    def take_damage(self, amount, hit_direction=None):
+        """Apply damage to the enemy. Returns True if killed.
+
+        Args:
+            amount: Damage points to subtract from HP.
+            hit_direction: Optional direction vector for knockback (from projectile source).
+        """
         self.hp -= amount
         self.hit_flash = 0.1
         self.color = color.white
         invoke(setattr, self, 'color', self.original_color, delay=0.1)
+        # Apply knockback if a direction is provided
+        if hit_direction and hit_direction.length() > 0.01:
+            kb_dir = hit_direction.normalized()
+            self.knockback_vel = Vec3(
+                kb_dir.x * ENEMY_KNOCKBACK_FORCE,
+                ENEMY_KNOCKBACK_UP,
+                kb_dir.z * ENEMY_KNOCKBACK_FORCE,
+            )
         if self.hp <= 0:
             self.alive = False
             self.dying = True
@@ -1031,6 +1056,21 @@ class Game:
         else:
             return random.choice(HARD_ENEMY_TYPES)
 
+    def _scale_enemy_to_player_level(self, enemy):
+        """Scale enemy HP and damage based on player level for balanced difficulty.
+
+        Higher-level players face tougher variants of the same enemy type,
+        keeping early enemies relevant while making the game progressively harder.
+        """
+        p = self.player
+        tier_above_base = max(0, (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL)
+        if tier_above_base > 0:
+            hp_mult = 1.0 + tier_above_base * ENEMY_HP_SCALE_PER_TIER
+            dmg_mult = 1.0 + tier_above_base * ENEMY_DAMAGE_SCALE_PER_TIER
+            enemy.hp = int(enemy.hp * hp_mult)
+            enemy.max_hp = enemy.hp
+            enemy.damage = int(enemy.damage * dmg_mult)
+
     def _assign_missions(self, count=1):
         """Assign new random missions from templates."""
         templates = list(MISSION_TEMPLATES)
@@ -1472,8 +1512,27 @@ def game_update():
 
         dist_to_player = (enemy.position - p.position).length()
 
+        # ── Process knockback velocity ──
+        if enemy.knockback_vel.length() > 0.1:
+            kb_pos = enemy.position + enemy.knockback_vel * time.dt
+            if game._is_walkable(kb_pos.x, kb_pos.z):
+                enemy.x = kb_pos.x
+                enemy.z = kb_pos.z
+            # Gravity on the vertical component
+            enemy.knockback_vel = Vec3(
+                enemy.knockback_vel.x * 0.9,
+                enemy.knockback_vel.y - PARTICLE_GRAVITY * time.dt,
+                enemy.knockback_vel.z * 0.9,
+            )
+            # If vertical velocity pulls below ground, reset
+            if enemy.knockback_vel.y < 0 and enemy.y <= 1:
+                enemy.knockback_vel = Vec3(0, 0, 0)
+            # Decay horizontal knockback quickly
+            if abs(enemy.knockback_vel.x) < 0.1 and abs(enemy.knockback_vel.z) < 0.1:
+                enemy.knockback_vel = Vec3(0, enemy.knockback_vel.y, 0)
+
         # Skip AI updates for very distant enemies (performance)
-        if dist_to_player < ENEMY_DETECT_RANGE:
+        if dist_to_player < enemy.detect_range:
             # Chase player
             direction = (p.position - enemy.position).normalized()
             direction.y = 0
@@ -1512,7 +1571,7 @@ def game_update():
                         position=enemy.position + Vec3(0, 1, 0) + spit_dir * 1.2,
                         direction=spit_dir,
                         damage=enemy.damage,
-                        speed=18,
+                        speed=15,
                     )
                     game.enemy_projectiles.append(ep)
                     game._spawn_particles(enemy.position, color.rgb(200, 100, 0), count=4)
@@ -1565,7 +1624,9 @@ def game_update():
             if not enemy.alive or enemy.dying:
                 continue
             if (proj.position - enemy.position).length() < enemy.scale_x + 0.5:
-                killed = enemy.take_damage(proj.damage)
+                # Pass projectile direction for knockback
+                hit_dir = proj.direction
+                killed = enemy.take_damage(proj.damage, hit_direction=hit_dir)
                 game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
                 game.screen_shake = max(game.screen_shake, 0.15)
                 # Floating damage number
@@ -1633,8 +1694,25 @@ def game_update():
         if col.popping:
             col.pop_timer -= time.dt
             progress = 1.0 - max(0, col.pop_timer / COLLECT_POP_DURATION)
-            # Scale up quickly then hold
-            col.scale = 0.6 * (1.0 + progress * 1.5)
+            # Elastic overshoot: scale peaks above max then settles
+            # Uses a sine-based elastic curve for a bouncy feel
+            if progress < 0.6:
+                # Scale up with acceleration toward peak
+                elastic = (progress / 0.6) ** 0.5  # ease-out quad for initial rise
+                col.scale = 0.6 * (1.0 + elastic * (COLLECT_POP_MAX_SCALE - 1.0))
+            else:
+                # Settle back down with a slight bounce
+                settle = (progress - 0.6) / 0.4  # 0 to 1 in settle phase
+                col.scale = 0.6 * (COLLECT_POP_MAX_SCALE - (COLLECT_POP_MAX_SCALE - 1.0) * settle)
+            # Flash white at the start of pop
+            if progress < 0.3:
+                col.color = color.white
+                col.glow.color = color.rgba(255, 255, 255, 200)
+            else:
+                col.color = col.item_color
+                # Fade out glow
+                fade = max(0, 1.0 - (progress - 0.3) / 0.7)
+                col.glow.color = color.rgba(col.item_color.r, col.item_color.g, col.item_color.b, int(80 * fade))
             col.rotation_y += 720 * time.dt  # Spin fast during pop
             if col.pop_timer <= 0:
                 destroy(col.glow)
@@ -1743,6 +1821,7 @@ def game_update():
                 dist_from_spawn = math.sqrt((ex - spawn_center_x) ** 2 + (ez - spawn_center_z) ** 2)
                 enemy_type = game._pick_enemy_type(dist_from_spawn)
                 e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
+                game._scale_enemy_to_player_level(e)
                 game.enemies.append(e)
 
     # Respawn collectibles
