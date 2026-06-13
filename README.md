@@ -29,7 +29,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.1.0 — 3D!)
+## Features (v2.1.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **9 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, **Alien Mushroom Forest**
@@ -60,6 +60,10 @@ python game.py
 - Particle system for hits, kills, and pickups
 - Dash cooldown indicator on HUD
 - Active power-up timers displayed on HUD
+- **Hit-stop freeze frames** on kills for satisfying impact
+- **Collectible pop animation** — items scale up and spin before disappearing
+- **Biome-aware fog** — fog color and density smoothly transition as you walk between biomes
+- **Twinkling starfield** — stars pulse in brightness for an immersive alien sky
 
 ## The Self-Improving Game
 

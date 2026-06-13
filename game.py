@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -87,6 +87,9 @@ PARTICLE_DAMAGE_COUNT = 6
 PARTICLE_COLLECT_COUNT = 10
 PARTICLE_LEVELUP_COUNT = 20
 
+# ─── Hit-Stop ────────────────────────────────────────────────────────────────
+HIT_STOP_KILL_DURATION = 0.06  # Brief freeze on kills for impact feel
+
 # ─── Damage Numbers ──────────────────────────────────────────────────────────
 DMG_NUMBER_LIFETIME = 1.0
 DMG_NUMBER_RISE_SPEED = 3.0
@@ -101,6 +104,22 @@ STAR_COUNT = 50
 STAR_HEIGHT_MIN = 80
 STAR_HEIGHT_MAX = 150
 STAR_SPREAD = 200
+
+# ─── Biome Fog ────────────────────────────────────────────────────────────────
+BIOME_FOG = {
+    'grass':   {'color': color.rgb(25, 0, 60),   'density': 0.007},
+    'desert':  {'color': color.rgb(60, 40, 20),   'density': 0.012},
+    'water':   {'color': color.rgb(10, 30, 80),   'density': 0.009},
+    'lava':    {'color': color.rgb(60, 10, 10),   'density': 0.015},
+    'forest':  {'color': color.rgb(10, 30, 10),   'density': 0.010},
+    'crystal': {'color': color.rgb(15, 30, 50),   'density': 0.008},
+    'snow':    {'color': color.rgb(40, 40, 55),    'density': 0.006},
+    'swamp':   {'color': color.rgb(25, 35, 15),    'density': 0.014},
+    'mushroom': {'color': color.rgb(20, 10, 40),   'density': 0.011},
+}
+
+# ─── Collectible Pop ──────────────────────────────────────────────────────────
+COLLECT_POP_DURATION = 0.15  # Seconds for the scale-up animation before destruction
 
 # ─── Biome Generation ─────────────────────────────────────────────────────────
 BIOME_BLOB_COUNT = 50
@@ -511,6 +530,8 @@ class Collectible(Entity):
         self.value = info['value']
         self.bob_offset = random.uniform(0, math.pi * 2)
         self.item_color = info['color']
+        self.popping = False
+        self.pop_timer = 0.0
         # Glow ring
         self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, 80),
                            scale=3, parent=self, rotation_x=90, position=(0, -0.3, 0))
@@ -688,6 +709,8 @@ class Game:
         # Visual effects state
         self.screen_shake = 0.0
         self.level_up_timer = 0.0
+        self.hit_stop_timer = 0.0
+        self.current_biome = 'grass'
 
         # Build terrain
         self._build_terrain()
@@ -725,6 +748,8 @@ class Game:
             sz = math.sin(angle_h) * math.cos(angle_v) * STAR_SPREAD
             brightness = random.uniform(0.5, 1.0)
             star_size = random.uniform(1, 3)
+            twinkle_speed = random.uniform(2.0, 6.0)
+            twinkle_offset = random.uniform(0, math.pi * 2)
             star = Entity(
                 model='quad',
                 color=color.rgba(255, 255, 255, int(255 * brightness)),
@@ -732,6 +757,9 @@ class Game:
                 position=(sx, sy, sz),
                 billboard=True,
             )
+            star.base_brightness = brightness
+            star.twinkle_speed = twinkle_speed
+            star.twinkle_offset = twinkle_offset
             self.stars.append(star)
 
         # Fog for atmosphere
@@ -933,6 +961,38 @@ class Game:
         if 0 <= tx < WORLD_SIZE and 0 <= tz < WORLD_SIZE:
             return self.world_grid[tz][tx] in WALKABLE
         return False  # Out of bounds is not walkable
+
+    def _get_biome_at(self, world_x, world_z):
+        """Return the biome name at a world position."""
+        tx = int(world_x / TILE_SCALE)
+        tz = int(world_z / TILE_SCALE)
+        tx = max(0, min(tx, WORLD_SIZE - 1))
+        tz = max(0, min(tz, WORLD_SIZE - 1))
+        return self.world_grid[tz][tx]
+
+    def _show_death_screen(self, p):
+        """Display the game over screen with detailed survival stats."""
+        self.game_over = True
+        self.game_over_text.visible = True
+        self.game_over_text.text = 'GAME OVER'
+        self.game_over_sub.visible = True
+        self.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+        total_kills = sum(p.kills.values())
+        total_items = sum(p.inventory.values())
+        time_alive = int(self.t)
+        minutes = time_alive // 60
+        seconds = time_alive % 60
+        kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
+        stats_lines = [
+            f'Time Survived: {minutes}m {seconds}s',
+            f'Total Kills: {total_kills}   Items Collected: {total_items}',
+            f'Missions Completed: {p.completed_missions}',
+            f'Enemies Defeated: {kill_details}',
+        ]
+        self.game_over_stats.visible = True
+        self.game_over_stats.text = '\n'.join(stats_lines)
+        self.game_over_restart.visible = True
+        self.game_over_restart.text = 'Press R to Restart'
 
     def _spawn_initial_entities(self):
         """Populate the world with initial collectibles and enemies."""
@@ -1224,6 +1284,53 @@ def game_update():
     game.t += time.dt
     p = game.player
 
+    # ── Hit-Stop: Brief freeze on kills for impact ──
+    if game.hit_stop_timer > 0:
+        game.hit_stop_timer -= time.dt
+        # During hit-stop, only update camera, HUD, particles, and damage numbers
+        # (visual cleanup continues, but gameplay is frozen)
+        if game.level_up_timer > 0:
+            game.level_up_timer -= time.dt
+            if game.level_up_timer <= 0:
+                game.level_up_text.visible = False
+        target_pos = p.position + Vec3(0, 0, 0)
+        shake_offset = Vec3(0, 0, 0)
+        if game.screen_shake > 0.01:
+            shake_offset = Vec3(
+                random.uniform(-1, 1) * game.screen_shake,
+                random.uniform(-1, 1) * game.screen_shake,
+                random.uniform(-0.5, 0.5) * game.screen_shake,
+            )
+            game.screen_shake -= game.screen_shake * SCREEN_SHAKE_DECAY * time.dt
+        else:
+            game.screen_shake = 0
+        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * CAMERA_LERP_SPEED) + shake_offset
+        # Still update particles and damage numbers during freeze
+        i = 0
+        while i < len(game.particles):
+            p_ent, vel, lifetime = game.particles[i]
+            p_ent.position += vel * time.dt
+            new_vel = Vec3(vel.x, vel.y - PARTICLE_GRAVITY * time.dt, vel.z)
+            new_lifetime = lifetime - time.dt
+            p_ent.scale *= PARTICLE_SCALE_DECAY
+            if new_lifetime <= 0:
+                destroy(p_ent)
+                game.particles.pop(i)
+            else:
+                game.particles[i] = (p_ent, new_vel, new_lifetime)
+                i += 1
+        for dmg_num in game.damage_numbers[:]:
+            if dmg_num.update(time.dt):
+                dmg_num.destroy()
+                game.damage_numbers.remove(dmg_num)
+        # Star twinkling
+        for star in game.stars:
+            twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
+            alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
+            star.color = color.rgba(255, 255, 255, alpha)
+        game._update_hud()
+        return
+
     # ── Player Movement ──
     move_dir = Vec3(0, 0, 0)
     if held_keys['w'] or held_keys['up arrow']:
@@ -1438,28 +1545,7 @@ def game_update():
                 game.screen_shake = SCREEN_SHAKE_DAMAGE
                 game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
                 if died:
-                    game.game_over = True
-                    game.game_over_text.visible = True
-                    game.game_over_text.text = 'GAME OVER'
-                    game.game_over_sub.visible = True
-                    game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
-                    # Build detailed death stats
-                    total_kills = sum(p.kills.values())
-                    total_items = sum(p.inventory.values())
-                    time_alive = int(game.t)
-                    minutes = time_alive // 60
-                    seconds = time_alive % 60
-                    kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
-                    stats_lines = [
-                        f'Time Survived: {minutes}m {seconds}s',
-                        f'Total Kills: {total_kills}   Items Collected: {total_items}',
-                        f'Missions Completed: {p.completed_missions}',
-                        f'Enemies Defeated: {kill_details}',
-                    ]
-                    game.game_over_stats.visible = True
-                    game.game_over_stats.text = '\n'.join(stats_lines)
-                    game.game_over_restart.visible = True
-                    game.game_over_restart.text = 'Press R to Restart'
+                    game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
 
         # Float enemies
@@ -1493,6 +1579,8 @@ def game_update():
                     p.gain_xp(xp_gain)
                     p.score += enemy.max_hp
                     game.screen_shake = SCREEN_SHAKE_KILL
+                    # Hit-stop: brief freeze on kills for satisfying impact
+                    game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     # Kill damage number (bigger, yellow)
                     game.damage_numbers.append(DamageNumber(enemy.position, proj.damage, is_kill=True))
                     # Drop loot
@@ -1530,27 +1618,7 @@ def game_update():
                 game._spawn_particles(p.position, color.rgb(200, 100, 0), count=PARTICLE_DAMAGE_COUNT)
                 game.damage_numbers.append(DamageNumber(p.position, eproj.damage, is_kill=False))
                 if died:
-                    game.game_over = True
-                    game.game_over_text.visible = True
-                    game.game_over_text.text = 'GAME OVER'
-                    game.game_over_sub.visible = True
-                    game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
-                    total_kills = sum(p.kills.values())
-                    total_items = sum(p.inventory.values())
-                    time_alive = int(game.t)
-                    minutes = time_alive // 60
-                    seconds = time_alive % 60
-                    kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
-                    stats_lines = [
-                        f'Time Survived: {minutes}m {seconds}s',
-                        f'Total Kills: {total_kills}   Items Collected: {total_items}',
-                        f'Missions Completed: {p.completed_missions}',
-                        f'Enemies Defeated: {kill_details}',
-                    ]
-                    game.game_over_stats.visible = True
-                    game.game_over_stats.text = '\n'.join(stats_lines)
-                    game.game_over_restart.visible = True
-                    game.game_over_restart.text = 'Press R to Restart'
+                    game._show_death_screen(p)
             destroy(eproj)
             game.enemy_projectiles.remove(eproj)
             continue
@@ -1561,6 +1629,19 @@ def game_update():
 
     # ── Update Collectibles ──
     for col in game.collectibles[:]:
+        # Handle pop animation before destruction
+        if col.popping:
+            col.pop_timer -= time.dt
+            progress = 1.0 - max(0, col.pop_timer / COLLECT_POP_DURATION)
+            # Scale up quickly then hold
+            col.scale = 0.6 * (1.0 + progress * 1.5)
+            col.rotation_y += 720 * time.dt  # Spin fast during pop
+            if col.pop_timer <= 0:
+                destroy(col.glow)
+                destroy(col)
+                game.collectibles.remove(col)
+            continue
+
         col.animate(game.t)
         dist = (col.position - p.position).length()
         # Magnetic pull: items are drawn toward player when close
@@ -1595,9 +1676,9 @@ def game_update():
             if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
-            destroy(col.glow)
-            destroy(col)
-            game.collectibles.remove(col)
+            # Start pop animation instead of immediate destroy
+            col.popping = True
+            col.pop_timer = COLLECT_POP_DURATION
 
     # ── Update Particles ──
     # Bug fix: must update the tuple in-place; Python tuple unpacking creates local copies
@@ -1622,6 +1703,26 @@ def game_update():
         if dmg_num.update(time.dt):
             dmg_num.destroy()
             game.damage_numbers.remove(dmg_num)
+
+    # ── Star Twinkling ──
+    for star in game.stars:
+        twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
+        alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
+        star.color = color.rgba(255, 255, 255, alpha)
+
+    # ── Biome-Aware Fog ──
+    current_biome = game._get_biome_at(p.x, p.z)
+    if current_biome != game.current_biome:
+        game.current_biome = current_biome
+    fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
+    target_fog_color = fog_info['color']
+    target_fog_density = fog_info['density']
+    # Lerp fog toward target biome's settings
+    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * 2)
+    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * 2)
+    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 2)
+    scene.fog_color = color.rgb(int(r), int(g), int(b))
+    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 2)
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
