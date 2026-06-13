@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.0.2"
+VERSION = "2.1.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -110,10 +110,22 @@ BIOME_BLOB_JITTER = 1.5
 SPAWN_CLEAR_RADIUS = 5
 SPAWN_PAD_RADIUS = 3
 
+# ─── Dash ─────────────────────────────────────────────────────────────────────
+DASH_COOLDOWN = 2.0
+DASH_SPEED = 60
+DASH_DURATION = 0.2
+DASH_TRAIL_PARTICLES = 6
+
+# ─── Power-Up Durations ───────────────────────────────────────────────────────
+SPEED_BOOST_DURATION = 5.0
+SPEED_BOOST_MULTIPLIER = 1.8
+SHIELD_DURATION = 4.0
+HEALTH_POTION_HEAL = 30
+
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
-EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake']
+EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
@@ -131,6 +143,7 @@ C_LASER    = color.rgb(0, 255, 255)
 C_GOLD     = color.rgb(255, 215, 0)
 C_PURPLE   = color.rgb(170, 0, 255)
 C_PINK     = color.rgb(255, 80, 180)
+C_MUSHROOM = color.rgb(50, 180, 90)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -141,9 +154,10 @@ BIOME_COLORS = {
     'crystal': C_CRYSTAL,
     'snow':    C_SNOW,
     'swamp':   C_SWAMP,
+    'mushroom': C_MUSHROOM,
 }
 
-WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp'}
+WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom'}
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 class WorldGenerator:
@@ -165,7 +179,7 @@ class WorldGenerator:
         grid = [['grass' for _ in range(size)] for _ in range(size)]
 
         # Place biome blobs
-        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp']
+        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp', 'mushroom']
         for _ in range(BIOME_BLOB_COUNT):
             bx = random.randint(0, size - 1)
             by = random.randint(0, size - 1)
@@ -219,6 +233,15 @@ class Player(Entity):
         self.facing = Vec3(0, 0, 1)
         self.level_up_pending = False
 
+        # Dash ability
+        self.dash_timer = 0
+        self.dash_cooldown = 0
+        self.dash_direction = Vec3(0, 0, 0)
+
+        # Power-up timers
+        self.speed_boost_timer = 0
+        self.shield_timer = 0
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -239,6 +262,10 @@ class Player(Entity):
                               parent=self.eye_l, position=(0, 0, -0.3))
         self.pupil_r = Entity(model='sphere', color=color.black, scale=(0.2, 0.25, 0.2),
                               parent=self.eye_r, position=(0, 0, -0.3))
+
+        # Shield visual (invisible by default)
+        self.shield_visual = Entity(model='sphere', color=color.rgba(100, 200, 255, 60),
+                                    scale=1.6, parent=self, visible=False)
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
@@ -314,6 +341,9 @@ class Enemy(Entity):
         'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
         'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
         'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
+        'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
+        'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
+        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none'},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -342,6 +372,13 @@ class Enemy(Entity):
         self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
         self.decor_entities = []
+
+        # Type-specific special behaviors
+        self.is_phase_shifter = (enemy_type == 'Phase Shifter')
+        self.phase_timer = random.uniform(4, 8) if self.is_phase_shifter else 0
+        self.is_spore_spitter = (enemy_type == 'Spore Spitter')
+        self.spit_timer = random.uniform(2, 4) if self.is_spore_spitter else 0
+        self.is_swarm_mite = (enemy_type == 'Swarm Mite')
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -453,6 +490,9 @@ class Collectible(Entity):
         'Nebula Dust':    {'color': C_PINK,       'value': 100, 'model': 'diamond'},
         'Cosmic Jelly':   {'color': C_GOLD,       'value': 200, 'model': 'diamond'},
         'Plasma Core':    {'color': color.magenta, 'value': 350, 'model': 'diamond'},
+        'Health Potion':  {'color': color.rgb(255, 50, 50),  'value': 15,  'model': 'sphere'},
+        'Speed Boost':    {'color': color.rgb(50, 255, 50),  'value': 15,  'model': 'diamond'},
+        'Shield Crystal': {'color': color.rgb(100, 200, 255),'value': 15,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -501,6 +541,28 @@ class Projectile(Entity):
 
     def move(self, dt):
         """Move the projectile forward. Returns False when lifetime expires."""
+        self.position += self.direction * self.speed * dt
+        self.lifetime -= dt
+        return self.lifetime > 0
+
+
+class EnemyProjectile(Entity):
+    """A projectile fired by Spore Spitter enemies toward the player."""
+
+    def __init__(self, position, direction, damage=10, speed=20):
+        super().__init__(
+            model='sphere',
+            color=color.rgb(200, 100, 0),
+            scale=0.25,
+            position=position,
+        )
+        self.direction = direction.normalized()
+        self.damage = damage
+        self.speed = speed
+        self.lifetime = 3.0
+
+    def move(self, dt):
+        """Move the enemy projectile forward. Returns False when lifetime expires."""
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
         return self.lifetime > 0
@@ -610,6 +672,7 @@ class Game:
         self.enemies = []
         self.collectibles = []
         self.projectiles = []
+        self.enemy_projectiles = []
         self.particles = []
         self.damage_numbers = []
         self.missions = []
@@ -724,6 +787,38 @@ class Game:
                     )
                     self.crystal_entities.append(crystal)
 
+                elif biome == 'mushroom' and random.random() < 0.25:
+                    # Alien mushroom: stem + cap with glow
+                    stem_h = random.uniform(1.5, 4.5)
+                    stem = Entity(
+                        model='cube',
+                        color=color.rgb(180, 170, 160),
+                        position=(x * TILE_SCALE, stem_h / 2 + 0.5, y * TILE_SCALE),
+                        scale=(0.4, stem_h, 0.4),
+                    )
+                    cap_r = random.uniform(1.0, 2.5)
+                    cap_color_choices = [
+                        color.rgb(255, 50, 120),   # neon pink
+                        color.rgb(80, 255, 80),    # bright green
+                        color.rgb(200, 50, 255),   # purple
+                        color.rgb(255, 200, 0),    # golden
+                    ]
+                    cap = Entity(
+                        model='sphere',
+                        color=random.choice(cap_color_choices),
+                        position=(x * TILE_SCALE, stem_h + 1.0, y * TILE_SCALE),
+                        scale=cap_r,
+                    )
+                    # Spore glow ring under cap
+                    glow = Entity(
+                        model='quad',
+                        color=color.rgba(255, 100, 255, 50),
+                        position=(x * TILE_SCALE, stem_h + 0.5, y * TILE_SCALE),
+                        scale=cap_r * 1.5,
+                        rotation_x=90,
+                    )
+                    self.crystal_entities.extend([stem, cap, glow])
+
     def _is_walkable(self, world_x, world_z):
         """Check if a world position is on walkable terrain."""
         tx = int(world_x / TILE_SCALE)
@@ -808,7 +903,7 @@ class Game:
         self.mission_panel_shown = False
         self.mission_text = Text(text='', position=(-0.15, 0.35), scale=1.0, color=color.cyan, visible=False)
         self.controls_text = Text(
-            text='WASD:Move | Click:Shoot | M:Minimap | Tab:Missions | P:Pause',
+            text='WASD:Move | Click:Shoot | Space:Dash | M:Minimap | Tab:Missions | P:Pause',
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
@@ -819,6 +914,10 @@ class Game:
 
         # Level-up popup
         self.level_up_text = Text(text='', position=(0, 0.2), origin=(0, 0), scale=3, color=color.yellow, visible=False)
+
+        # Dash cooldown indicator & power-up status
+        self.dash_text = Text(text='DASH READY', position=(-0.75, 0.37), scale=0.9, color=color.cyan)
+        self.powerup_text = Text(text='', position=(-0.75, 0.33), scale=0.85, color=color.green)
 
         # Minimap
         self.minimap_shown = True
@@ -936,6 +1035,23 @@ class Game:
         pz = mm_cy + (p.z * mm_scale) - 0.11
         self.minimap_player_dot.position = (px, pz)
 
+        # Dash cooldown indicator
+        if p.dash_cooldown > 0:
+            self.dash_text.text = f'DASH: {p.dash_cooldown:.1f}s'
+            self.dash_text.color = color.gray
+        else:
+            self.dash_text.text = 'DASH READY'
+            self.dash_text.color = color.cyan
+
+        # Power-up status
+        pu_lines = []
+        if p.speed_boost_timer > 0:
+            pu_lines.append(f'SPEED BOOST: {p.speed_boost_timer:.1f}s')
+        if p.shield_timer > 0:
+            pu_lines.append(f'SHIELD: {p.shield_timer:.1f}s')
+        self.powerup_text.text = '  |  '.join(pu_lines)
+        self.powerup_text.color = color.green if pu_lines else color.gray
+
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
         p = self.player
@@ -1009,9 +1125,43 @@ def game_update():
     if held_keys['d'] or held_keys['right arrow']:
         move_dir += Vec3(1, 0, 0)
 
-    if move_dir.length() > 0:
+    # Effective speed (apply speed boost power-up)
+    effective_speed = p.speed
+    if p.speed_boost_timer > 0:
+        effective_speed *= SPEED_BOOST_MULTIPLIER
+        p.speed_boost_timer -= time.dt
+
+    # ── Dash Ability ──
+    if p.dash_cooldown > 0:
+        p.dash_cooldown -= time.dt
+    if p.dash_timer > 0:
+        # Currently dashing
+        p.dash_timer -= time.dt
+        dash_pos = p.position + p.dash_direction * DASH_SPEED * time.dt
+        if game._is_walkable(dash_pos.x, dash_pos.z):
+            p.x = max(1, min(dash_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
+            p.z = max(1, min(dash_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
+        # Dash trail particles
+        if int(game.t * 30) % 2 == 0:
+            game._spawn_particles(p.position + Vec3(0, 0.5, 0), color.rgba(0, 230, 70, 180), count=DASH_TRAIL_PARTICLES)
+    elif held_keys['space'] and p.dash_cooldown <= 0 and move_dir.length() > 0:
+        # Initiate dash
+        p.dash_direction = move_dir.normalized()
+        p.dash_timer = DASH_DURATION
+        p.dash_cooldown = DASH_COOLDOWN
+        game.add_message("DASH!")
+        game._spawn_particles(p.position, color.cyan, count=5)
+
+    # Shield visual update
+    p.shield_visual.visible = p.shield_timer > 0
+    if p.shield_timer > 0:
+        p.shield_timer -= time.dt
+        # Pulsing shield effect
+        p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
+
+    if move_dir.length() > 0 and p.dash_timer <= 0:
         move_dir = move_dir.normalized()
-        new_pos = p.position + move_dir * p.speed * time.dt
+        new_pos = p.position + move_dir * effective_speed * time.dt
         if game._is_walkable(new_pos.x, new_pos.z):
             p.x = max(1, min(new_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
             p.z = max(1, min(new_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
@@ -1114,6 +1264,42 @@ def game_update():
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
             enemy.look_at_2d(p.position)
+
+            # ── Phase Shifter: Teleport near player periodically ──
+            if enemy.is_phase_shifter:
+                enemy.phase_timer -= time.dt
+                if enemy.phase_timer <= 0:
+                    # Teleport to a random position near the player
+                    angle = random.uniform(0, math.pi * 2)
+                    tp_dist = random.uniform(5, 10)
+                    tp_x = p.x + math.cos(angle) * tp_dist
+                    tp_z = p.z + math.sin(angle) * tp_dist
+                    if game._is_walkable(tp_x, tp_z):
+                        # Poof particles at old position
+                        game._spawn_particles(enemy.position, color.violet, count=8)
+                        enemy.x = tp_x
+                        enemy.z = tp_z
+                        # Poof particles at new position
+                        game._spawn_particles(enemy.position, color.rgba(180, 0, 255, 200), count=8)
+                        game.add_message(f"Phase Shifter teleported!")
+                    enemy.phase_timer = random.uniform(4, 8)
+
+            # ── Spore Spitter: Shoot projectiles at player ──
+            if enemy.is_spore_spitter:
+                enemy.spit_timer -= time.dt
+                if enemy.spit_timer <= 0 and dist_to_player < 25:
+                    spit_dir = (p.position - enemy.position).normalized()
+                    spit_dir.y = 0
+                    spit_dir = spit_dir.normalized()
+                    ep = EnemyProjectile(
+                        position=enemy.position + Vec3(0, 1, 0) + spit_dir * 1.2,
+                        direction=spit_dir,
+                        damage=enemy.damage,
+                        speed=18,
+                    )
+                    game.enemy_projectiles.append(ep)
+                    game._spawn_particles(enemy.position, color.rgb(200, 100, 0), count=4)
+                    enemy.spit_timer = random.uniform(2.5, 4.5)
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -1126,36 +1312,41 @@ def game_update():
             else:
                 enemy.wander_dir = -enemy.wander_dir
 
-        # Attack player
+        # Attack player (shield blocks damage)
         if dist_to_player < ENEMY_ATTACK_RANGE:
             if enemy.attack_cd <= 0:
-                died = p.take_damage(enemy.damage)
-                game.screen_shake = SCREEN_SHAKE_DAMAGE
-                game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                if p.shield_timer > 0:
+                    # Shield absorbs the hit
+                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                    game.add_message("Shield blocked!")
+                else:
+                    died = p.take_damage(enemy.damage)
+                    game.screen_shake = SCREEN_SHAKE_DAMAGE
+                    game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                    if died:
+                        game.game_over = True
+                        game.game_over_text.visible = True
+                        game.game_over_text.text = 'GAME OVER'
+                        game.game_over_sub.visible = True
+                        game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+                        # Build detailed death stats
+                        total_kills = sum(p.kills.values())
+                        total_items = sum(p.inventory.values())
+                        time_alive = int(game.t)
+                        minutes = time_alive // 60
+                        seconds = time_alive % 60
+                        kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
+                        stats_lines = [
+                            f'Time Survived: {minutes}m {seconds}s',
+                            f'Total Kills: {total_kills}   Items Collected: {total_items}',
+                            f'Missions Completed: {p.completed_missions}',
+                            f'Enemies Defeated: {kill_details}',
+                        ]
+                        game.game_over_stats.visible = True
+                        game.game_over_stats.text = '\n'.join(stats_lines)
+                        game.game_over_restart.visible = True
+                        game.game_over_restart.text = 'Press R to Restart'
                 enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
-                if died:
-                    game.game_over = True
-                    game.game_over_text.visible = True
-                    game.game_over_text.text = 'GAME OVER'
-                    game.game_over_sub.visible = True
-                    game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
-                    # Build detailed death stats
-                    total_kills = sum(p.kills.values())
-                    total_items = sum(p.inventory.values())
-                    time_alive = int(game.t)
-                    minutes = time_alive // 60
-                    seconds = time_alive % 60
-                    kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
-                    stats_lines = [
-                        f'Time Survived: {minutes}m {seconds}s',
-                        f'Total Kills: {total_kills}   Items Collected: {total_items}',
-                        f'Missions Completed: {p.completed_missions}',
-                        f'Enemies Defeated: {kill_details}',
-                    ]
-                    game.game_over_stats.visible = True
-                    game.game_over_stats.text = '\n'.join(stats_lines)
-                    game.game_over_restart.visible = True
-                    game.game_over_restart.text = 'Press R to Restart'
         else:
             enemy.attack_cd = max(0, enemy.attack_cd - time.dt)
 
@@ -1207,6 +1398,55 @@ def game_update():
             if proj in game.projectiles:
                 game.projectiles.remove(proj)
 
+    # ── Update Enemy Projectiles ──
+    for eproj in game.enemy_projectiles[:]:
+        alive = eproj.move(time.dt)
+        if not alive:
+            destroy(eproj)
+            game.enemy_projectiles.remove(eproj)
+            continue
+        # Check collision with player
+        dist = (eproj.position - p.position).length()
+        if dist < 1.5:
+            if p.shield_timer > 0:
+                # Shield blocks enemy projectile
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                game.add_message("Shield blocked!")
+            else:
+                died = p.take_damage(eproj.damage)
+                game.screen_shake = SCREEN_SHAKE_DAMAGE
+                game._spawn_particles(p.position, color.rgb(200, 100, 0), count=PARTICLE_DAMAGE_COUNT)
+                game.damage_numbers.append(DamageNumber(p.position, eproj.damage, is_kill=False))
+                if died:
+                    game.game_over = True
+                    game.game_over_text.visible = True
+                    game.game_over_text.text = 'GAME OVER'
+                    game.game_over_sub.visible = True
+                    game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+                    total_kills = sum(p.kills.values())
+                    total_items = sum(p.inventory.values())
+                    time_alive = int(game.t)
+                    minutes = time_alive // 60
+                    seconds = time_alive % 60
+                    kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
+                    stats_lines = [
+                        f'Time Survived: {minutes}m {seconds}s',
+                        f'Total Kills: {total_kills}   Items Collected: {total_items}',
+                        f'Missions Completed: {p.completed_missions}',
+                        f'Enemies Defeated: {kill_details}',
+                    ]
+                    game.game_over_stats.visible = True
+                    game.game_over_stats.text = '\n'.join(stats_lines)
+                    game.game_over_restart.visible = True
+                    game.game_over_restart.text = 'Press R to Restart'
+            destroy(eproj)
+            game.enemy_projectiles.remove(eproj)
+            continue
+        # Remove if out of world
+        if eproj.x < -10 or eproj.x > WORLD_SIZE * TILE_SCALE + 10 or eproj.z < -10 or eproj.z > WORLD_SIZE * TILE_SCALE + 10:
+            destroy(eproj)
+            game.enemy_projectiles.remove(eproj)
+
     # ── Update Collectibles ──
     for col in game.collectibles[:]:
         col.animate(game.t)
@@ -1219,11 +1459,29 @@ def game_update():
             # Spin faster as pulled
             col.rotation_y += 200 * pull_strength * time.dt
         if dist < COLLECT_RADIUS:
-            p.add_item(col.name)
-            p.score += col.value
-            p.gain_xp(col.value // 10)
-            game._spawn_collect_burst(col.position, col.item_color)
-            game.add_message(f"Found {col.name}! +{col.value} pts")
+            # Apply power-up effects for special collectibles
+            if col.name == 'Health Potion':
+                p.hp = min(p.hp + HEALTH_POTION_HEAL, p.max_hp)
+                game.add_message(f"Health Potion! +{HEALTH_POTION_HEAL} HP")
+                game._spawn_particles(col.position, color.rgb(255, 50, 50), count=12)
+            elif col.name == 'Speed Boost':
+                p.speed_boost_timer = SPEED_BOOST_DURATION
+                game.add_message(f"Speed Boost! {SPEED_BOOST_DURATION}s of speed!")
+                game._spawn_particles(col.position, color.rgb(50, 255, 50), count=12)
+            elif col.name == 'Shield Crystal':
+                p.shield_timer = SHIELD_DURATION
+                game.add_message(f"Shield Crystal! {SHIELD_DURATION}s of protection!")
+                game._spawn_particles(col.position, color.rgb(100, 200, 255), count=12)
+            else:
+                p.add_item(col.name)
+                p.score += col.value
+                p.gain_xp(col.value // 10)
+                game._spawn_collect_burst(col.position, col.item_color)
+                game.add_message(f"Found {col.name}! +{col.value} pts")
+            # For power-ups, also give points
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal'):
+                p.score += col.value
+                p.gain_xp(col.value // 10)
             destroy(col.glow)
             destroy(col)
             game.collectibles.remove(col)

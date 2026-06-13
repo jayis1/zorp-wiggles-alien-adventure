@@ -22,25 +22,30 @@ python game.py
 | **WASD / Arrow Keys** | Move Zorp |
 | **Mouse** | Aim / Look direction |
 | **Left Click** | Shoot tentacle laser |
+| **Space** | Dash (dodge in movement direction) |
 | **M** | Toggle minimap |
 | **TAB** | Toggle missions panel |
 | **P** | Pause |
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.0.2 — 3D!)
+## Features (v2.1.0 — 3D!)
 
 - Full 3D open world with third-person camera
-- Procedurally generated terrain with 8 biomes: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp
-- 6 collectible item types with different point values
-- 6 enemy types that chase, attack, and drop loot
+- Procedurally generated terrain with **9 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, **Alien Mushroom Forest**
+- 9 collectible item types — including **3 power-ups**: Health Potion, Speed Boost, Shield Crystal
+- **9 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny)
+- **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
+- **Shield power-up** — blocks all damage for 4 seconds
+- **Speed Boost** — 1.8x speed for 5 seconds
+- **Health Potion** — restores 30 HP instantly
 - Mission system with collection and kill objectives
 - XP and leveling system (get stronger over time!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
 - Minimap with player tracking
 - Enemy HP bars with green→yellow→red color gradient
-- 3D trees in forests, crystal spires in crystal biomes
+- 3D trees in forests, crystal spires in crystal biomes, **colorful alien mushrooms** in mushroom biomes
 - Atmospheric fog and lighting with starfield sky
 - Smooth camera follow with screen shake on hits and kills
 - Enemy death animations (pop upward, shrink, flash, and dissolve)
@@ -53,6 +58,8 @@ python game.py
 - Invincibility frames on damage
 - Enemy respawning and loot drops
 - Particle system for hits, kills, and pickups
+- Dash cooldown indicator on HUD
+- Active power-up timers displayed on HUD
 
 ## The Self-Improving Game
 
@@ -75,28 +82,35 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Crystal | Cyan | Yes | Crystal spires |
 | Snow | White | Yes | Icy terrain |
 | Swamp | Murky Green | Yes | Squishy ground |
+| Mushroom | Alien Green | Yes | Colorful alien mushrooms with spore glow |
 
 ## Collectibles
 
-| Item | Value | Rarity |
-|------|-------|--------|
-| Space Gloop | 10 pts | Common |
-| Meteor Shard | 25 pts | Uncommon |
-| Quantum Fuzz | 50 pts | Rare |
-| Nebula Dust | 100 pts | Very Rare |
-| Cosmic Jelly | 200 pts | Legendary |
-| Plasma Core | 350 pts | Mythic |
+| Item | Value | Effect | Rarity |
+|------|-------|--------|--------|
+| Space Gloop | 10 pts | Score only | Common |
+| Meteor Shard | 25 pts | Score only | Uncommon |
+| Quantum Fuzz | 50 pts | Score only | Rare |
+| Nebula Dust | 100 pts | Score only | Very Rare |
+| Cosmic Jelly | 200 pts | Score only | Legendary |
+| Plasma Core | 350 pts | Score only | Mythic |
+| **Health Potion** | 15 pts | Restores 30 HP | Uncommon |
+| **Speed Boost** | 15 pts | 1.8x speed for 5s | Uncommon |
+| **Shield Crystal** | 15 pts | Blocks all damage for 4s | Rare |
 
 ## Enemies
 
-| Enemy | HP | Speed | Damage | Notes |
-|-------|----|-------|--------|-------|
-| Slime Blob | 30 | Slow | 10 | Common, easy |
-| Space Beetle | 50 | Medium | 15 | Aggressive |
-| Void Wraith | 80 | Medium | 25 | Spooky |
-| Lava Crawler | 120 | Fast | 30 | Hot-headed |
-| Crystal Guardian | 200 | Slow | 40 | Tough |
-| Plasma Drake | 350 | Very Fast | 50 | Endgame boss |
+| Enemy | HP | Speed | Damage | Special | Notes |
+|-------|----|-------|--------|---------|-------|
+| Slime Blob | 30 | Slow | 10 | — | Common, easy |
+| Swarm Mite | 15 | Very Fast | 5 | — | Tiny & fast, spawns in groups |
+| Space Beetle | 50 | Medium | 15 | — | Aggressive |
+| Phase Shifter | 70 | Medium | 20 | **Teleports** | Warps near player periodically |
+| Void Wraith | 80 | Medium | 25 | — | Spooky |
+| Spore Spitter | 90 | Medium | 15 | **Shoots back** | Fires projectiles at player |
+| Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
+| Crystal Guardian | 200 | Slow | 40 | — | Tough |
+| Plasma Drake | 350 | Very Fast | 50 | — | Endgame boss |
 
 ## Tech Stack
 
