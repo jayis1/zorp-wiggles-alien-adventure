@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -28,6 +28,8 @@ PLAYER_START_HP = 100
 # ─── Combat ───────────────────────────────────────────────────────────────────
 SHOOT_COOLDOWN = 0.15
 COLLECT_RADIUS = 2.5
+COLLECT_PULL_RADIUS = 5.0
+COLLECT_PULL_SPEED = 12.0
 PROJECTILE_BASE_DAMAGE = 20
 PROJECTILE_LEVEL_DAMAGE_BONUS = 2
 PROJECTILE_SPEED = 50
@@ -84,6 +86,15 @@ PARTICLE_KILL_COUNT = 14
 PARTICLE_DAMAGE_COUNT = 6
 PARTICLE_COLLECT_COUNT = 10
 PARTICLE_LEVELUP_COUNT = 20
+
+# ─── Damage Numbers ──────────────────────────────────────────────────────────
+DMG_NUMBER_LIFETIME = 1.0
+DMG_NUMBER_RISE_SPEED = 3.0
+DMG_NUMBER_SCALE = 1.2
+
+# ─── Death Screen ────────────────────────────────────────────────────────────
+DEATH_SCREEN_STATS_COLOR = color.white
+DEATH_SCREEN_TITLE_COLOR = color.red
 
 # ─── Stars ────────────────────────────────────────────────────────────────────
 STAR_COUNT = 50
@@ -297,12 +308,12 @@ class Enemy(Entity):
     """An enemy entity that chases the player when in detection range."""
 
     TYPES = {
-        'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0},
-        'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2},
-        'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4},
-        'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1},
-        'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8},
-        'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2},
+        'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
+        'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
+        'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
+        'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
+        'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
+        'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -310,7 +321,7 @@ class Enemy(Entity):
             enemy_type = random.choice(list(self.TYPES.keys()))
         info = self.TYPES[enemy_type]
         super().__init__(
-            model='sphere',
+            model=info['model'],
             color=info['color'],
             scale=info['scale'],
             position=position,
@@ -330,10 +341,39 @@ class Enemy(Entity):
         self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
         self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
+        self.decor_entities = []
 
         # Eyes for all enemies
-        self.eye_l = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(-0.25, 0.3, -0.5))
-        self.eye_r = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(0.25, 0.3, -0.5))
+        eye_y = 0.3 if info['model'] == 'sphere' else 0.4
+        self.eye_l = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(-0.25, eye_y, -0.5))
+        self.eye_r = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(0.25, eye_y, -0.5))
+
+        # Type-specific decorations
+        decor = info['decor']
+        if decor == 'wings':
+            wing_l = Entity(model='quad', color=color.rgba(int(info['color'][0]*255), int(info['color'][1]*255), int(info['color'][2]*255), 180),
+                            scale=(1.0, 0.5), parent=self, position=(-0.8, 0.2, 0.2), rotation_y=-30)
+            wing_r = Entity(model='quad', color=color.rgba(int(info['color'][0]*255), int(info['color'][1]*255), int(info['color'][2]*255), 180),
+                            scale=(1.0, 0.5), parent=self, position=(0.8, 0.2, 0.2), rotation_y=30)
+            self.decor_entities.extend([wing_l, wing_r])
+        elif decor == 'aura':
+            aura = Entity(model='sphere', color=color.rgba(int(info['color'][0]*255), int(info['color'][1]*255), int(info['color'][2]*255), 60),
+                          scale=1.5, parent=self)
+            self.decor_entities.append(aura)
+        elif decor == 'spikes':
+            for angle in [0, 72, 144, 216, 288]:
+                rad = math.radians(angle)
+                spike = Entity(model='cube', color=color.rgb(255, 100, 0),
+                               scale=(0.15, 0.6, 0.15), parent=self,
+                               position=(math.cos(rad) * 0.5, 0.5, math.sin(rad) * 0.5))
+                self.decor_entities.append(spike)
+        elif decor == 'shards':
+            for angle in [0, 90, 180, 270]:
+                rad = math.radians(angle)
+                shard = Entity(model='cube', color=color.rgb(0, 255, 255),
+                               scale=(0.1, 1.0, 0.1), parent=self,
+                               position=(math.cos(rad) * 0.7, 0.7, math.sin(rad) * 0.7))
+                self.decor_entities.append(shard)
 
         # HP bar
         self.hp_bar_bg = Entity(model='quad', color=color.red, scale=(2, 0.15), parent=self, position=(0, 1.5, 0), billboard=True)
@@ -366,19 +406,36 @@ class Enemy(Entity):
             self.hp_bar.color = color.rgb(255, int(255 * t), 0)
 
     def update_death_animation(self, dt):
-        """Animate enemy death: shrink and flash. Returns True when animation is complete."""
+        """Animate enemy death: pop upward, shrink, flash, and dissolve. Returns True when done."""
         if not self.dying:
             return True
         self.death_timer -= dt
-        # Shrink over death animation duration
         progress = 1.0 - (self.death_timer / DEATH_ANIM_DURATION)
-        shrink = max(0.01, self.original_scale * (1.0 - progress))
-        self.scale = shrink
-        # Flash between white and original color
-        if int(self.death_timer * 15) % 2 == 0:
-            self.color = color.white
+        # Pop upward at start, then fall
+        if progress < 0.3:
+            pop_height = math.sin(progress / 0.3 * math.pi) * 1.5
         else:
-            self.color = self.original_color
+            pop_height = max(0, 1.5 * (1.0 - (progress - 0.3) / 0.7))
+        self.y = 1 + pop_height
+        # Shrink with easing (fast start, slow end)
+        ease_progress = 1.0 - (1.0 - progress) ** 2
+        shrink = max(0.01, self.original_scale * (1.0 - ease_progress))
+        self.scale = shrink
+        # Flash between white and original color, dissolving at end
+        if progress < 0.7:
+            if int(self.death_timer * 15) % 2 == 0:
+                self.color = color.white
+            else:
+                self.color = self.original_color
+        else:
+            # Dissolve to faded color
+            fade = max(0, 1.0 - (progress - 0.7) / 0.3)
+            self.color = color.rgba(
+                int(self.original_color[0] * 255 * fade),
+                int(self.original_color[1] * 255 * fade),
+                int(self.original_color[2] * 255 * fade),
+                int(255 * fade),
+            )
         # Hide HP bar during death
         self.hp_bar_bg.visible = False
         self.hp_bar.visible = False
@@ -449,7 +506,70 @@ class Projectile(Entity):
         return self.lifetime > 0
 
 
-# ─── Mission ───────────────────────────────────────────────────────────────────
+class DamageNumber:
+    """A floating damage number that rises from an enemy on hit and fades out.
+
+    Uses a 3D billboard entity with a text overlay for visibility.
+    Tracks its own lifetime and handles cleanup.
+    """
+
+    def __init__(self, position, amount, is_kill=False):
+        col = color.yellow if is_kill else color.white
+        text_str = str(amount) if not is_kill else f"{amount} KILL!"
+        scale_factor = 1.4 if is_kill else 1.0
+
+        # 3D billboard quad as a glowing background dot behind the number
+        self.bg_dot = Entity(
+            model='quad',
+            color=color.rgba(col.r, col.g, col.b, 120),
+            scale=0.6 * scale_factor,
+            position=Vec3(position.x, position.y + 2.0, position.z),
+            billboard=True,
+        )
+        # UI Text anchored to the camera for crisp rendering
+        self.text_ent = Text(
+            parent=camera.ui,
+            text=text_str,
+            scale=DMG_NUMBER_SCALE * scale_factor * 0.7,
+            color=col,
+            origin=(0, 0),
+            background=False,
+        )
+        self.lifetime = DMG_NUMBER_LIFETIME
+        self.max_lifetime = DMG_NUMBER_LIFETIME
+        self.world_pos = Vec3(position.x, position.y + 2.0, position.z)
+        self.is_kill = is_kill
+        self.alive = True
+
+    def update(self, dt):
+        """Advance the damage number animation. Returns True when expired."""
+        self.lifetime -= dt
+        self.world_pos += Vec3(0, DMG_NUMBER_RISE_SPEED * dt, 0)
+        self.bg_dot.position = self.world_pos
+        # Project world position to UI screen coordinates
+        cam = camera
+        cam_pos = cam.get_world_position()
+        diff = self.world_pos - cam_pos
+        # Simple projection to screen space using camera's view
+        screen_pos = camera.screen_point(self.world_pos)
+        self.text_ent.position = (screen_pos[0], screen_pos[1])
+        # Fade out
+        alpha = max(0, self.lifetime / self.max_lifetime)
+        r, g, b = int(self.text_ent.color[0] * 255), int(self.text_ent.color[1] * 255), int(self.text_ent.color[2] * 255)
+        if self.is_kill:
+            self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
+        else:
+            self.text_ent.color = color.rgba(255, 255, 255, int(255 * alpha))
+        self.bg_dot.color = color.rgba(255, 255, 255, int(80 * alpha))
+        if self.lifetime <= 0:
+            self.alive = False
+            return True
+        return False
+
+    def destroy(self):
+        """Clean up all owned entities."""
+        destroy(self.bg_dot)
+        destroy(self.text_ent)
 MISSION_TEMPLATES = [
     ("Gloop Harvest",        "Collect Space Gloop for the Mothership",     "Space Gloop",    5, "collect", 100),
     ("Beetle B Gone",        "Defeat Space Beetles invading the sector",  "Space Beetle",   3, "kill",    200),
@@ -491,11 +611,13 @@ class Game:
         self.collectibles = []
         self.projectiles = []
         self.particles = []
+        self.damage_numbers = []
         self.missions = []
         self.messages = []
         self.game_over = False
         self.paused = False
         self.t = 0
+        self.game_start_time = 0
         self.spawn_timer = 0
         self.mission_timer = 0
 
@@ -690,9 +812,10 @@ class Game:
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
-        self.game_over_text = Text(text='', position=(0, 0.05), origin=(0, 0), scale=4, color=color.red, visible=False)
-        self.game_over_sub = Text(text='', position=(0, -0.08), origin=(0, 0), scale=2, color=color.white, visible=False)
-        self.game_over_restart = Text(text='', position=(0, -0.15), origin=(0, 0), scale=1.5, color=color.yellow, visible=False)
+        self.game_over_text = Text(text='', position=(0, 0.15), origin=(0, 0), scale=4, color=color.red, visible=False)
+        self.game_over_sub = Text(text='', position=(0, 0.05), origin=(0, 0), scale=2, color=color.white, visible=False)
+        self.game_over_stats = Text(text='', position=(0, -0.05), origin=(0, 0), scale=1.3, color=color.rgba(200, 200, 255, 255), visible=False)
+        self.game_over_restart = Text(text='', position=(0, -0.25), origin=(0, 0), scale=1.5, color=color.yellow, visible=False)
 
         # Level-up popup
         self.level_up_text = Text(text='', position=(0, 0.2), origin=(0, 0), scale=3, color=color.yellow, visible=False)
@@ -959,6 +1082,8 @@ def game_update():
         if enemy.dying:
             if enemy.update_death_animation(time.dt):
                 # Death animation complete, remove enemy
+                for d in enemy.decor_entities:
+                    destroy(d)
                 destroy(enemy)
                 destroy(enemy.eye_l)
                 destroy(enemy.eye_r)
@@ -968,6 +1093,8 @@ def game_update():
             continue
 
         if not enemy.alive:
+            for d in enemy.decor_entities:
+                destroy(d)
             destroy(enemy)
             destroy(enemy.eye_l)
             destroy(enemy.eye_r)
@@ -1012,6 +1139,21 @@ def game_update():
                     game.game_over_text.text = 'GAME OVER'
                     game.game_over_sub.visible = True
                     game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+                    # Build detailed death stats
+                    total_kills = sum(p.kills.values())
+                    total_items = sum(p.inventory.values())
+                    time_alive = int(game.t)
+                    minutes = time_alive // 60
+                    seconds = time_alive % 60
+                    kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
+                    stats_lines = [
+                        f'Time Survived: {minutes}m {seconds}s',
+                        f'Total Kills: {total_kills}   Items Collected: {total_items}',
+                        f'Missions Completed: {p.completed_missions}',
+                        f'Enemies Defeated: {kill_details}',
+                    ]
+                    game.game_over_stats.visible = True
+                    game.game_over_stats.text = '\n'.join(stats_lines)
                     game.game_over_restart.visible = True
                     game.game_over_restart.text = 'Press R to Restart'
         else:
@@ -1037,6 +1179,8 @@ def game_update():
                 killed = enemy.take_damage(proj.damage)
                 game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
                 game.screen_shake = max(game.screen_shake, 0.15)
+                # Floating damage number
+                game.damage_numbers.append(DamageNumber(enemy.position, proj.damage, is_kill=False))
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
@@ -1046,6 +1190,8 @@ def game_update():
                     p.gain_xp(xp_gain)
                     p.score += enemy.max_hp
                     game.screen_shake = SCREEN_SHAKE_KILL
+                    # Kill damage number (bigger, yellow)
+                    game.damage_numbers.append(DamageNumber(enemy.position, proj.damage, is_kill=True))
                     # Drop loot
                     for _ in range(random.randint(LOOT_DROP_MIN, LOOT_DROP_MAX)):
                         offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
@@ -1065,6 +1211,13 @@ def game_update():
     for col in game.collectibles[:]:
         col.animate(game.t)
         dist = (col.position - p.position).length()
+        # Magnetic pull: items are drawn toward player when close
+        if dist < COLLECT_PULL_RADIUS and dist > 0.1:
+            pull_dir = (p.position - col.position).normalized()
+            pull_strength = 1.0 - (dist / COLLECT_PULL_RADIUS)  # stronger when closer
+            col.position += pull_dir * COLLECT_PULL_SPEED * pull_strength * time.dt
+            # Spin faster as pulled
+            col.rotation_y += 200 * pull_strength * time.dt
         if dist < COLLECT_RADIUS:
             p.add_item(col.name)
             p.score += col.value
@@ -1085,6 +1238,12 @@ def game_update():
         if lifetime <= 0:
             destroy(p_ent)
             game.particles.remove(item)
+
+    # ── Update Damage Numbers ──
+    for dmg_num in game.damage_numbers[:]:
+        if dmg_num.update(time.dt):
+            dmg_num.destroy()
+            game.damage_numbers.remove(dmg_num)
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt

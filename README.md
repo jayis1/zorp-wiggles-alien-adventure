@@ -28,7 +28,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.0.1 — 3D!)
+## Features (v2.0.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with 8 biomes: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp
@@ -43,9 +43,13 @@ python game.py
 - 3D trees in forests, crystal spires in crystal biomes
 - Atmospheric fog and lighting with starfield sky
 - Smooth camera follow with screen shake on hits and kills
-- Enemy death animations (shrink + flash)
+- Enemy death animations (pop upward, shrink, flash, and dissolve)
 - Level-up flash effect and scale pulse
 - Satisfying collectible pickup burst particles
+- Magnetic item pull (items are drawn toward you when nearby)
+- Floating damage numbers on enemy hits and kills
+- Detailed death screen with survival stats
+- Distinct enemy shapes (spheres, cubes, diamonds) and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
 - Enemy respawning and loot drops
 - Particle system for hits, kills, and pickups
