@@ -431,7 +431,8 @@ class Enemy(Entity):
 
     def update_hp_bar(self):
         """Update the HP bar scale and color based on current health ratio."""
-        ratio = max(0, self.hp / self.max_hp)
+        # Defensive: guard against division by zero if max_hp is somehow 0
+        ratio = max(0, self.hp / self.max_hp) if self.max_hp > 0 else 0
         self.hp_bar.scale_x = 2 * ratio
         self.hp_bar.x = -1 * (1 - ratio)
         # Color gradient: green → yellow → red
@@ -615,8 +616,8 @@ class DamageNumber:
         # Simple projection to screen space using camera's view
         screen_pos = camera.screen_point(self.world_pos)
         self.text_ent.position = (screen_pos[0], screen_pos[1])
-        # Fade out
-        alpha = max(0, self.lifetime / self.max_lifetime)
+        # Fade out — defensive: clamp alpha to prevent negative values
+        alpha = max(0, min(1, self.lifetime / self.max_lifetime))
         r, g, b = int(self.text_ent.color[0] * 255), int(self.text_ent.color[1] * 255), int(self.text_ent.color[2] * 255)
         if self.is_kill:
             self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
@@ -746,6 +747,112 @@ class Game:
         self.crosshair2 = Entity(parent=camera.ui, model='quad', color=color.rgba(255, 255, 255, 128),
                                  scale=(0.04, 0.003), position=(0, 0))
 
+    def _cleanup(self):
+        """Clean up all game entities for a restart. Destroys terrain, enemies,
+        collectibles, projectiles, particles, HUD, and player — but NOT camera,
+        scene, or lighting which Ursina manages globally."""
+        # Destroy enemies and their sub-entities
+        for e in self.enemies:
+            if e and e.enabled:
+                for d in e.decor_entities:
+                    destroy(d)
+                destroy(e.eye_l)
+                destroy(e.eye_r)
+                destroy(e.hp_bar_bg)
+                destroy(e.hp_bar)
+                destroy(e)
+        self.enemies.clear()
+
+        # Destroy collectibles
+        for c in self.collectibles:
+            if c and c.enabled:
+                destroy(c.glow)
+                destroy(c)
+        self.collectibles.clear()
+
+        # Destroy projectiles
+        for p in self.projectiles:
+            if p and p.enabled:
+                destroy(p)
+        self.projectiles.clear()
+
+        for ep in self.enemy_projectiles:
+            if ep and ep.enabled:
+                destroy(ep)
+        self.enemy_projectiles.clear()
+
+        # Destroy particles
+        for p_ent, vel, lifetime in self.particles:
+            if p_ent and p_ent.enabled:
+                destroy(p_ent)
+        self.particles.clear()
+
+        # Destroy damage numbers
+        for dn in self.damage_numbers:
+            dn.destroy()
+        self.damage_numbers.clear()
+
+        # Destroy terrain and decoration entities
+        for t in self.terrain_entities:
+            if t and t.enabled:
+                destroy(t)
+        self.terrain_entities.clear()
+
+        for t in self.tree_entities:
+            if t and t.enabled:
+                destroy(t)
+        self.tree_entities.clear()
+
+        for c in self.crystal_entities:
+            if c and c.enabled:
+                destroy(c)
+        self.crystal_entities.clear()
+
+        # Destroy stars
+        for s in self.stars:
+            if s and s.enabled:
+                destroy(s)
+        self.stars.clear()
+
+        # Destroy player and sub-entities (player's children: tentacles, eyes, shield)
+        if self.player and self.player.enabled:
+            destroy(self.player)
+        # Player's children cascade-destroy: tentacles, eyes, pupils, shield_visual
+
+        # Destroy HUD entities
+        for attr in ('hp_bar_bg', 'hp_bar', 'xp_bar_bg', 'xp_bar',
+                      'level_text', 'score_text', 'hp_text',
+                      'mission_text', 'controls_text', 'version_text',
+                      'game_over_text', 'game_over_sub', 'game_over_stats',
+                      'game_over_restart', 'level_up_text', 'dash_text',
+                      'powerup_text', 'crosshair', 'crosshair2'):
+            ent = getattr(self, attr, None)
+            if ent and hasattr(ent, 'enabled'):
+                destroy(ent)
+        for t in self.msg_texts:
+            if t:
+                destroy(t)
+        self.msg_texts.clear()
+
+        # Destroy minimap entities
+        if self.minimap_entity and hasattr(self.minimap_entity, 'enabled'):
+            destroy(self.minimap_entity)
+        if self.minimap_player_dot and hasattr(self.minimap_player_dot, 'enabled'):
+            destroy(self.minimap_player_dot)
+
+        # Destroy camera pivot (player follow rig)
+        if self.cam_pivot and hasattr(self.cam_pivot, 'enabled'):
+            destroy(self.cam_pivot)
+
+        # Destroy lights
+        if hasattr(self, 'sun') and self.sun:
+            destroy(self.sun)
+
+        # Destroy Sky (Ursina's Sky is a special entity)
+        for e in scene.entities[:]:
+            if hasattr(e, 'model') and e.model and 'sky' in str(e.model).lower():
+                destroy(e)
+
     def _build_terrain(self):
         """Build the 3D terrain from the world grid."""
         for y in range(WORLD_SIZE):
@@ -825,7 +932,7 @@ class Game:
         tz = int(world_z / TILE_SCALE)
         if 0 <= tx < WORLD_SIZE and 0 <= tz < WORLD_SIZE:
             return self.world_grid[tz][tx] in WALKABLE
-        return False
+        return False  # Out of bounds is not walkable
 
     def _spawn_initial_entities(self):
         """Populate the world with initial collectibles and enemies."""
@@ -1001,7 +1108,7 @@ class Game:
             self.hp_bar.color = color.rgb(255, int(255 * t), 0)
         self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
-        # XP bar
+        # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
         self.xp_bar.scale_x = 0.4 * xp_ratio
         self.xp_bar.x = -0.55 - 0.2 * (1 - xp_ratio)
@@ -1017,15 +1124,15 @@ class Game:
         else:
             self.level_up_text.visible = False
 
-        # Messages
+        # Messages — clear all slots first to avoid stale text from previous frames
+        for i in range(len(self.msg_texts)):
+            self.msg_texts[i].text = ''
         visible = self.messages[-5:]
         for i, (tick, msg) in enumerate(visible):
             age = self.t - tick
             if age < 5:
                 self.msg_texts[i].text = msg
                 self.msg_texts[i].color = color.rgba(255, 255, 0, max(0, 255 - int(age * 50)))
-            else:
-                self.msg_texts[i].text = ''
 
         # Minimap player dot
         mm_cx = 0.72
@@ -1090,8 +1197,11 @@ def game_update():
     if game.game_over:
         # Check for restart
         if held_keys['r']:
-            for e in scene.entities[:]:
-                destroy(e)
+            # Bug fix: instead of destroying ALL scene entities (which kills camera,
+            # sky, lighting etc.), properly clean up only the game's own entities.
+            # Ursina's destroy() on parent cascades to children, so we destroy
+            # top-level game entities and let the new Game() recreate everything.
+            game._cleanup()
             game = Game()
             return
         return
@@ -1304,7 +1414,9 @@ def game_update():
             # Wander
             enemy.wander_timer -= time.dt
             if enemy.wander_timer <= 0:
-                enemy.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+                # Bug fix: guard against zero-length direction producing NaN
+                wd = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1))
+                enemy.wander_dir = wd.normalized() if wd.length() > 0.01 else Vec3(1, 0, 0)
                 enemy.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
             new_pos = enemy.position + enemy.wander_dir * enemy.speed * ENEMY_WANDER_SPEED_FACTOR * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
@@ -1313,42 +1425,42 @@ def game_update():
                 enemy.wander_dir = -enemy.wander_dir
 
         # Attack player (shield blocks damage)
-        if dist_to_player < ENEMY_ATTACK_RANGE:
-            if enemy.attack_cd <= 0:
-                if p.shield_timer > 0:
-                    # Shield absorbs the hit
-                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
-                    game.add_message("Shield blocked!")
-                else:
-                    died = p.take_damage(enemy.damage)
-                    game.screen_shake = SCREEN_SHAKE_DAMAGE
-                    game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
-                    if died:
-                        game.game_over = True
-                        game.game_over_text.visible = True
-                        game.game_over_text.text = 'GAME OVER'
-                        game.game_over_sub.visible = True
-                        game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
-                        # Build detailed death stats
-                        total_kills = sum(p.kills.values())
-                        total_items = sum(p.inventory.values())
-                        time_alive = int(game.t)
-                        minutes = time_alive // 60
-                        seconds = time_alive % 60
-                        kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
-                        stats_lines = [
-                            f'Time Survived: {minutes}m {seconds}s',
-                            f'Total Kills: {total_kills}   Items Collected: {total_items}',
-                            f'Missions Completed: {p.completed_missions}',
-                            f'Enemies Defeated: {kill_details}',
-                        ]
-                        game.game_over_stats.visible = True
-                        game.game_over_stats.text = '\n'.join(stats_lines)
-                        game.game_over_restart.visible = True
-                        game.game_over_restart.text = 'Press R to Restart'
-                enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
-        else:
-            enemy.attack_cd = max(0, enemy.attack_cd - time.dt)
+        # Bug fix: cooldown must decrement even when in range, otherwise enemies
+        # attack once and then never again while staying next to the player.
+        enemy.attack_cd = max(0, enemy.attack_cd - time.dt)
+        if dist_to_player < ENEMY_ATTACK_RANGE and enemy.attack_cd <= 0:
+            if p.shield_timer > 0:
+                # Shield absorbs the hit
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                game.add_message("Shield blocked!")
+            else:
+                died = p.take_damage(enemy.damage)
+                game.screen_shake = SCREEN_SHAKE_DAMAGE
+                game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                if died:
+                    game.game_over = True
+                    game.game_over_text.visible = True
+                    game.game_over_text.text = 'GAME OVER'
+                    game.game_over_sub.visible = True
+                    game.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+                    # Build detailed death stats
+                    total_kills = sum(p.kills.values())
+                    total_items = sum(p.inventory.values())
+                    time_alive = int(game.t)
+                    minutes = time_alive // 60
+                    seconds = time_alive % 60
+                    kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
+                    stats_lines = [
+                        f'Time Survived: {minutes}m {seconds}s',
+                        f'Total Kills: {total_kills}   Items Collected: {total_items}',
+                        f'Missions Completed: {p.completed_missions}',
+                        f'Enemies Defeated: {kill_details}',
+                    ]
+                    game.game_over_stats.visible = True
+                    game.game_over_stats.text = '\n'.join(stats_lines)
+                    game.game_over_restart.visible = True
+                    game.game_over_restart.text = 'Press R to Restart'
+            enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
 
         # Float enemies
         enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
@@ -1452,6 +1564,7 @@ def game_update():
         col.animate(game.t)
         dist = (col.position - p.position).length()
         # Magnetic pull: items are drawn toward player when close
+        # Defensive: skip pull if dist is effectively zero to avoid NaN direction
         if dist < COLLECT_PULL_RADIUS and dist > 0.1:
             pull_dir = (p.position - col.position).normalized()
             pull_strength = 1.0 - (dist / COLLECT_PULL_RADIUS)  # stronger when closer
@@ -1487,15 +1600,22 @@ def game_update():
             game.collectibles.remove(col)
 
     # ── Update Particles ──
-    for item in game.particles[:]:
-        p_ent, vel, lifetime = item
+    # Bug fix: must update the tuple in-place; Python tuple unpacking creates local copies
+    # so modifying `vel` and `lifetime` never updates the list, causing particles to never
+    # expire and the list to grow forever (memory leak).
+    i = 0
+    while i < len(game.particles):
+        p_ent, vel, lifetime = game.particles[i]
         p_ent.position += vel * time.dt
-        vel = Vec3(vel.x, vel.y - PARTICLE_GRAVITY * time.dt, vel.z)
-        lifetime -= time.dt
+        new_vel = Vec3(vel.x, vel.y - PARTICLE_GRAVITY * time.dt, vel.z)
+        new_lifetime = lifetime - time.dt
         p_ent.scale *= PARTICLE_SCALE_DECAY
-        if lifetime <= 0:
+        if new_lifetime <= 0:
             destroy(p_ent)
-            game.particles.remove(item)
+            game.particles.pop(i)
+        else:
+            game.particles[i] = (p_ent, new_vel, new_lifetime)
+            i += 1
 
     # ── Update Damage Numbers ──
     for dmg_num in game.damage_numbers[:]:
@@ -1578,8 +1698,9 @@ def input(key):
     global game
     if key == 'escape':
         application.quit()
-    if key == 'p' and not game.game_over:
-        game.paused = not game.paused
+    # Bug fix: 'p' key for pause is handled entirely in game_update() via held_keys
+    # to avoid double-toggle race condition where input() toggles ON and then
+    # game_update() on the same frame toggles it OFF again.
 
 app.update = game_update
 app.run()
