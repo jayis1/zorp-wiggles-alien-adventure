@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.4.0"
+VERSION = "2.4.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -34,7 +34,7 @@ PROJECTILE_BASE_DAMAGE = 20
 PROJECTILE_LEVEL_DAMAGE_BONUS = 2
 PROJECTILE_SPEED = 55
 PROJECTILE_LIFETIME = 2.0
-ENEMY_DETECT_RANGE = 35
+ENEMY_DETECT_RANGE = 32
 ENEMY_ATTACK_RANGE = 2.5
 ENEMY_ATTACK_COOLDOWN = 1.0
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
@@ -254,7 +254,7 @@ RUINS_WALL_CHANCE = 0.05
 # ─── Collectible Weighted Spawn ─────────────────────────────────────────────
 COLLECTIBLE_WEIGHTS = {
     'Space Gloop':    30,   # Common
-    'Health Potion':  22,   # Common (increased from 18 — vital for survival)
+    'Health Potion':  24,   # Common (slightly increased from 22 — vital for survival)
     'Meteor Shard':   15,   # Uncommon
     'Speed Boost':    10,   # Uncommon
     'Quantum Fuzz':   8,    # Rare
@@ -265,6 +265,33 @@ COLLECTIBLE_WEIGHTS = {
     'Cosmic Jelly':   3,    # Legendary
     'Plasma Core':    3,    # Mythic
     'Time Warp':      5,    # Rare — slows all enemies to 30% speed
+}
+
+# ─── Collectible Rarity Tiers ────────────────────────────────────────────────
+# Controls glow pulse speed and brightness for each rarity tier.
+# Higher rarity items pulse faster and glow brighter, making them easier to spot.
+RARITY_TIER = {
+    'Space Gloop':    'common',
+    'Health Potion':  'common',
+    'Meteor Shard':   'uncommon',
+    'Speed Boost':    'uncommon',
+    'Magnet Core':    'uncommon',
+    'Quantum Fuzz':   'rare',
+    'Shield Crystal': 'rare',
+    'Weapon Upgrade': 'rare',
+    'Time Warp':      'rare',
+    'Nebula Dust':    'very_rare',
+    'Cosmic Jelly':   'legendary',
+    'Plasma Core':    'mythic',
+}
+
+RARITY_GLOW_CONFIG = {
+    'common':    {'pulse_speed': 2.5, 'min_scale': 2.6, 'max_scale': 3.2, 'glow_alpha': 60},
+    'uncommon':  {'pulse_speed': 3.0, 'min_scale': 2.8, 'max_scale': 3.5, 'glow_alpha': 80},
+    'rare':     {'pulse_speed': 3.5, 'min_scale': 3.0, 'max_scale': 3.8, 'glow_alpha': 100},
+    'very_rare': {'pulse_speed': 4.0, 'min_scale': 3.0, 'max_scale': 4.0, 'glow_alpha': 120},
+    'legendary': {'pulse_speed': 4.5, 'min_scale': 3.2, 'max_scale': 4.2, 'glow_alpha': 140},
+    'mythic':    {'pulse_speed': 5.0, 'min_scale': 3.4, 'max_scale': 4.5, 'glow_alpha': 160},
 }
 
 # ─── Minimap ─────────────────────────────────────────────────────────────────
@@ -431,6 +458,15 @@ class Player(Entity):
         self.shield_visual = Entity(model='sphere', color=color.rgba(100, 200, 255, 60),
                                     scale=1.6, parent=self, visible=False)
 
+        # Ground shadow beneath player for spatial awareness
+        self.ground_shadow = Entity(
+            model='quad',
+            color=color.rgba(0, 0, 0, 40),
+            scale=2.0,
+            position=(self.x, 0.05, self.z),
+            rotation_x=90,
+        )
+
         # Squish/stretch animation state
         self.squish_current = 1.0  # Current Y scale (1.0 = normal)
         self.is_moving = False
@@ -520,7 +556,7 @@ class Enemy(Entity):
         'Plasma Drake':    {'color': color.magenta,       'hp': 400, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
         'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
-        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 38},
+        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 4, 'scale': 0.5, 'model': 'sphere', 'decor': 'none', 'detect': 30},
         'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
         'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
         'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70, 'speed': 0, 'damage': 15, 'scale': 1.5, 'model': 'diamond', 'decor': 'shards', 'detect': 30},
@@ -616,6 +652,15 @@ class Enemy(Entity):
         # HP bar
         self.hp_bar_bg = Entity(model='quad', color=color.red, scale=(2, 0.15), parent=self, position=(0, 1.5, 0), billboard=True)
         self.hp_bar = Entity(model='quad', color=color.green, scale=(2, 0.15), parent=self, position=(0, 1.5, -0.01), billboard=True)
+
+        # Ground shadow for spatial awareness — dark disc beneath the enemy
+        self.ground_shadow = Entity(
+            model='quad',
+            color=color.rgba(0, 0, 0, 50),
+            scale=self.original_scale * 2.0,
+            position=(self.x, 0.05, self.z),
+            rotation_x=90,
+        )
 
     def take_damage(self, amount, hit_direction=None):
         """Apply damage to the enemy. Returns True if killed.
@@ -743,16 +788,23 @@ class Collectible(Entity):
         self.item_color = info['color']
         self.popping = False
         self.pop_timer = 0.0
-        # Glow ring
-        self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, 80),
-                           scale=3, parent=self, rotation_x=90, position=(0, -0.3, 0))
+        # Rarity-based glow configuration
+        self.rarity = RARITY_TIER.get(item_type, 'common')
+        glow_cfg = RARITY_GLOW_CONFIG.get(self.rarity, RARITY_GLOW_CONFIG['common'])
+        self.glow_pulse_speed = glow_cfg['pulse_speed']
+        self.glow_min_scale = glow_cfg['min_scale']
+        self.glow_max_scale = glow_cfg['max_scale']
+        # Glow ring — alpha scales with rarity
+        glow_alpha = glow_cfg['glow_alpha']
+        self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, glow_alpha),
+                           scale=glow_cfg['min_scale'], parent=self, rotation_x=90, position=(0, -0.3, 0))
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
         self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
         self.rotation_y += 60 * time.dt
-        # Pulsing glow ring — scales between min and max for a beacon effect
-        pulse = GLOW_PULSE_MIN_SCALE + (GLOW_PULSE_MAX_SCALE - GLOW_PULSE_MIN_SCALE) * (0.5 + 0.5 * math.sin(t * GLOW_PULSE_SPEED + self.bob_offset))
+        # Rarity-scaled glow pulse — faster pulse and wider range for rarer items
+        pulse = self.glow_min_scale + (self.glow_max_scale - self.glow_min_scale) * (0.5 + 0.5 * math.sin(t * self.glow_pulse_speed + self.bob_offset))
         self.glow.scale = pulse
 
 
@@ -1284,6 +1336,8 @@ class Game:
                 destroy(e.eye_r)
                 destroy(e.hp_bar_bg)
                 destroy(e.hp_bar)
+                if hasattr(e, 'ground_shadow') and e.ground_shadow:
+                    destroy(e.ground_shadow)
                 destroy(e)
         self.enemies.clear()
 
@@ -1373,8 +1427,10 @@ class Game:
                 destroy(c)
         self.nebula_clouds.clear()
 
-        # Destroy player and sub-entities (player's children: tentacles, eyes, shield)
+        # Destroy player and sub-entities (player's children: tentacles, eyes, pupils, shield_visual)
         if self.player and self.player.enabled:
+            if hasattr(self.player, 'ground_shadow') and self.player.ground_shadow:
+                destroy(self.player.ground_shadow)
             destroy(self.player)
         # Player's children cascade-destroy: tentacles, eyes, pupils, shield_visual
 
@@ -1986,7 +2042,12 @@ class Game:
             self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
     def shoot(self):
-        """Fire tentacle laser toward mouse. Supports spread shot when weapon upgrade active."""
+        """Fire tentacle laser toward the mouse cursor.
+
+        Creates a single projectile in normal mode, or a 3-way spread
+        when the Weapon Upgrade power-up is active. Applies base damage
+        plus a level-scaling bonus.
+        """
         if self.player.shoot_timer > 0 or self.game_over:
             return
         self.player.shoot_timer = SHOOT_COOLDOWN
@@ -2032,13 +2093,19 @@ class Game:
         hp_ratio = max(0, p.hp / p.max_hp)
         self.hp_bar.scale_x = 0.4 * hp_ratio
         self.hp_bar.x = -0.55 - 0.2 * (1 - hp_ratio)
-        # HP bar color gradient: green → yellow → red
+        # HP bar color gradient: green → yellow → red, with urgent pulse below 25%
         if hp_ratio > 0.5:
             t = (hp_ratio - 0.5) * 2
             self.hp_bar.color = color.rgb(int(255 * (1 - t)), 255, 0)
         else:
             t = hp_ratio * 2
             self.hp_bar.color = color.rgb(255, int(255 * t), 0)
+        # Low-HP warning: pulse the HP bar background red when health is critical
+        if hp_ratio < 0.25:
+            pulse_alpha = 0.5 + 0.5 * math.sin(self.t * 8)
+            self.hp_bar_bg.color = color.rgb(int(180 * pulse_alpha), 0, 0)
+        else:
+            self.hp_bar_bg.color = color.dark_gray
         self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
         # XP bar — defensive: guard against division by zero
@@ -2166,7 +2233,12 @@ class Game:
 
 
 def game_update():
-    """Main update loop — called every frame."""
+    """Main update loop — called every frame by Ursina.
+
+    Handles player input, movement, combat, enemy AI, collectible pickups,
+    projectile physics, weather, spawning, HUD refresh, and all visual effects.
+    Runs at whatever framerate Ursina targets (typically 60 FPS).
+    """
     global game
 
     if game.game_over:
@@ -2350,6 +2422,11 @@ def game_update():
     p.animate_bob(game.t)
     p.update_tentacles(game.t)
 
+    # Update player ground shadow to track position
+    if hasattr(p, 'ground_shadow') and p.ground_shadow:
+        p.ground_shadow.x = p.x
+        p.ground_shadow.z = p.z
+
     # Invulnerability timer
     if p.invuln_timer > 0:
         p.invuln_timer -= time.dt
@@ -2412,7 +2489,16 @@ def game_update():
                 destroy(enemy.eye_r)
                 destroy(enemy.hp_bar_bg)
                 destroy(enemy.hp_bar)
+                if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
+                    destroy(enemy.ground_shadow)
                 game.enemies.remove(enemy)
+            else:
+                # Update ground shadow position during death animation
+                if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
+                    enemy.ground_shadow.x = enemy.x
+                    enemy.ground_shadow.z = enemy.z
+                    # Fade shadow out as enemy shrinks
+                    enemy.ground_shadow.scale = max(0.01, enemy.original_scale * 2.0 * max(0.01, enemy.scale_x / enemy.original_scale))
             continue
 
         if not enemy.alive:
@@ -2423,6 +2509,8 @@ def game_update():
             destroy(enemy.eye_r)
             destroy(enemy.hp_bar_bg)
             destroy(enemy.hp_bar)
+            if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
+                destroy(enemy.ground_shadow)
             game.enemies.remove(enemy)
             continue
 
@@ -2662,6 +2750,10 @@ def game_update():
         # Float enemies (except Nebula Phantom which controls its own Y)
         if not enemy.is_nebula_phantom:
             enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
+        # Update ground shadow position to follow enemy (world-space, on ground plane)
+        if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
+            enemy.ground_shadow.x = enemy.x
+            enemy.ground_shadow.z = enemy.z
         enemy.update_hp_bar()
 
     # ── Update Projectiles ──
