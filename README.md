@@ -29,18 +29,19 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.2.1 — 3D!)
+## Features (v2.3.0 — 3D!)
 
 - Full 3D open world with third-person camera
-- Procedurally generated terrain with **9 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, **Alien Mushroom Forest**
-- 10 collectible item types — including **4 power-ups**: Health Potion, Speed Boost, Shield Crystal, **Weapon Upgrade (Spread Shot)**
-- **10 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!)
+- Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
+- 11 collectible item types — including **5 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), **Magnet Core**
+- **11 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!)
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 4 seconds
 - **Speed Boost** — 1.8x speed for 5 seconds
 - **Health Potion** — restores 30 HP instantly
+- **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Combo system** — chain kills within 4 seconds for XP and score multipliers! Combo counter displayed on HUD with escalating colors
 - **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes
 - Mission system with collection and kill objectives
@@ -49,6 +50,8 @@ python game.py
 - Minimap with player tracking
 - Enemy HP bars with green→yellow→red color gradient
 - 3D trees in forests, crystal spires in crystal biomes, **colorful alien mushrooms** in mushroom biomes
+- **Floating Islands biome** — raised platforms hovering above the ground with purple crystals and shadow projections
+- **Alien Ruins** — stone pillars and broken walls spawning in desert biomes
 - Atmospheric fog and lighting with starfield sky
 - Smooth camera follow with screen shake on hits and kills
 - Enemy death animations (pop upward, shrink, flash, and dissolve)
@@ -92,7 +95,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Biome | Color | Walkable | Features |
 |-------|-------|----------|----------|
 | Grass | Green | Yes | Safe starting zone, rain weather |
-| Desert | Sandy | Yes | Open and exposed |
+| Desert | Sandy | Yes | Open and exposed, **alien ruins** |
 | Water | Blue | No | Blocks movement |
 | Lava | Red | No | Blocks movement, rising ember particles |
 | Forest | Dark Green | Yes | 3D trees, rain weather |
@@ -100,6 +103,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Snow | White | Yes | Icy terrain, snowfall weather |
 | Swamp | Murky Green | Yes | Squishy ground, rain weather |
 | Mushroom | Alien Green | Yes | Colorful alien mushrooms with spore glow |
+| **Floating Islands** | Lavender | Yes | Raised platforms with purple crystals and ground shadows |
 
 ## Collectibles
 
@@ -115,6 +119,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Speed Boost** | 15 pts | 1.8x speed for 5s | Uncommon |
 | **Shield Crystal** | 15 pts | Blocks all damage for 4s | Rare |
 | **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
+| **Magnet Core** | 20 pts | 2.5x pull radius + 2x pull speed for 6s | Uncommon |
 
 ## Enemies
 
@@ -125,6 +130,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Space Beetle | 50 | Medium | 15 | — | Aggressive |
 | Phase Shifter | 70 | Medium | 20 | **Teleports** | Warps near player periodically |
 | **Void Bomber** | 60 | Medium | 20 | **Kamikaze!** | Explodes near player, also damages other enemies |
+| **Nebula Phantom** | 100 | Fast | 30 | **Orbit + Dive** | Circles player in the air, then dive-attacks! |
 | Void Wraith | 80 | Medium | 25 | — | Spooky |
 | Spore Spitter | 90 | Medium | 15 | **Shoots back** | Fires projectiles at player |
 | Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
@@ -138,6 +144,11 @@ Chain kills within 4 seconds to build combos! Each combo tier grants:
 - **+5% score bonus** per tier (up to 10 tiers)
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
+
+## World Features
+
+- **Alien Ruins** in desert biomes — scattered stone pillars (1–4 per ruin) and broken wall segments, giving the desert a mysterious ancient civilization feel
+- **Floating Islands** — elevated platforms hovering 3–6 units above the ground with purple crystals on top and shadow projections below
 
 ## Tech Stack
 

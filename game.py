@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.2.1"
+VERSION = "2.3.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -130,6 +130,7 @@ BIOME_FOG = {
     'snow':    {'color': color.rgb(40, 40, 55),    'density': 0.006},
     'swamp':   {'color': color.rgb(25, 35, 15),    'density': 0.014},
     'mushroom': {'color': color.rgb(20, 10, 40),   'density': 0.011},
+    'floating_islands': {'color': color.rgb(30, 20, 50),   'density': 0.006},
 }
 
 # ─── Biome Generation ─────────────────────────────────────────────────────────
@@ -182,8 +183,30 @@ VOID_BOMBER_EXPLOSION_DAMAGE = 40
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
 MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
+
+# ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
+NEBULA_PHANTOM_ORBIT_RADIUS = 12
+NEBULA_PHANTOM_ORBIT_SPEED = 2.0
+NEBULA_PHANTOM_DIVE_SPEED = 25
+NEBULA_PHANTOM_DIVE_COOLDOWN_MIN = 4.0
+NEBULA_PHANTOM_DIVE_COOLDOWN_MAX = 7.0
+
+# ─── Magnet Core (New Collectible) ────────────────────────────────────────
+MAGNET_DURATION = 6.0
+MAGNET_PULL_RADIUS_MULT = 2.5
+MAGNET_PULL_SPEED_MULT = 2.0
+
+# ─── Floating Islands Biome ──────────────────────────────────────────────
+FLOATING_ISLAND_HEIGHT_MIN = 3
+FLOATING_ISLAND_HEIGHT_MAX = 6
+FLOATING_ISLAND_SPAWN_CHANCE = 0.15
+FLOATING_ISLAND_CRYSTAL_CHANCE = 0.4
+
+# ─── Alien Ruins ──────────────────────────────────────────────────────────
+RUINS_PILLAR_CHANCE = 0.08
+RUINS_WALL_CHANCE = 0.05
 
 # ─── Collectible Weighted Spawn ─────────────────────────────────────────────
 COLLECTIBLE_WEIGHTS = {
@@ -194,6 +217,7 @@ COLLECTIBLE_WEIGHTS = {
     'Quantum Fuzz':   8,    # Rare
     'Shield Crystal': 5,   # Rare
     'Weapon Upgrade': 4,   # Rare
+    'Magnet Core':    7,    # Uncommon
     'Nebula Dust':    4,    # Very Rare
     'Cosmic Jelly':   3,    # Legendary
     'Plasma Core':    3,    # Mythic
@@ -236,6 +260,7 @@ C_GOLD     = color.rgb(255, 215, 0)
 C_PURPLE   = color.rgb(170, 0, 255)
 C_PINK     = color.rgb(255, 80, 180)
 C_MUSHROOM = color.rgb(50, 180, 90)
+C_FLOATING_ISLANDS = color.rgb(180, 140, 220)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -247,9 +272,10 @@ BIOME_COLORS = {
     'snow':    C_SNOW,
     'swamp':   C_SWAMP,
     'mushroom': C_MUSHROOM,
+    'floating_islands': C_FLOATING_ISLANDS,
 }
 
-WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom'}
+WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands'}
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 class WorldGenerator:
@@ -271,7 +297,7 @@ class WorldGenerator:
         grid = [['grass' for _ in range(size)] for _ in range(size)]
 
         # Place biome blobs
-        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp', 'mushroom']
+        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands']
         for _ in range(BIOME_BLOB_COUNT):
             bx = random.randint(0, size - 1)
             by = random.randint(0, size - 1)
@@ -334,6 +360,7 @@ class Player(Entity):
         self.speed_boost_timer = 0
         self.shield_timer = 0
         self.weapon_upgrade_timer = 0  # Spread shot duration
+        self.magnet_timer = 0  # Magnet Core pull boost
 
         # Tentacle entities
         self.tentacles = []
@@ -438,6 +465,7 @@ class Enemy(Entity):
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
         'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 45},
         'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
+        'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -481,6 +509,13 @@ class Enemy(Entity):
         self.fuse_timer = 0
         self.fuse_active = False
         self.pulse_speed = 0
+
+        # Nebula Phantom: flying enemy that orbits and dive-attacks
+        self.is_nebula_phantom = (enemy_type == 'Nebula Phantom')
+        self.orbit_angle = random.uniform(0, math.pi * 2) if self.is_nebula_phantom else 0
+        self.orbit_state = 'orbit' if self.is_nebula_phantom else None  # 'orbit' or 'dive'
+        self.dive_timer = random.uniform(NEBULA_PHANTOM_DIVE_COOLDOWN_MIN, NEBULA_PHANTOM_DIVE_COOLDOWN_MAX) if self.is_nebula_phantom else 0
+        self.dive_target = Vec3(0, 0, 0) if self.is_nebula_phantom else None
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -623,6 +658,7 @@ class Collectible(Entity):
         'Speed Boost':    {'color': color.rgb(50, 255, 50),  'value': 15,  'model': 'diamond'},
         'Shield Crystal': {'color': color.rgb(100, 200, 255),'value': 15,  'model': 'diamond'},
         'Weapon Upgrade': {'color': color.rgb(255, 150, 0),  'value': 20,  'model': 'diamond'},
+        'Magnet Core':    {'color': color.rgb(200, 50, 255), 'value': 20,  'model': 'sphere'},
     }
 
     def __init__(self, position, item_type=None):
@@ -777,6 +813,7 @@ MISSION_TEMPLATES = [
     ("Crawler Crisis",       "Take out Lava Crawlers near volcanic zones", "Lava Crawler",  3, "kill",    350),
     ("Crystal Clear",        "Defeat Crystal Guardians in crystal biomes", "Crystal Guardian",2,"kill",    500),
     ("Plasma Pursuit",       "Hunt down the elusive Plasma Drakes",        "Plasma Drake",  1, "kill",    700),
+    ("Phantom Purge",       "Banish Nebula Phantoms from the skies",     "Nebula Phantom",2, "kill",    450),
     ("Core Collector",       "Gather Plasma Cores for the warp drive",     "Plasma Core",    2, "collect", 600),
 ]
 
@@ -1125,6 +1162,63 @@ class Game:
                         rotation_x=90,
                     )
                     self.crystal_entities.extend([stem, cap, glow])
+
+                elif biome == 'floating_islands' and random.random() < FLOATING_ISLAND_SPAWN_CHANCE:
+                    # Floating island: raised platform with crystals
+                    island_h = random.uniform(FLOATING_ISLAND_HEIGHT_MIN, FLOATING_ISLAND_HEIGHT_MAX)
+                    island_size = random.uniform(1.5, 3.0)
+                    # The floating platform itself
+                    island = Entity(
+                        model='cube',
+                        color=color.rgb(160, 120, 200),
+                        position=(x * TILE_SCALE, island_h, y * TILE_SCALE),
+                        scale=(island_size, 0.5, island_size),
+                    )
+                    # Shadow beneath
+                    shadow = Entity(
+                        model='quad',
+                        color=color.rgba(0, 0, 0, 40),
+                        position=(x * TILE_SCALE, 0.05, y * TILE_SCALE),
+                        scale=island_size * 1.5,
+                        rotation_x=90,
+                    )
+                    self.crystal_entities.extend([island, shadow])
+                    # Crystal on top of island
+                    if random.random() < FLOATING_ISLAND_CRYSTAL_CHANCE:
+                        crystal_h = random.uniform(1.5, 4.0)
+                        crystal_top = Entity(
+                            model='cube',
+                            color=color.rgb(200, 180, 255),
+                            position=(x * TILE_SCALE, island_h + crystal_h / 2 + 0.25, y * TILE_SCALE),
+                            scale=(0.3, crystal_h, 0.3),
+                        )
+                        self.crystal_entities.append(crystal_top)
+
+                elif biome == 'desert' and random.random() < RUINS_PILLAR_CHANCE:
+                    # Alien ruins: ancient stone pillars
+                    pillar_count = random.randint(1, 4)
+                    for pi in range(pillar_count):
+                        offset_x = random.uniform(-2, 2)
+                        offset_z = random.uniform(-2, 2)
+                        pillar_h = random.uniform(2, 6)
+                        pillar = Entity(
+                            model='cube',
+                            color=color.rgb(160, 140, 100),
+                            position=(x * TILE_SCALE + offset_x, pillar_h / 2 + 0.5, y * TILE_SCALE + offset_z),
+                            scale=(0.4, pillar_h, 0.4),
+                        )
+                        self.crystal_entities.append(pillar)
+                    # Broken wall segment
+                    if random.random() < 0.5:
+                        wall_w = random.uniform(1, 3)
+                        wall_h = random.uniform(1.5, 3)
+                        wall = Entity(
+                            model='cube',
+                            color=color.rgb(140, 120, 80),
+                            position=(x * TILE_SCALE, wall_h / 2 + 0.5, y * TILE_SCALE),
+                            scale=(wall_w, wall_h, 0.3),
+                        )
+                        self.crystal_entities.append(wall)
 
     def _is_walkable(self, world_x, world_z):
         """Check if a world position is on walkable terrain."""
@@ -1610,6 +1704,8 @@ class Game:
             pu_lines.append(f'SPEED BOOST: {p.speed_boost_timer:.1f}s')
         if p.shield_timer > 0:
             pu_lines.append(f'SHIELD: {p.shield_timer:.1f}s')
+        if p.magnet_timer > 0:
+            pu_lines.append(f'MAGNET: {p.magnet_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
@@ -1805,6 +1901,10 @@ def game_update():
     # Weapon upgrade timer
     if p.weapon_upgrade_timer > 0:
         p.weapon_upgrade_timer -= time.dt
+
+    # Magnet Core timer
+    if p.magnet_timer > 0:
+        p.magnet_timer -= time.dt
 
     # Combo timer
     if game.combo_timer > 0:
@@ -2023,6 +2123,43 @@ def game_update():
                         enemy.alive = False
                         enemy.dying = True
                         enemy.death_timer = DEATH_ANIM_DURATION
+
+            # ── Nebula Phantom: Flying orbit + dive attack ──
+            if enemy.is_nebula_phantom and enemy.alive:
+                if enemy.orbit_state == 'orbit':
+                    # Circle around the player
+                    enemy.orbit_angle += NEBULA_PHANTOM_ORBIT_SPEED * time.dt
+                    target_x = p.x + math.cos(enemy.orbit_angle) * NEBULA_PHANTOM_ORBIT_RADIUS
+                    target_z = p.z + math.sin(enemy.orbit_angle) * NEBULA_PHANTOM_ORBIT_RADIUS
+                    if game._is_walkable(target_x, target_z):
+                        enemy.x = target_x
+                        enemy.z = target_z
+                    # Float higher than normal enemies
+                    enemy.y = 4 + math.sin(game.t * 3 + id(enemy) % 100) * 0.5
+                    enemy.look_at_2d(p.position)
+                    # Check if should dive
+                    enemy.dive_timer -= time.dt
+                    if enemy.dive_timer <= 0:
+                        enemy.orbit_state = 'dive'
+                        enemy.dive_target = Vec3(p.x, 1, p.z)
+                        game._spawn_particles(enemy.position, color.rgb(100, 150, 255), count=8)
+                        game.add_message("Nebula Phantom diving!")
+                elif enemy.orbit_state == 'dive':
+                    # Dive toward the player's last known position
+                    dive_dir = (enemy.dive_target - enemy.position).normalized()
+                    new_dive_pos = enemy.position + dive_dir * NEBULA_PHANTOM_DIVE_SPEED * time.dt
+                    if game._is_walkable(new_dive_pos.x, new_dive_pos.z):
+                        enemy.x = new_dive_pos.x
+                        enemy.z = new_dive_pos.z
+                    # Descend toward ground level
+                    enemy.y = max(1, enemy.y - 15 * time.dt)
+                    # Check if reached dive target (close to ground)
+                    if enemy.y <= 1.2:
+                        # Impact particles and return to orbit
+                        game._spawn_particles(enemy.position, color.rgb(100, 150, 255), count=10)
+                        enemy.orbit_state = 'orbit'
+                        enemy.dive_timer = random.uniform(NEBULA_PHANTOM_DIVE_COOLDOWN_MIN, NEBULA_PHANTOM_DIVE_COOLDOWN_MAX)
+                        enemy.y = 4
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -2054,8 +2191,9 @@ def game_update():
                     game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
 
-        # Float enemies
-        enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
+        # Float enemies (except Nebula Phantom which controls its own Y)
+        if not enemy.is_nebula_phantom:
+            enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
         enemy.update_hp_bar()
 
     # ── Update Projectiles ──
@@ -2177,10 +2315,12 @@ def game_update():
         dist = (col.position - p.position).length()
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction
-        if dist < COLLECT_PULL_RADIUS and dist > 0.1:
+        pull_radius = COLLECT_PULL_RADIUS * (MAGNET_PULL_RADIUS_MULT if p.magnet_timer > 0 else 1.0)
+        pull_speed = COLLECT_PULL_SPEED * (MAGNET_PULL_SPEED_MULT if p.magnet_timer > 0 else 1.0)
+        if dist < pull_radius and dist > 0.1:
             pull_dir = (p.position - col.position).normalized()
-            pull_strength = 1.0 - (dist / COLLECT_PULL_RADIUS)  # stronger when closer
-            col.position += pull_dir * COLLECT_PULL_SPEED * pull_strength * time.dt
+            pull_strength = 1.0 - (dist / pull_radius)  # stronger when closer
+            col.position += pull_dir * pull_speed * pull_strength * time.dt
             # Spin faster as pulled
             col.rotation_y += 200 * pull_strength * time.dt
         if dist < COLLECT_RADIUS:
@@ -2201,6 +2341,10 @@ def game_update():
                 p.weapon_upgrade_timer = WEAPON_UPGRADE_DURATION
                 game.add_message(f"Weapon Upgrade! Spread shot for {WEAPON_UPGRADE_DURATION}s!")
                 game._spawn_particles(col.position, color.rgb(255, 150, 0), count=12)
+            elif col.name == 'Magnet Core':
+                p.magnet_timer = MAGNET_DURATION
+                game.add_message(f"Magnet Core! Item pull boosted for {MAGNET_DURATION}s!")
+                game._spawn_particles(col.position, color.rgb(200, 50, 255), count=12)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -2208,7 +2352,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
             # Start pop animation instead of immediate destroy
