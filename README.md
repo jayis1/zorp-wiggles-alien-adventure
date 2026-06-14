@@ -29,7 +29,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.3.0 — 3D!)
+## Features (v2.3.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
@@ -80,6 +80,9 @@ python game.py
 - **Collectible glow pulsing** — items pulse their glow ring to act as beacons, making them easier to spot
 - **Dynamic enemy spawn rate** — enemies spawn faster as you level up, keeping pressure on
 - **Enhanced death screen** — shows kills per minute and full inventory breakdown
+- **Projectile laser trails** — tentacle laser shots leave fading, shrinking cyan trail dots for satisfying visual feedback
+- **Player squish/stretch** — Zorp squishes and stretches when moving, making the alien feel more squishy and alive
+- **Smoother camera tracking** — faster camera lerp for tighter, more responsive following
 
 ## The Self-Improving Game
 

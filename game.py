@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -26,13 +26,13 @@ PLAYER_BLINK_RATE = 20
 PLAYER_START_HP = 100
 
 # ─── Combat ───────────────────────────────────────────────────────────────────
-SHOOT_COOLDOWN = 0.15
+SHOOT_COOLDOWN = 0.12
 COLLECT_RADIUS = 2.5
 COLLECT_PULL_RADIUS = 5.0
 COLLECT_PULL_SPEED = 12.0
 PROJECTILE_BASE_DAMAGE = 20
 PROJECTILE_LEVEL_DAMAGE_BONUS = 2
-PROJECTILE_SPEED = 50
+PROJECTILE_SPEED = 55
 PROJECTILE_LIFETIME = 2.0
 ENEMY_DETECT_RANGE = 35
 ENEMY_ATTACK_RANGE = 2.5
@@ -60,7 +60,7 @@ SPAWN_SAFE_RADIUS = 15
 ENEMY_SPAWN_SAFE_RADIUS = 30
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-LEVEL_UP_HEAL_AMOUNT = 20
+LEVEL_UP_HEAL_AMOUNT = 25
 LEVEL_UP_HP_BONUS = 10
 LEVEL_UP_SPEED_BONUS = 0.3
 XP_SCALE_FACTOR = 1.5
@@ -73,7 +73,7 @@ SCREEN_SHAKE_DAMAGE = 0.35
 SCREEN_SHAKE_KILL = 0.6
 SCREEN_SHAKE_DECAY = 10.0
 LEVEL_UP_FLASH_DURATION = 1.5
-CAMERA_LERP_SPEED = 5.0
+CAMERA_LERP_SPEED = 6.0
 CAMERA_HEIGHT = 18
 CAMERA_DISTANCE = 22
 CAMERA_ANGLE = 30
@@ -87,6 +87,18 @@ PARTICLE_KILL_COUNT = 14
 PARTICLE_DAMAGE_COUNT = 6
 PARTICLE_COLLECT_COUNT = 10
 PARTICLE_LEVELUP_COUNT = 20
+
+# ─── Projectile Trail ────────────────────────────────────────────────────────
+PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
+PROJECTILE_TRAIL_LIFETIME = 0.25  # How long each trail dot lives
+PROJECTILE_TRAIL_START_SCALE = 0.22  # Initial scale of trail dot
+PROJECTILE_TRAIL_END_SCALE = 0.02   # Scale at end of trail dot life (shrinks away)
+
+# ─── Player Squish/Stretch ───────────────────────────────────────────────────
+PLAYER_SQUISH_AMOUNT = 0.18   # How much the player squishes on landing/moving
+PLAYER_SQUISH_SPEED = 8.0     # How fast the squish animation runs
+PLAYER_STRETCH_FACTOR = 1.14  # Y stretch when moving (elongated alien look)
+PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
 
 # ─── Hit-Stop ────────────────────────────────────────────────────────────────
 HIT_STOP_KILL_DURATION = 0.06  # Brief freeze on kills for impact feel
@@ -154,7 +166,7 @@ SHIELD_DURATION = 4.0
 HEALTH_POTION_HEAL = 30
 
 # ─── Combo System ────────────────────────────────────────────────────────────
-COMBO_TIMEOUT = 4.0        # seconds before combo resets
+COMBO_TIMEOUT = 5.0        # seconds before combo resets
 COMBO_XP_BONUS_PER_TIER = 0.1  # +10% XP per combo tier
 COMBO_SCORE_BONUS_PER_TIER = 0.05  # +5% score per combo tier
 COMBO_DISPLAY_LIFETIME = 2.5
@@ -234,9 +246,9 @@ MINIMAP_PLAYER_DOT_RGB = (255, 255, 255)
 MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
 
 # ─── Collectible Glow Pulse ──────────────────────────────────────────────────
-GLOW_PULSE_SPEED = 3.0        # how fast the glow ring pulses
-GLOW_PULSE_MIN_SCALE = 2.5     # minimum glow scale
-GLOW_PULSE_MAX_SCALE = 3.5     # maximum glow scale
+GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
+GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
+GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
 
 # ─── Sky Nebula ──────────────────────────────────────────────────────────────
 NEBULA_CLOUD_COUNT = 8
@@ -387,6 +399,10 @@ class Player(Entity):
         self.shield_visual = Entity(model='sphere', color=color.rgba(100, 200, 255, 60),
                                     scale=1.6, parent=self, visible=False)
 
+        # Squish/stretch animation state
+        self.squish_current = 1.0  # Current Y scale (1.0 = normal)
+        self.is_moving = False
+
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
@@ -437,8 +453,17 @@ class Player(Entity):
             tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
 
     def animate_bob(self, t):
-        """Apply vertical bob animation to the player."""
+        """Apply vertical bob and squish/stretch animation to the player."""
         self.y = 1.2 + math.sin(t * 3) * 0.15
+        # Squish/stretch: stretch Y and squish XZ when moving, compress Y and bulge XZ when idle
+        if self.is_moving:
+            target_squish = PLAYER_STRETCH_FACTOR
+        else:
+            target_squish = 1.0
+        self.squish_current += (target_squish - self.squish_current) * min(1.0, PLAYER_SQUISH_SPEED * time.dt)
+        y_scale = 1.2 * self.squish_current
+        xz_scale = 1.0 / self.squish_current  # Inverse for XZ to preserve volume
+        self.scale = Vec3(xz_scale, y_scale, xz_scale)
 
     def set_facing_from_mouse(self, cam_pivot):
         """Point the alien toward where the mouse ray hits the ground."""
@@ -459,7 +484,7 @@ class Enemy(Entity):
         'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
         'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
         'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
-        'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 3,  'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
+        'Crystal Guardian': {'color': color.cyan,         'hp': 200,  'speed': 2.5,  'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
         'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
         'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
@@ -692,6 +717,47 @@ class Collectible(Entity):
 
 
 # ─── Projectile ────────────────────────────────────────────────────────────────
+class ProjectileTrail(Entity):
+    """A fading trail dot spawned behind a projectile for a satisfying laser streak effect.
+
+    Each trail dot shrinks and fades over its lifetime, creating a smooth
+    comet-tail visual behind the player's tentacle laser.
+    """
+
+    def __init__(self, position, col):
+        """Initialize a trail dot at the given position with the projectile's color."""
+        super().__init__(
+            model='sphere',
+            color=col,
+            scale=PROJECTILE_TRAIL_START_SCALE,
+            position=position,
+        )
+        self.lifetime = PROJECTILE_TRAIL_LIFETIME
+        self.max_lifetime = PROJECTILE_TRAIL_LIFETIME
+
+    def update_trail(self, dt):
+        """Advance the trail animation. Returns True when expired and should be removed.
+
+        Args:
+            dt: Delta time in seconds.
+
+        Returns:
+            True if the trail dot has expired and should be destroyed.
+        """
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Smoothly shrink from start scale to end scale
+        current_scale = PROJECTILE_TRAIL_START_SCALE + (PROJECTILE_TRAIL_END_SCALE - PROJECTILE_TRAIL_START_SCALE) * progress
+        self.scale = current_scale
+        # Fade alpha out over lifetime
+        alpha = max(0, int(200 * (1.0 - progress)))
+        r, g, b = int(self.color[0] * 255), int(self.color[1] * 255), int(self.color[2] * 255)
+        self.color = color.rgba(r, g, b, alpha)
+        return False
+
+
 class Projectile(Entity):
     """A laser projectile fired by the player."""
 
@@ -707,8 +773,8 @@ class Projectile(Entity):
         self.speed = speed
         self.lifetime = PROJECTILE_LIFETIME
 
-        # Trail
-        self.trail = []
+        # Trail spawning timer
+        self.trail_timer = 0.0
 
     def move(self, dt):
         """Move the projectile forward. Returns False when lifetime expires."""
@@ -844,6 +910,7 @@ class Game:
         self.enemies = []
         self.collectibles = []
         self.projectiles = []
+        self.projectile_trails = []
         self.enemy_projectiles = []
         self.particles = []
         self.damage_numbers = []
@@ -995,6 +1062,12 @@ class Game:
             if p and p.enabled:
                 destroy(p)
         self.projectiles.clear()
+
+        # Destroy projectile trails
+        for t in self.projectile_trails:
+            if t and t.enabled:
+                destroy(t)
+        self.projectile_trails.clear()
 
         for ep in self.enemy_projectiles:
             if ep and ep.enabled:
@@ -1845,6 +1918,11 @@ def game_update():
             if dmg_num.update(time.dt):
                 dmg_num.destroy()
                 game.damage_numbers.remove(dmg_num)
+        # Update projectile trails during freeze (visual only)
+        for trail in game.projectile_trails[:]:
+            if trail.update_trail(time.dt):
+                destroy(trail)
+                game.projectile_trails.remove(trail)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -1911,6 +1989,9 @@ def game_update():
         game.combo_timer -= time.dt
         if game.combo_timer <= 0:
             game.combo_count = 0
+
+    # Track whether player is actually moving (for squish/stretch animation)
+    p.is_moving = move_dir.length() > 0 and p.dash_timer <= 0
 
     if move_dir.length() > 0 and p.dash_timer <= 0:
         move_dir = move_dir.normalized()
@@ -2204,6 +2285,13 @@ def game_update():
             game.projectiles.remove(proj)
             continue
 
+        # Spawn trail dot behind projectile for visual flair
+        proj.trail_timer += time.dt
+        if proj.trail_timer >= PROJECTILE_TRAIL_INTERVAL:
+            proj.trail_timer = 0.0
+            trail = ProjectileTrail(position=Vec3(proj.x, proj.y, proj.z), col=C_LASER)
+            game.projectile_trails.append(trail)
+
         # Check collision with enemies
         for enemy in game.enemies:
             if not enemy.alive or enemy.dying:
@@ -2376,6 +2464,12 @@ def game_update():
         else:
             game.particles[i] = (p_ent, new_vel, new_lifetime)
             i += 1
+
+    # ── Update Projectile Trails ──
+    for trail in game.projectile_trails[:]:
+        if trail.update_trail(time.dt):
+            destroy(trail)
+            game.projectile_trails.remove(trail)
 
     # ── Update Damage Numbers ──
     for dmg_num in game.damage_numbers[:]:
