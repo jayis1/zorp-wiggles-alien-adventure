@@ -29,7 +29,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.3.1 — 3D!)
+## Features (v2.3.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
@@ -83,6 +83,8 @@ python game.py
 - **Projectile laser trails** — tentacle laser shots leave fading, shrinking cyan trail dots for satisfying visual feedback
 - **Player squish/stretch** — Zorp squishes and stretches when moving, making the alien feel more squishy and alive
 - **Smoother camera tracking** — faster camera lerp for tighter, more responsive following
+- **Dash FOV zoom** — camera field of view widens during dash for a satisfying speed rush effect
+- **Enemy alert flash** — enemies flash yellow when they first detect the player, giving you a visual warning before the chase starts
 
 ## The Self-Improving Game
 
@@ -138,13 +140,13 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Spore Spitter | 90 | Medium | 15 | **Shoots back** | Fires projectiles at player |
 | Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
 | Crystal Guardian | 200 | Slow | 40 | — | Tough |
-| Plasma Drake | 350 | Very Fast | 50 | — | Endgame boss |
+| Plasma Drake | 400 | Very Fast | 50 | — | Endgame boss |
 
 ## Combo System
 
-Chain kills within 4 seconds to build combos! Each combo tier grants:
-- **+10% XP bonus** per tier (up to 10 tiers)
-- **+5% score bonus** per tier (up to 10 tiers)
+Chain kills within 4.5 seconds to build combos! Each combo tier grants:
+- **+12% XP bonus** per tier (up to 10 tiers)
+- **+6% score bonus** per tier (up to 10 tiers)
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
 

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.3.1"
+VERSION = "2.3.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -37,6 +37,7 @@ PROJECTILE_LIFETIME = 2.0
 ENEMY_DETECT_RANGE = 35
 ENEMY_ATTACK_RANGE = 2.5
 ENEMY_ATTACK_COOLDOWN = 1.0
+ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
 ENEMY_WANDER_SPEED_FACTOR = 0.3
@@ -47,7 +48,7 @@ ENEMY_WANDER_DIR_JITTER = 1.5
 # ─── Spawning ─────────────────────────────────────────────────────────────────
 MAX_ACTIVE_ENEMIES = 40
 MIN_COLLECTIBLES = 120
-COLLECTIBLE_RESPAWN_CHANCE = 0.01
+COLLECTIBLE_RESPAWN_CHANCE = 0.015   # Slightly increased from 0.01 for better item availability
 ENEMY_SPAWN_INTERVAL = 10
 ENEMY_SPAWN_INTERVAL_LEVEL_DECAY = 0.5   # seconds faster per player level tier
 ENEMY_SPAWN_DISTANCE_MIN = 30
@@ -63,7 +64,7 @@ ENEMY_SPAWN_SAFE_RADIUS = 30
 LEVEL_UP_HEAL_AMOUNT = 25
 LEVEL_UP_HP_BONUS = 10
 LEVEL_UP_SPEED_BONUS = 0.3
-XP_SCALE_FACTOR = 1.5
+XP_SCALE_FACTOR = 1.45   # Slightly reduced from 1.5 for smoother leveling progression
 BASE_KILL_XP = 25
 KILL_XP_HP_DIVISOR = 10
 
@@ -158,6 +159,9 @@ DASH_COOLDOWN = 2.0
 DASH_SPEED = 60
 DASH_DURATION = 0.2
 DASH_TRAIL_PARTICLES = 6
+DASH_FOV_ZOOM = 85          # FOV during dash (wider for speed feel)
+DASH_FOV_NORMAL = 75        # Normal gameplay FOV
+DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
 
 # ─── Power-Up Durations ───────────────────────────────────────────────────────
 SPEED_BOOST_DURATION = 5.0
@@ -166,9 +170,9 @@ SHIELD_DURATION = 4.0
 HEALTH_POTION_HEAL = 30
 
 # ─── Combo System ────────────────────────────────────────────────────────────
-COMBO_TIMEOUT = 5.0        # seconds before combo resets
-COMBO_XP_BONUS_PER_TIER = 0.1  # +10% XP per combo tier
-COMBO_SCORE_BONUS_PER_TIER = 0.05  # +5% score per combo tier
+COMBO_TIMEOUT = 4.5        # seconds before combo resets (tightened from 5.0 for more skillful chaining)
+COMBO_XP_BONUS_PER_TIER = 0.12  # +12% XP per combo tier (up from 10% for better reward)
+COMBO_SCORE_BONUS_PER_TIER = 0.06  # +6% score per combo tier (up from 5%)
 COMBO_DISPLAY_LIFETIME = 2.5
 
 # ─── Weapon Upgrade (Spread Shot) ────────────────────────────────────────────
@@ -188,7 +192,7 @@ WEATHER_DRIFT_EMBER = 4
 # ─── Void Bomber (New Enemy) ────────────────────────────────────────────────
 VOID_BOMBER_DETECT_RANGE = 30
 VOID_BOMBER_FUSE_RANGE = 6
-VOID_BOMBER_FUSE_TIME = 1.2
+VOID_BOMBER_FUSE_TIME = 1.4
 VOID_BOMBER_EXPLOSION_RADIUS = 5.5
 VOID_BOMBER_EXPLOSION_DAMAGE = 40
 
@@ -223,7 +227,7 @@ RUINS_WALL_CHANCE = 0.05
 # ─── Collectible Weighted Spawn ─────────────────────────────────────────────
 COLLECTIBLE_WEIGHTS = {
     'Space Gloop':    30,   # Common
-    'Health Potion':  18,   # Common-ish (useful early game)
+    'Health Potion':  22,   # Common (increased from 18 — vital for survival)
     'Meteor Shard':   15,   # Uncommon
     'Speed Boost':    10,   # Uncommon
     'Quantum Fuzz':   8,    # Rare
@@ -484,11 +488,11 @@ class Enemy(Entity):
         'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
         'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
         'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
-        'Crystal Guardian': {'color': color.cyan,         'hp': 200,  'speed': 2.5,  'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
-        'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
+        'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 2.5, 'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
+        'Plasma Drake':    {'color': color.magenta,       'hp': 400, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
         'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
-        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 45},
+        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 38},
         'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
         'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
     }
@@ -521,6 +525,8 @@ class Enemy(Entity):
         self.hit_flash = 0
         self.decor_entities = []
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
+        self.alerted = False                  # Whether enemy has detected the player (for alert flash)
+        self.alert_flash_timer = 0.0          # Timer for the detection alert flash
 
         # Type-specific special behaviors
         self.is_phase_shifter = (enemy_type == 'Phase Shifter')
@@ -949,6 +955,7 @@ class Game:
         camera.parent = self.cam_pivot
         camera.position = (0, CAMERA_HEIGHT, -CAMERA_DISTANCE)
         camera.rotation = (CAMERA_ANGLE, 0, 0)
+        camera.fov = DASH_FOV_NORMAL
 
         # Populate world
         self._spawn_initial_entities()
@@ -1971,6 +1978,8 @@ def game_update():
         # Dash trail particles
         if int(game.t * 30) % 2 == 0:
             game._spawn_particles(p.position + Vec3(0, 0.5, 0), color.rgba(0, 230, 70, 180), count=DASH_TRAIL_PARTICLES)
+        # FOV zoom during dash for speed feel
+        camera.fov = lerp(camera.fov, DASH_FOV_ZOOM, time.dt * DASH_FOV_LERP_SPEED)
     elif held_keys['space'] and p.dash_cooldown <= 0 and move_dir.length() > 0:
         # Initiate dash
         p.dash_direction = move_dir.normalized()
@@ -1978,6 +1987,12 @@ def game_update():
         p.dash_cooldown = DASH_COOLDOWN
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
+    else:
+        # Return FOV to normal when not dashing
+        if abs(camera.fov - DASH_FOV_NORMAL) > 0.5:
+            camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_LERP_SPEED)
+        else:
+            camera.fov = DASH_FOV_NORMAL
 
     # Shield visual update
     p.shield_visual.visible = p.shield_timer > 0
@@ -2127,6 +2142,12 @@ def game_update():
 
         # Skip AI updates for very distant enemies (performance)
         if dist_to_player < enemy.detect_range:
+            # Alert flash: first time enemy detects the player
+            if not enemy.alerted:
+                enemy.alerted = True
+                enemy.alert_flash_timer = ENEMY_ALERT_FLASH_DURATION
+                enemy.color = color.yellow
+                invoke(setattr, enemy, 'color', enemy.original_color, delay=ENEMY_ALERT_FLASH_DURATION)
             # Chase player
             direction = (p.position - enemy.position).normalized()
             direction.y = 0
