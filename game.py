@@ -1158,6 +1158,11 @@ class Game:
                 destroy(wp)
         self.weather_particles.clear()
 
+        # BUG FIX: clear missions and messages on restart so stale data
+        # doesn't carry over to the new game session.
+        self.missions.clear()
+        self.messages.clear()
+
         # Destroy Sky (Ursina's Sky is a special entity)
         for e in scene.entities[:]:
             if hasattr(e, 'model') and e.model and 'sky' in str(e.model).lower():
@@ -1782,13 +1787,14 @@ class Game:
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
-        # Combo display
-        if game.combo_display_timer > 0:
-            game.combo_display_timer -= time.dt
-            if game.combo_count >= 2:
+        # Combo display — BUG FIX: _update_hud no longer decrements combo_display_timer
+        # here; that was causing a double-decrement since game_update() also
+        # decrements it. Now _update_hud only reads the timer for display purposes.
+        if self.combo_display_timer > 0:
+            if self.combo_count >= 2:
                 self.combo_text.visible = True
-                tier = min(game.combo_count, 10)
-                alpha = min(1.0, game.combo_display_timer / 0.5)
+                tier = min(self.combo_count, 10)
+                alpha = min(1.0, self.combo_display_timer / 0.5)
                 # Color shifts from yellow to orange to red as combo grows
                 if tier < 4:
                     self.combo_text.color = color.rgba(255, 255, 0, int(255 * alpha))
@@ -1796,15 +1802,15 @@ class Game:
                     self.combo_text.color = color.rgba(255, 150, 0, int(255 * alpha))
                 else:
                     self.combo_text.color = color.rgba(255, 50, 50, int(255 * alpha))
-                scale_bonus = 1.0 + min(game.combo_count * 0.15, 1.5)
+                scale_bonus = 1.0 + min(self.combo_count * 0.15, 1.5)
                 self.combo_text.scale = 2.0 * scale_bonus
-                self.combo_text.text = f'COMBO x{game.combo_count}'
+                self.combo_text.text = f'COMBO x{self.combo_count}'
             else:
                 self.combo_text.visible = False
         else:
             self.combo_text.visible = False
-            if game.combo_count > 0:
-                game.combo_count = 0
+            if self.combo_count > 0:
+                self.combo_count = 0
 
         # Weapon upgrade indicator
         if p.weapon_upgrade_timer > 0:
@@ -1839,9 +1845,13 @@ class Game:
                 p.completed_missions += 1
                 self.add_message(f"Turned in: {m.title}! +{m.reward} XP")
 
+        # BUG FIX: prune turned-in missions to prevent the list from growing
+        # forever and slowing down iteration. Keep only active missions.
+        self.missions = [m for m in self.missions if not m.turned_in]
+
         # Assign new missions if needed
-        active = sum(1 for m in self.missions if not m.turned_in)
-        if active < 3:
+        # After pruning, all missions in the list are active (not turned_in)
+        if len(self.missions) < 3:
             self._assign_missions(count=1)
 
 
@@ -1989,6 +1999,11 @@ def game_update():
         game.combo_timer -= time.dt
         if game.combo_timer <= 0:
             game.combo_count = 0
+    # BUG FIX: combo_display_timer was decremented in both _update_hud() and
+    # (implicitly via game global references), causing a double-decrement per frame.
+    # Now it's only decremented here in game_update().
+    if game.combo_display_timer > 0:
+        game.combo_display_timer -= time.dt
 
     # Track whether player is actually moving (for squish/stretch animation)
     p.is_moving = move_dir.length() > 0 and p.dash_timer <= 0
@@ -2036,9 +2051,11 @@ def game_update():
         game.level_up_text.text = f'LEVEL UP! Lv.{p.level}'
         game.level_up_text.visible = True
         game._spawn_particles(p.position, color.yellow, count=PARTICLE_LEVELUP_COUNT)
-        # Brief scale pulse on player
-        p.scale = 1.8
-        invoke(setattr, p, 'scale', 1.2, delay=0.3)
+        # BUG FIX: removed p.scale = 1.8 / invoke(setattr) because animate_bob()
+        # continuously overrides p.scale every frame, making the level-up pulse
+        # invisible. Instead, use a brief color flash on the player model.
+        p.color = color.yellow
+        invoke(setattr, p, 'color', C_ALIEN, delay=0.4)
         game.add_message(f"Level Up! Now Lv.{p.level}!")
 
     if game.level_up_timer > 0:
@@ -2116,6 +2133,17 @@ def game_update():
             new_pos = enemy.position + direction * enemy.speed * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
+            else:
+                # BUG FIX: if the direct path is blocked (e.g., water/lava between
+                # enemy and player), try moving along each axis independently so
+                # the enemy slides along the obstacle instead of freezing in place.
+                move_step = direction * enemy.speed * time.dt
+                # Try X axis only
+                if game._is_walkable(enemy.x + move_step.x, enemy.z):
+                    enemy.x += move_step.x
+                # Try Z axis only
+                if game._is_walkable(enemy.x, enemy.z + move_step.z):
+                    enemy.z += move_step.z
             enemy.look_at_2d(p.position)
 
             # ── Phase Shifter: Teleport near player periodically ──
@@ -2165,8 +2193,11 @@ def game_update():
                     enemy.fuse_timer -= time.dt
                     # Pulsing red glow as fuse counts down
                     pulse = 1.0 - (enemy.fuse_timer / VOID_BOMBER_FUSE_TIME)
-                    enemy.pulse_speed += time.dt * 30
-                    if int(enemy.pulse_speed) % 2 == 0:
+                    # BUG FIX: pulse_speed used += which accumulated forever, causing
+                    # the pulsing to become so fast it appeared constant. Now use game.t
+                    # directly for a smooth, time-based pulse effect.
+                    pulse_rate = 8 + pulse * 20  # accelerates as fuse runs down
+                    if int(game.t * pulse_rate) % 2 == 0:
                         enemy.color = color.rgb(255, int(50 * (1 - pulse)), 0)
                     else:
                         enemy.color = color.rgb(200, 0, 0)
@@ -2212,7 +2243,10 @@ def game_update():
                     enemy.orbit_angle += NEBULA_PHANTOM_ORBIT_SPEED * time.dt
                     target_x = p.x + math.cos(enemy.orbit_angle) * NEBULA_PHANTOM_ORBIT_RADIUS
                     target_z = p.z + math.sin(enemy.orbit_angle) * NEBULA_PHANTOM_ORBIT_RADIUS
-                    if game._is_walkable(target_x, target_z):
+                    # BUG FIX: Nebula Phantom is a flying enemy and should be able
+                    # to move over water/lava tiles. Use bounds check instead of
+                    # walkability check so it doesn't get stuck orbiting in place.
+                    if 0 <= target_x <= WORLD_SIZE * TILE_SCALE and 0 <= target_z <= WORLD_SIZE * TILE_SCALE:
                         enemy.x = target_x
                         enemy.z = target_z
                     # Float higher than normal enemies
@@ -2229,7 +2263,8 @@ def game_update():
                     # Dive toward the player's last known position
                     dive_dir = (enemy.dive_target - enemy.position).normalized()
                     new_dive_pos = enemy.position + dive_dir * NEBULA_PHANTOM_DIVE_SPEED * time.dt
-                    if game._is_walkable(new_dive_pos.x, new_dive_pos.z):
+                    # BUG FIX: Same as orbit — flying enemy can dive over any terrain.
+                    if 0 <= new_dive_pos.x <= WORLD_SIZE * TILE_SCALE and 0 <= new_dive_pos.z <= WORLD_SIZE * TILE_SCALE:
                         enemy.x = new_dive_pos.x
                         enemy.z = new_dive_pos.z
                     # Descend toward ground level
@@ -2324,10 +2359,14 @@ def game_update():
                     # Kill damage number (bigger, yellow)
                     game.damage_numbers.append(DamageNumber(enemy.position, proj.damage, is_kill=True))
                     # Drop loot
+                    # BUG FIX: loot drops now check walkability so collectibles don't
+                    # spawn in unreachable water/lava tiles.
                     for _ in range(random.randint(LOOT_DROP_MIN, LOOT_DROP_MAX)):
                         offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
-                        c = Collectible(position=enemy.position + offset)
-                        game.collectibles.append(c)
+                        drop_pos = enemy.position + offset
+                        if game._is_walkable(drop_pos.x, drop_pos.z):
+                            c = Collectible(position=drop_pos)
+                            game.collectibles.append(c)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game.add_message(f"Defeated {enemy.name}!")
                 break
@@ -2549,8 +2588,12 @@ def game_update():
         game.minimap_shown = not game.minimap_shown
         game.minimap_entity.visible = game.minimap_shown
         game.minimap_player_dot.visible = game.minimap_shown
+        # BUG FIX: when hiding the minimap, don't use 'and dot.visible' which
+        # permanently sets all enemy dots to invisible. When showing the minimap
+        # again, the dots would stay invisible until the next refresh. Instead,
+        # hide/show unconditionally — the refresh cycle will set correct visibility.
         for dot in game.minimap_enemy_dots:
-            dot.visible = game.minimap_shown and dot.visible
+            dot.visible = game.minimap_shown
         game._m_held = True
     elif not held_keys['m']:
         game._m_held = False
