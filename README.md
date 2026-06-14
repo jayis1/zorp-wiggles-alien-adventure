@@ -29,7 +29,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.2.0 — 3D!)
+## Features (v2.2.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **9 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, **Alien Mushroom Forest**
@@ -71,6 +71,12 @@ python game.py
 - **Elastic collectible pop** — items flash white and scale up with a bouncy overshoot before disappearing
 - **Player-level difficulty scaling** — newly spawned enemies gain HP and damage as you level up, keeping the challenge fresh
 - **Per-type enemy detection ranges** — Swarm Mites detect from further away (swarm behavior), others tuned for fairer encounters
+- **Weighted collectible spawning** — common items (Space Gloop) drop more often; rare items (Plasma Core) are truly rare finds
+- **Terrain-colored minimap with enemy dots** — see biomes and enemy positions at a glance, refreshes in real time
+- **Nebula clouds** — drifting translucent colored clouds in the sky for atmospheric depth
+- **Collectible glow pulsing** — items pulse their glow ring to act as beacons, making them easier to spot
+- **Dynamic enemy spawn rate** — enemies spawn faster as you level up, keeping pressure on
+- **Enhanced death screen** — shows kills per minute and full inventory breakdown
 
 ## The Self-Improving Game
 

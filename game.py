@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -49,6 +49,7 @@ MAX_ACTIVE_ENEMIES = 40
 MIN_COLLECTIBLES = 120
 COLLECTIBLE_RESPAWN_CHANCE = 0.01
 ENEMY_SPAWN_INTERVAL = 10
+ENEMY_SPAWN_INTERVAL_LEVEL_DECAY = 0.5   # seconds faster per player level tier
 ENEMY_SPAWN_DISTANCE_MIN = 30
 ENEMY_SPAWN_DISTANCE_MAX = 60
 LOOT_DROP_MIN = 1
@@ -183,6 +184,41 @@ EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
 MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber']
 HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
+
+# ─── Collectible Weighted Spawn ─────────────────────────────────────────────
+COLLECTIBLE_WEIGHTS = {
+    'Space Gloop':    30,   # Common
+    'Health Potion':  18,   # Common-ish (useful early game)
+    'Meteor Shard':   15,   # Uncommon
+    'Speed Boost':    10,   # Uncommon
+    'Quantum Fuzz':   8,    # Rare
+    'Shield Crystal': 5,   # Rare
+    'Weapon Upgrade': 4,   # Rare
+    'Nebula Dust':    4,    # Very Rare
+    'Cosmic Jelly':   3,    # Legendary
+    'Plasma Core':    3,    # Mythic
+}
+
+# ─── Minimap ─────────────────────────────────────────────────────────────────
+MINIMAP_SIZE = 0.22
+MINIMAP_POSITION = (0.72, 0.37)
+MINIMAP_RESOLUTION = 80  # pixels per side for terrain texture
+MINIMAP_ENEMY_DOT_SIZE = 0.006
+MINIMAP_ENEMY_DOT_RGB = (255, 60, 60)
+MINIMAP_PLAYER_DOT_SIZE = 0.008
+MINIMAP_PLAYER_DOT_RGB = (255, 255, 255)
+MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
+
+# ─── Collectible Glow Pulse ──────────────────────────────────────────────────
+GLOW_PULSE_SPEED = 3.0        # how fast the glow ring pulses
+GLOW_PULSE_MIN_SCALE = 2.5     # minimum glow scale
+GLOW_PULSE_MAX_SCALE = 3.5     # maximum glow scale
+
+# ─── Sky Nebula ──────────────────────────────────────────────────────────────
+NEBULA_CLOUD_COUNT = 8
+NEBULA_SPREAD = 250
+NEBULA_HEIGHT_MIN = 100
+NEBULA_HEIGHT_MAX = 180
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 C_GRASS    = color.rgb(34, 139, 34)
@@ -560,6 +596,19 @@ class Enemy(Entity):
 
 
 # ─── Collectible ───────────────────────────────────────────────────────────────
+
+def _weighted_random_collectible():
+    """Pick a random collectible type using weighted probabilities.
+
+    Common items like Space Gloop appear more often, while rare items
+    like Plasma Core and Cosmic Jelly appear infrequently. This makes
+    exploration more rewarding and power-ups a pleasant surprise.
+    """
+    names = list(COLLECTIBLE_WEIGHTS.keys())
+    weights = list(COLLECTIBLE_WEIGHTS.values())
+    return random.choices(names, weights=weights, k=1)[0]
+
+
 class Collectible(Entity):
     """A collectible item that bobs and spins in the world."""
 
@@ -578,7 +627,7 @@ class Collectible(Entity):
 
     def __init__(self, position, item_type=None):
         if item_type is None:
-            item_type = random.choice(list(self.ITEMS.keys()))
+            item_type = _weighted_random_collectible()
         info = self.ITEMS[item_type]
         super().__init__(
             model=info['model'],
@@ -598,9 +647,12 @@ class Collectible(Entity):
                            scale=3, parent=self, rotation_x=90, position=(0, -0.3, 0))
 
     def animate(self, t):
-        """Bob and spin the collectible each frame."""
+        """Bob, spin, and pulse glow on the collectible each frame."""
         self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
         self.rotation_y += 60 * time.dt
+        # Pulsing glow ring — scales between min and max for a beacon effect
+        pulse = GLOW_PULSE_MIN_SCALE + (GLOW_PULSE_MAX_SCALE - GLOW_PULSE_MIN_SCALE) * (0.5 + 0.5 * math.sin(t * GLOW_PULSE_SPEED + self.bob_offset))
+        self.glow.scale = pulse
 
 
 # ─── Projectile ────────────────────────────────────────────────────────────────
@@ -831,6 +883,37 @@ class Game:
             star.twinkle_offset = twinkle_offset
             self.stars.append(star)
 
+        # Nebula clouds — large translucent colored quads for atmospheric depth
+        self.nebula_clouds = []
+        nebula_palette = [
+            color.rgb(120, 40, 180),   # deep purple
+            color.rgb(40, 80, 180),    # deep blue
+            color.rgb(180, 40, 80),    # crimson
+            color.rgb(40, 160, 120),   # teal
+            color.rgb(180, 100, 40),   # amber
+            color.rgb(80, 40, 160),    # indigo
+            color.rgb(60, 120, 180),   # sky blue
+            color.rgb(160, 60, 120),   # rose
+        ]
+        for i in range(NEBULA_CLOUD_COUNT):
+            angle_h = random.uniform(0, math.pi * 2)
+            ny = random.uniform(NEBULA_HEIGHT_MIN, NEBULA_HEIGHT_MAX)
+            nx = random.uniform(-NEBULA_SPREAD, NEBULA_SPREAD)
+            nz = random.uniform(-NEBULA_SPREAD, NEBULA_SPREAD)
+            nebula_size = random.uniform(30, 80)
+            nebula_color = nebula_palette[i % len(nebula_palette)]
+            cloud = Entity(
+                model='quad',
+                color=color.rgba(int(nebula_color[0] * 255), int(nebula_color[1] * 255),
+                                 int(nebula_color[2] * 255), 25),
+                scale=nebula_size,
+                position=(nx, ny, nz),
+                billboard=True,
+            )
+            cloud.drift_speed = random.uniform(0.1, 0.4)
+            cloud.drift_phase = random.uniform(0, math.pi * 2)
+            self.nebula_clouds.append(cloud)
+
         # Fog for atmosphere
         scene.fog_color = color.rgb(25, 0, 60)
         scene.fog_density = 0.007
@@ -914,6 +997,12 @@ class Game:
                 destroy(s)
         self.stars.clear()
 
+        # Destroy nebula clouds
+        for c in self.nebula_clouds:
+            if c and c.enabled:
+                destroy(c)
+        self.nebula_clouds.clear()
+
         # Destroy player and sub-entities (player's children: tentacles, eyes, shield)
         if self.player and self.player.enabled:
             destroy(self.player)
@@ -940,6 +1029,10 @@ class Game:
             destroy(self.minimap_entity)
         if self.minimap_player_dot and hasattr(self.minimap_player_dot, 'enabled'):
             destroy(self.minimap_player_dot)
+        for dot in self.minimap_enemy_dots:
+            if dot and hasattr(dot, 'enabled'):
+                destroy(dot)
+        self.minimap_enemy_dots.clear()
 
         # Destroy camera pivot (player follow rig)
         if self.cam_pivot and hasattr(self.cam_pivot, 'enabled'):
@@ -1062,11 +1155,15 @@ class Game:
         minutes = time_alive // 60
         seconds = time_alive % 60
         kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
+        item_details = '  '.join(f'{k}:{v}' for k, v in p.inventory.items()) if p.inventory else 'None'
+        kpm = f'{total_kills / max(1, time_alive / 60):.1f}' if time_alive > 0 else '0'
         stats_lines = [
             f'Time Survived: {minutes}m {seconds}s',
             f'Total Kills: {total_kills}   Items Collected: {total_items}',
+            f'Kills Per Minute: {kpm}',
             f'Missions Completed: {p.completed_missions}',
             f'Enemies Defeated: {kill_details}',
+            f'Inventory: {item_details}',
         ]
         self.game_over_stats.visible = True
         self.game_over_stats.text = '\n'.join(stats_lines)
@@ -1191,22 +1288,98 @@ class Game:
         self.minimap_entity = None
         self.minimap_player_dot = None
         self.minimap_enemy_dots = []
+        self.minimap_refresh_timer = 0.0
         self._build_minimap()
 
     def _build_minimap(self):
-        """Create minimap as a UI texture."""
-        self.minimap_entity = Entity(parent=camera.ui, model='quad',
-                                     color=color.black, scale=(0.22, 0.22),
-                                     position=(0.72, 0.37))
+        """Create a minimap with terrain-color texture and enemy dot tracking.
+
+        Renders the biome grid as a colored pixel texture on a quad,
+        then overlays a white player dot and red enemy dots that update
+        each refresh interval.
+        """
+        size = MINIMAP_RESOLUTION
+        # Build a pixel image from the world grid biome colors
+        pixels = []
+        for gz in range(WORLD_SIZE):
+            for gx in range(WORLD_SIZE):
+                biome = self.world_grid[gz][gx]
+                c = BIOME_COLORS.get(biome, C_GRASS)
+                pixels.append((int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)))
+
+        # Downsample to minimap resolution
+        scale_factor = WORLD_SIZE / size
+        img = [[(0, 0, 0)] * size for _ in range(size)]
+        for my in range(size):
+            for mx in range(size):
+                wx = int(mx * scale_factor)
+                wy = int(my * scale_factor)
+                wx = min(wx, WORLD_SIZE - 1)
+                wy = min(wy, WORLD_SIZE - 1)
+                img[my][mx] = pixels[wy * WORLD_SIZE + wx]
+
+        # Flatten for Ursina Texture
+        flat_pixels = []
+        for row in img:
+            for r, g, b in row:
+                flat_pixels.extend([r, g, b])
+
+        tex_data = bytes(flat_pixels)
+        minimap_texture = Texture()
+        minimap_texture.setup2d_texture(size, size, Texture.T_unsigned_byte, Texture.F_rgb8)
+        minimap_texture.set_ram_image(tex_data)
+
+        self.minimap_entity = Entity(
+            parent=camera.ui,
+            model='quad',
+            texture=minimap_texture,
+            scale=(MINIMAP_SIZE, MINIMAP_SIZE),
+            position=MINIMAP_POSITION,
+        )
         # Player dot on minimap
-        self.minimap_player_dot = Entity(parent=camera.ui, model='quad',
-                                          color=color.white, scale=(0.005, 0.005),
-                                          position=(0.72, 0.37))
-        self._update_minimap_colors()
+        self.minimap_player_dot = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.white,
+            scale=(MINIMAP_PLAYER_DOT_SIZE, MINIMAP_PLAYER_DOT_SIZE),
+            position=MINIMAP_POSITION,
+        )
+        # Pre-allocate enemy dot pool (max 40 enemies)
+        self.minimap_enemy_dots = []
+        for _ in range(MAX_ACTIVE_ENEMIES):
+            dot = Entity(
+                parent=camera.ui,
+                model='quad',
+                color=color.rgb(*MINIMAP_ENEMY_DOT_RGB),
+                scale=(MINIMAP_ENEMY_DOT_SIZE, MINIMAP_ENEMY_DOT_SIZE),
+                position=(-1, -1),  # offscreen initially
+                visible=False,
+            )
+            self.minimap_enemy_dots.append(dot)
 
     def _update_minimap_colors(self):
-        """Color-code minimap terrain."""
-        pass
+        """Refresh enemy dots on the minimap to reflect live positions."""
+        p = self.player
+        mm_cx, mm_cy = MINIMAP_POSITION
+        mm_half = MINIMAP_SIZE / 2
+        world_size = WORLD_SIZE * TILE_SCALE
+
+        # Player dot position
+        px_norm = (p.x / world_size) - 0.5
+        pz_norm = (p.z / world_size) - 0.5
+        self.minimap_player_dot.position = (mm_cx + px_norm * MINIMAP_SIZE, mm_cy + pz_norm * MINIMAP_SIZE)
+
+        # Update enemy dots from pool
+        visible_enemies = [e for e in self.enemies if e.alive and not e.dying]
+        for i, dot in enumerate(self.minimap_enemy_dots):
+            if i < len(visible_enemies):
+                e = visible_enemies[i]
+                ex_norm = (e.x / world_size) - 0.5
+                ez_norm = (e.z / world_size) - 0.5
+                dot.position = (mm_cx + ex_norm * MINIMAP_SIZE, mm_cy + ez_norm * MINIMAP_SIZE)
+                dot.visible = True
+            else:
+                dot.visible = False
 
     def _init_weather(self):
         """Create weather particle entities that appear based on current biome."""
@@ -1415,12 +1588,13 @@ class Game:
                 self.msg_texts[i].color = color.rgba(255, 255, 0, max(0, 255 - int(age * 50)))
 
         # Minimap player dot
-        mm_cx = 0.72
-        mm_cy = 0.37
-        mm_scale = 0.22 / (WORLD_SIZE * TILE_SCALE)
-        px = mm_cx + (p.x * mm_scale) - 0.11
-        pz = mm_cy + (p.z * mm_scale) - 0.11
-        self.minimap_player_dot.position = (px, pz)
+        # Minimap player dot — position is also refreshed by _update_minimap_colors
+        # at MINIMAP_REFRESH_INTERVAL, but we update every frame for smooth tracking
+        world_size = WORLD_SIZE * TILE_SCALE
+        mm_cx, mm_cy = MINIMAP_POSITION
+        px_norm = (p.x / world_size) - 0.5
+        pz_norm = (p.z / world_size) - 0.5
+        self.minimap_player_dot.position = (mm_cx + px_norm * MINIMAP_SIZE, mm_cy + pz_norm * MINIMAP_SIZE)
 
         # Dash cooldown indicator
         if p.dash_cooldown > 0:
@@ -2071,6 +2245,11 @@ def game_update():
         alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
         star.color = color.rgba(255, 255, 255, alpha)
 
+    # ── Nebula Cloud Drift ──
+    for cloud in game.nebula_clouds:
+        cloud.x += math.sin(game.t * cloud.drift_speed + cloud.drift_phase) * 0.3 * time.dt
+        cloud.z += math.cos(game.t * cloud.drift_speed * 0.7 + cloud.drift_phase) * 0.2 * time.dt
+
     # ── Biome-Aware Fog ──
     current_biome = game._get_biome_at(p.x, p.z)
     if current_biome != game.current_biome:
@@ -2090,7 +2269,9 @@ def game_update():
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
-    if game.spawn_timer >= ENEMY_SPAWN_INTERVAL:
+    # Dynamic spawn interval: gets faster as player levels up (min 3s)
+    spawn_interval = max(3, ENEMY_SPAWN_INTERVAL - (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL * ENEMY_SPAWN_INTERVAL_LEVEL_DECAY)
+    if game.spawn_timer >= spawn_interval:
         game.spawn_timer = 0
         alive_count = len([e for e in game.enemies if e.alive or e.dying])
         if alive_count < MAX_ACTIVE_ENEMIES:
@@ -2130,9 +2311,17 @@ def game_update():
         game.minimap_shown = not game.minimap_shown
         game.minimap_entity.visible = game.minimap_shown
         game.minimap_player_dot.visible = game.minimap_shown
+        for dot in game.minimap_enemy_dots:
+            dot.visible = game.minimap_shown and dot.visible
         game._m_held = True
     elif not held_keys['m']:
         game._m_held = False
+
+    # ── Minimap Refresh ──
+    game.minimap_refresh_timer -= time.dt
+    if game.minimap_refresh_timer <= 0 and game.minimap_shown:
+        game.minimap_refresh_timer = MINIMAP_REFRESH_INTERVAL
+        game._update_minimap_colors()
 
     # ── Toggle mission panel ──
     if held_keys['tab'] and not hasattr(game, '_tab_held'):
