@@ -23,18 +23,19 @@ python game.py
 | **Mouse** | Aim / Look direction |
 | **Left Click** | Shoot tentacle laser |
 | **Space** | Dash (dodge in movement direction) |
+| **E** | Trade with Wandering Trader |
 | **M** | Toggle minimap |
 | **TAB** | Toggle missions panel |
 | **P** | Pause |
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.3.2 — 3D!)
+## Features (v2.4.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
-- 11 collectible item types — including **5 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), **Magnet Core**
-- **11 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!)
+- **12 collectible item types** — including **6 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, **Time Warp**
+- **12 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!)
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
@@ -42,9 +43,12 @@ python game.py
 - **Speed Boost** — 1.8x speed for 5 seconds
 - **Health Potion** — restores 30 HP instantly
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
+- **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
 - **Combo system** — chain kills within 4 seconds for XP and score multipliers! Combo counter displayed on HUD with escalating colors
+- **Portal system** — 4 pairs of linked portals scattered across the world for fast travel! Step in to teleport to your partner portal with a 3s cooldown
+- **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items by pressing E near them
 - **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes
-- Mission system with collection and kill objectives
+- Mission system with collection and kill objectives (13 missions!)
 - XP and leveling system (get stronger over time!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
 - Minimap with player tracking
@@ -125,6 +129,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Shield Crystal** | 15 pts | Blocks all damage for 4s | Rare |
 | **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
 | **Magnet Core** | 20 pts | 2.5x pull radius + 2x pull speed for 6s | Uncommon |
+| **Time Warp** | 25 pts | Slows ALL enemies to 30% speed for 6s | Rare |
 
 ## Enemies
 
@@ -134,6 +139,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Swarm Mite | 15 | Very Fast | 5 | — | Tiny & fast, spawns in groups |
 | Space Beetle | 50 | Medium | 15 | — | Aggressive |
 | Phase Shifter | 70 | Medium | 20 | **Teleports** | Warps near player periodically |
+| **Starburst Sentinel** | 70 | Stationary | 15 | **Shockwave Rings** | Immobile turret that fires expanding energy rings |
 | **Void Bomber** | 60 | Medium | 20 | **Kamikaze!** | Explodes near player, also damages other enemies |
 | **Nebula Phantom** | 100 | Fast | 30 | **Orbit + Dive** | Circles player in the air, then dive-attacks! |
 | Void Wraith | 80 | Medium | 25 | — | Spooky |
@@ -150,10 +156,27 @@ Chain kills within 4.5 seconds to build combos! Each combo tier grants:
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
 
+## Portals
+
+- **4 pairs of linked portals** scattered across the world
+- Step into a portal to teleport to its partner (opposite side of the map)
+- 3-second cooldown prevents rapid back-and-forth teleportation
+- Portals glow cyan/purple and spin with pulsing ground markers
+- Use portals for fast travel and escaping dangerous situations!
+
+## Wandering Traders
+
+- **Friendly alien NPCs** wander the world, wearing purple hats
+- Approach a trader and press **E** to trade 5 Space Gloop for a random rare item
+- Possible trade rewards: Meteor Shard, Quantum Fuzz, Shield Crystal, Weapon Upgrade, Nebula Dust, Magnet Core, Time Warp
+- New traders spawn periodically if fewer than 3 are alive
+- Trader names: Zix, Glip, Orbix, Fweem
+
 ## World Features
 
 - **Alien Ruins** in desert biomes — scattered stone pillars (1–4 per ruin) and broken wall segments, giving the desert a mysterious ancient civilization feel
 - **Floating Islands** — elevated platforms hovering 3–6 units above the ground with purple crystals on top and shadow projections below
+- **Portal Pairs** — 4 linked portal pairs for fast travel across the map
 
 ## Tech Stack
 

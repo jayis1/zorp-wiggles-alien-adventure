@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.3.2"
+VERSION = "2.4.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -198,8 +198,8 @@ VOID_BOMBER_EXPLOSION_DAMAGE = 40
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber', 'Starburst Sentinel']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
@@ -209,10 +209,37 @@ NEBULA_PHANTOM_DIVE_SPEED = 25
 NEBULA_PHANTOM_DIVE_COOLDOWN_MIN = 4.0
 NEBULA_PHANTOM_DIVE_COOLDOWN_MAX = 7.0
 
-# ─── Magnet Core (New Collectible) ────────────────────────────────────────
+# ─── Magnet Core (Collectible) ────────────────────────────────────────────
 MAGNET_DURATION = 6.0
 MAGNET_PULL_RADIUS_MULT = 2.5
 MAGNET_PULL_SPEED_MULT = 2.0
+
+# ─── Time Warp (New Collectible) ─────────────────────────────────────────
+TIME_WARP_DURATION = 6.0
+TIME_WARP_SLOW_FACTOR = 0.3  # Enemies move at 30% speed
+
+# ─── Starburst Sentinel (New Enemy) ──────────────────────────────────────
+STARBURST_SHOCKWAVE_INTERVAL_MIN = 3.0
+STARBURST_SHOCKWAVE_INTERVAL_MAX = 5.0
+STARBURST_SHOCKWAVE_RADIUS = 8.0
+STARBURST_SHOCKWAVE_DAMAGE = 15
+STARBURST_SHOCKWAVE_EXPAND_SPEED = 15.0
+STARBURST_SHOCKWAVE_MAX_RADIUS = 8.0
+STARBURST_DETECT_RANGE = 30
+
+# ─── Portal System ───────────────────────────────────────────────────────
+PORTAL_COUNT = 4            # Number of portal pairs (8 portals total)
+PORTAL_COOLDOWN = 3.0       # Seconds between portal uses
+PORTAL_RING_COLOR_INNER = color.rgb(0, 255, 255)
+PORTAL_RING_COLOR_OUTER = color.rgb(100, 0, 255)
+
+# ─── Wandering Trader (NPC) ──────────────────────────────────────────────
+TRADER_NAMES = ['Zix', 'Glip', 'Orbix', 'Fweem']
+TRADER_SPEED = 2.5
+TRADER_WANDER_RADIUS = 40
+TRADER_TRADE_COST = 5       # Space Gloop needed per trade
+TRADER_RESPAWN_TIME = 60     # Seconds before a new trader appears
+TRADER_INITIAL_COUNT = 2
 
 # ─── Floating Islands Biome ──────────────────────────────────────────────
 FLOATING_ISLAND_HEIGHT_MIN = 3
@@ -237,6 +264,7 @@ COLLECTIBLE_WEIGHTS = {
     'Nebula Dust':    4,    # Very Rare
     'Cosmic Jelly':   3,    # Legendary
     'Plasma Core':    3,    # Mythic
+    'Time Warp':      5,    # Rare — slows all enemies to 30% speed
 }
 
 # ─── Minimap ─────────────────────────────────────────────────────────────────
@@ -495,6 +523,7 @@ class Enemy(Entity):
         'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 5,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 38},
         'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
         'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
+        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70, 'speed': 0, 'damage': 15, 'scale': 1.5, 'model': 'diamond', 'decor': 'shards', 'detect': 30},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -547,6 +576,10 @@ class Enemy(Entity):
         self.orbit_state = 'orbit' if self.is_nebula_phantom else None  # 'orbit' or 'dive'
         self.dive_timer = random.uniform(NEBULA_PHANTOM_DIVE_COOLDOWN_MIN, NEBULA_PHANTOM_DIVE_COOLDOWN_MAX) if self.is_nebula_phantom else 0
         self.dive_target = Vec3(0, 0, 0) if self.is_nebula_phantom else None
+
+        # Starburst Sentinel: stationary turret that fires expanding shockwave rings
+        self.is_starburst = (enemy_type == 'Starburst Sentinel')
+        self.shockwave_timer = random.uniform(STARBURST_SHOCKWAVE_INTERVAL_MIN, STARBURST_SHOCKWAVE_INTERVAL_MAX) if self.is_starburst else 0
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -689,7 +722,8 @@ class Collectible(Entity):
         'Speed Boost':    {'color': color.rgb(50, 255, 50),  'value': 15,  'model': 'diamond'},
         'Shield Crystal': {'color': color.rgb(100, 200, 255),'value': 15,  'model': 'diamond'},
         'Weapon Upgrade': {'color': color.rgb(255, 150, 0),  'value': 20,  'model': 'diamond'},
-        'Magnet Core':    {'color': color.rgb(200, 50, 255), 'value': 20,  'model': 'sphere'},
+        'Magnet Core':    {'color': color.rgb(200, 50, 255),'value': 20,  'model': 'sphere'},
+        'Time Warp':      {'color': color.rgb(150, 220, 255),'value': 25,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -720,6 +754,193 @@ class Collectible(Entity):
         # Pulsing glow ring — scales between min and max for a beacon effect
         pulse = GLOW_PULSE_MIN_SCALE + (GLOW_PULSE_MAX_SCALE - GLOW_PULSE_MIN_SCALE) * (0.5 + 0.5 * math.sin(t * GLOW_PULSE_SPEED + self.bob_offset))
         self.glow.scale = pulse
+
+
+# ─── Shockwave Ring ──────────────────────────────────────────────────────────
+class ShockwaveRing(Entity):
+    """An expanding ring projectile fired by the Starburst Sentinel.
+
+    The ring starts small and expands outward in a flat disc, dealing damage
+    to the player on contact. It expands until it reaches max radius, then
+    fades out and is destroyed.
+    """
+
+    def __init__(self, position, damage=STARBURST_SHOCKWAVE_DAMAGE):
+        super().__init__(
+            model='quad',
+            color=color.rgba(255, 220, 50, 180),
+            scale=0.5,
+            position=position + Vec3(0, 0.5, 0),
+            rotation_x=90,
+            billboard=False,
+        )
+        self.damage = damage
+        self.current_radius = 0.5
+        self.lifetime = STARBURST_SHOCKWAVE_MAX_RADIUS / STARBURST_SHOCKWAVE_EXPAND_SPEED + 0.5
+        self.max_lifetime = self.lifetime
+
+    def update_ring(self, dt):
+        """Expand the ring. Returns True when expired."""
+        self.current_radius += STARBURST_SHOCKWAVE_EXPAND_SPEED * dt
+        self.scale = self.current_radius
+        self.lifetime -= dt
+        # Fade out alpha as the ring expands
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        alpha = max(0, int(180 * (1.0 - progress)))
+        self.color = color.rgba(255, 220, 50, alpha)
+        return self.lifetime <= 0 or self.current_radius >= STARBURST_SHOCKWAVE_MAX_RADIUS
+
+
+# ─── Portal ──────────────────────────────────────────────────────────────────
+class Portal:
+    """A pair of linked portals for fast travel across the world.
+
+    Stepping into one portal teleports the player to its linked partner,
+    with a cooldown to prevent rapid back-and-forth.
+    """
+
+    def __init__(self, position, partner_position, portal_id):
+        self.position = position
+        self.partner_position = partner_position
+        self.portal_id = portal_id
+        self.cooldown = 0  # Cooldown timer after teleportation
+        self.bob_offset = random.uniform(0, math.pi * 2)
+
+        # Inner ring (cyan) — the main visual
+        self.inner = Entity(
+            model='quad',
+            color=color.rgba(0, 255, 255, 150),
+            scale=3.0,
+            position=position + Vec3(0, 2.5, 0),
+            rotation_x=90,
+        )
+        # Outer ring (purple) — glow border
+        self.outer = Entity(
+            model='quad',
+            color=color.rgba(100, 0, 255, 80),
+            scale=3.5,
+            position=position + Vec3(0, 2.5, 0),
+            rotation_x=90,
+        )
+        # Ground glow disc
+        self.ground_glow = Entity(
+            model='quad',
+            color=color.rgba(0, 200, 255, 40),
+            scale=4.0,
+            position=position + Vec3(0, 0.1, 0),
+            rotation_x=90,
+        )
+        # Pillar markers
+        for angle_deg in [0, 90, 180, 270]:
+            rad = math.radians(angle_deg)
+            pillar = Entity(
+                model='cube',
+                color=color.rgb(60, 180, 220),
+                scale=(0.25, 3.0, 0.25),
+                position=position + Vec3(math.cos(rad) * 1.8, 1.5, math.sin(rad) * 1.8),
+            )
+            # Store pillar for cleanup
+            if not hasattr(self, 'pillars'):
+                self.pillars = []
+            self.pillars.append(pillar)
+        if not hasattr(self, 'pillars'):
+            self.pillars = []
+
+    def animate(self, t):
+        """Animate portal rings and glow."""
+        # Inner ring spins and pulses
+        self.inner.rotation_y += 120 * time.dt
+        pulse = 3.0 + math.sin(t * 4 + self.bob_offset) * 0.3
+        self.inner.scale = pulse
+        # Outer ring counter-rotates
+        self.outer.rotation_y -= 80 * time.dt
+        self.outer.scale = pulse + 0.5
+        # Ground glow pulses
+        ground_pulse = 4.0 + math.sin(t * 3 + self.bob_offset) * 0.5
+        self.ground_glow.scale = ground_pulse
+        # Update cooldown
+        if self.cooldown > 0:
+            self.cooldown -= time.dt
+            # During cooldown, dim the portal
+            self.inner.color = color.rgba(0, 100, 100, 80)
+            self.outer.color = color.rgba(50, 0, 100, 30)
+        else:
+            self.inner.color = color.rgba(0, 255, 255, 150)
+            self.outer.color = color.rgba(100, 0, 255, 80)
+
+    def destroy_all(self):
+        """Clean up all portal entities."""
+        destroy(self.inner)
+        destroy(self.outer)
+        destroy(self.ground_glow)
+        for p in self.pillars:
+            destroy(p)
+
+
+# ─── Wandering Trader (NPC) ──────────────────────────────────────────────────
+class Trader(Entity):
+    """A friendly alien NPC that wanders the world and trades Space Gloop for rare items.
+
+    Traders meander near the player's vicinity. When the player gets close
+    and has enough Space Gloop, pressing E initiates a trade that converts
+    5 Space Gloop into a random rare item.
+    """
+
+    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp']
+
+    def __init__(self, position, name=None):
+        if name is None:
+            name = random.choice(TRADER_NAMES)
+        super().__init__(
+            model='sphere',
+            color=color.rgb(255, 200, 100),
+            scale=1.0,
+            position=position,
+            collider='sphere',
+        )
+        self.trader_name = name
+        self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+        self.wander_timer = random.uniform(3, 6)
+        self.home = Vec3(position.x, position.y, position.z)
+        self.trade_prompt_shown = False
+
+        # Hat (cone-shaped)
+        self.hat = Entity(
+            model='cube',
+            color=color.rgb(200, 50, 200),
+            scale=(0.8, 0.4, 0.8),
+            parent=self,
+            position=(0, 0.8, 0),
+        )
+        # Eyes (friendly blue)
+        self.eye_l = Entity(model='sphere', color=color.cyan, scale=0.25, parent=self, position=(-0.25, 0.25, -0.5))
+        self.eye_r = Entity(model='sphere', color=color.cyan, scale=0.25, parent=self, position=(0.25, 0.25, -0.5))
+        # Smile
+        self.smile = Entity(
+            model='quad',
+            color=color.rgba(255, 255, 200, 200),
+            scale=(0.4, 0.1),
+            parent=self,
+            position=(0, 0.05, -0.55),
+        )
+
+        # Name label (floating above)
+        self.name_label = Text(
+            parent=camera.ui,
+            text=f'[{name}]',
+            scale=0.8,
+            color=color.yellow,
+            origin=(0, 0),
+            visible=False,
+        )
+        self.trade_label = Text(
+            parent=camera.ui,
+            text='',
+            scale=0.7,
+            color=color.green,
+            origin=(0, 0),
+            visible=False,
+        )
 
 
 # ─── Projectile ────────────────────────────────────────────────────────────────
@@ -887,6 +1108,8 @@ MISSION_TEMPLATES = [
     ("Plasma Pursuit",       "Hunt down the elusive Plasma Drakes",        "Plasma Drake",  1, "kill",    700),
     ("Phantom Purge",       "Banish Nebula Phantoms from the skies",     "Nebula Phantom",2, "kill",    450),
     ("Core Collector",       "Gather Plasma Cores for the warp drive",     "Plasma Core",    2, "collect", 600),
+    ("Sentinel Sweep",       "Destroy Starburst Sentinels guarding the wastes", "Starburst Sentinel", 2, "kill", 400),
+    ("Time Bandit",          "Find Time Warps to slow the alien horde",    "Time Warp",      2, "collect", 300),
 ]
 
 class Mission:
@@ -920,6 +1143,11 @@ class Game:
         self.enemy_projectiles = []
         self.particles = []
         self.damage_numbers = []
+        self.shockwave_rings = []  # Starburst Sentinel shockwave rings
+        self.portals = []          # Portal pairs for fast travel
+        self.traders = []          # Wandering Trader NPCs
+        self.trader_spawn_timer = TRADER_RESPAWN_TIME / 2  # Initial spawn delay
+        self.time_warp_timer = 0   # Time Warp slow-mo for enemies
         self.missions = []
         self.messages = []
         self.game_over = False
@@ -959,6 +1187,8 @@ class Game:
 
         # Populate world
         self._spawn_initial_entities()
+        self._spawn_portals()
+        self._spawn_initial_traders()
         self._assign_missions(count=3)
 
         # Lighting
@@ -1091,6 +1321,29 @@ class Game:
         for dn in self.damage_numbers:
             dn.destroy()
         self.damage_numbers.clear()
+
+        # Destroy shockwave rings
+        for ring in self.shockwave_rings:
+            if ring and hasattr(ring, 'enabled') and ring.enabled:
+                destroy(ring)
+        self.shockwave_rings.clear()
+
+        # Destroy portals
+        for portal in self.portals:
+            portal.destroy_all()
+        self.portals.clear()
+
+        # Destroy traders and their sub-entities
+        for trader in self.traders:
+            if trader and hasattr(trader, 'enabled') and trader.enabled:
+                destroy(trader.hat)
+                destroy(trader.eye_l)
+                destroy(trader.eye_r)
+                destroy(trader.smile)
+                destroy(trader.name_label)
+                destroy(trader.trade_label)
+                destroy(trader)
+        self.traders.clear()
 
         # Destroy terrain and decoration entities
         for t in self.terrain_entities:
@@ -1410,6 +1663,54 @@ class Game:
             self.missions.append(m)
             self.add_message(f"New Mission: {m.title}")
 
+    def _spawn_portals(self):
+        """Create linked portal pairs at walkable locations around the world."""
+        spawn_center = WORLD_SIZE // 2 * TILE_SCALE
+        for i in range(PORTAL_COUNT):
+            for _ in range(50):  # Max attempts to find walkable positions
+                angle1 = random.uniform(0, math.pi * 2)
+                dist1 = random.uniform(30, (WORLD_SIZE * TILE_SCALE) * 0.4)
+                x1 = spawn_center + math.cos(angle1) * dist1
+                z1 = spawn_center + math.sin(angle1) * dist1
+                x1 = max(10, min(x1, (WORLD_SIZE - 2) * TILE_SCALE))
+                z1 = max(10, min(z1, (WORLD_SIZE - 2) * TILE_SCALE))
+
+                # Partner portal on the opposite side of the map
+                angle2 = angle1 + math.pi + random.uniform(-0.5, 0.5)
+                dist2 = random.uniform(30, (WORLD_SIZE * TILE_SCALE) * 0.4)
+                x2 = spawn_center + math.cos(angle2) * dist2
+                z2 = spawn_center + math.sin(angle2) * dist2
+                x2 = max(10, min(x2, (WORLD_SIZE - 2) * TILE_SCALE))
+                z2 = max(10, min(z2, (WORLD_SIZE - 2) * TILE_SCALE))
+
+                if self._is_walkable(x1, z1) and self._is_walkable(x2, z2):
+                    # Ensure not too close to spawn
+                    d1 = math.sqrt((x1 - spawn_center) ** 2 + (z1 - spawn_center) ** 2)
+                    d2 = math.sqrt((x2 - spawn_center) ** 2 + (z2 - spawn_center) ** 2)
+                    if d1 > 30 and d2 > 30:
+                        portal_a = Portal(position=Vec3(x1, 0, z1), partner_position=Vec3(x2, 0, z2), portal_id=i)
+                        portal_b = Portal(position=Vec3(x2, 0, z2), partner_position=Vec3(x1, 0, z1), portal_id=i)
+                        self.portals.append(portal_a)
+                        self.portals.append(portal_b)
+                        break
+
+    def _spawn_initial_traders(self):
+        """Spawn initial wandering traders at walkable locations."""
+        spawn_x = WORLD_SIZE // 2 * TILE_SCALE
+        spawn_z = WORLD_SIZE // 2 * TILE_SCALE
+        for _ in range(TRADER_INITIAL_COUNT):
+            for _ in range(50):
+                angle = random.uniform(0, math.pi * 2)
+                dist = random.uniform(40, 120)
+                tx = spawn_x + math.cos(angle) * dist
+                tz = spawn_z + math.sin(angle) * dist
+                tx = max(10, min(tx, (WORLD_SIZE - 2) * TILE_SCALE))
+                tz = max(10, min(tz, (WORLD_SIZE - 2) * TILE_SCALE))
+                if self._is_walkable(tx, tz):
+                    trader = Trader(position=Vec3(tx, 1, tz))
+                    self.traders.append(trader)
+                    break
+
     def add_message(self, msg):
         """Add a timed message to the HUD message queue."""
         self.messages.append((self.t, msg))
@@ -1440,7 +1741,7 @@ class Game:
         self.mission_panel_shown = False
         self.mission_text = Text(text='', position=(-0.15, 0.35), scale=1.0, color=color.cyan, visible=False)
         self.controls_text = Text(
-            text='WASD:Move | Click:Shoot | Space:Dash | M:Minimap | Tab:Missions | P:Pause',
+            text='WASD:Move | Click:Shoot | Space:Dash | E:Trade | M:Minimap | Tab:Missions | P:Pause',
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
@@ -1791,6 +2092,8 @@ class Game:
             pu_lines.append(f'SHIELD: {p.shield_timer:.1f}s')
         if p.magnet_timer > 0:
             pu_lines.append(f'MAGNET: {p.magnet_timer:.1f}s')
+        if self.time_warp_timer > 0:
+            pu_lines.append(f'TIME WARP: {self.time_warp_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
@@ -2009,6 +2312,10 @@ def game_update():
     if p.magnet_timer > 0:
         p.magnet_timer -= time.dt
 
+    # Time Warp timer — slows all enemies
+    if game.time_warp_timer > 0:
+        game.time_warp_timer -= time.dt
+
     # Combo timer
     if game.combo_timer > 0:
         game.combo_timer -= time.dt
@@ -2149,16 +2456,18 @@ def game_update():
                 enemy.color = color.yellow
                 invoke(setattr, enemy, 'color', enemy.original_color, delay=ENEMY_ALERT_FLASH_DURATION)
             # Chase player
+            # Time Warp slows all enemies
+            speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
             direction = (p.position - enemy.position).normalized()
             direction.y = 0
-            new_pos = enemy.position + direction * enemy.speed * time.dt
+            new_pos = enemy.position + direction * enemy.speed * speed_mult * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
             else:
                 # BUG FIX: if the direct path is blocked (e.g., water/lava between
                 # enemy and player), try moving along each axis independently so
                 # the enemy slides along the obstacle instead of freezing in place.
-                move_step = direction * enemy.speed * time.dt
+                move_step = direction * enemy.speed * speed_mult * time.dt
                 # Try X axis only
                 if game._is_walkable(enemy.x + move_step.x, enemy.z):
                     enemy.x += move_step.x
@@ -2297,6 +2606,26 @@ def game_update():
                         enemy.orbit_state = 'orbit'
                         enemy.dive_timer = random.uniform(NEBULA_PHANTOM_DIVE_COOLDOWN_MIN, NEBULA_PHANTOM_DIVE_COOLDOWN_MAX)
                         enemy.y = 4
+
+            # ── Starburst Sentinel: Stationary turret that fires shockwave rings ──
+            if enemy.is_starburst and enemy.alive and not enemy.dying:
+                enemy.shockwave_timer -= time.dt
+                # Starburst Sentinel doesn't move — it stays in place and pulses
+                # Rotate to face player
+                if dist_to_player < STARBURST_DETECT_RANGE:
+                    enemy.look_at_2d(p.position)
+                    # Pulsing glow effect when player is in range
+                    pulse = 0.5 + 0.5 * math.sin(game.t * 6)
+                    enemy.scale = enemy.original_scale * (1.0 + pulse * 0.15)
+                if enemy.shockwave_timer <= 0 and dist_to_player < STARBURST_DETECT_RANGE:
+                    # Fire an expanding shockwave ring toward the player
+                    ring = ShockwaveRing(
+                        position=enemy.position + Vec3(0, 0.5, 0),
+                        damage=STARBURST_SHOCKWAVE_DAMAGE,
+                    )
+                    game.shockwave_rings.append(ring)
+                    game._spawn_particles(enemy.position, color.rgb(255, 220, 50), count=6)
+                    enemy.shockwave_timer = random.uniform(STARBURST_SHOCKWAVE_INTERVAL_MIN, STARBURST_SHOCKWAVE_INTERVAL_MAX)
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -2305,7 +2634,9 @@ def game_update():
                 wd = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1))
                 enemy.wander_dir = wd.normalized() if wd.length() > 0.01 else Vec3(1, 0, 0)
                 enemy.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
-            new_pos = enemy.position + enemy.wander_dir * enemy.speed * ENEMY_WANDER_SPEED_FACTOR * time.dt
+            # Time Warp slow factor applies to wander too
+            wander_speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
+            new_pos = enemy.position + enemy.wander_dir * enemy.speed * ENEMY_WANDER_SPEED_FACTOR * wander_speed_mult * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
             else:
@@ -2427,6 +2758,30 @@ def game_update():
             destroy(eproj)
             game.enemy_projectiles.remove(eproj)
 
+    # ── Update Shockwave Rings ──
+    for ring in game.shockwave_rings[:]:
+        expired = ring.update_ring(time.dt)
+        if expired:
+            destroy(ring)
+            game.shockwave_rings.remove(ring)
+            continue
+        # Check collision with player — if player is within ring radius
+        ring_dist = math.sqrt((ring.x - p.x) ** 2 + (ring.z - p.z) ** 2)
+        # The ring hits if the player is near the edge of the expanding ring
+        ring_thickness = 1.5  # How thick the ring edge is for collision
+        if abs(ring_dist - ring.current_radius) < ring_thickness:
+            if p.invuln_timer <= 0:
+                if p.shield_timer > 0:
+                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                    game.add_message("Shield blocked shockwave!")
+                else:
+                    died = p.take_damage(ring.damage)
+                    game.screen_shake = SCREEN_SHAKE_DAMAGE
+                    game._spawn_particles(p.position, color.rgb(255, 220, 50), count=PARTICLE_DAMAGE_COUNT)
+                    game.damage_numbers.append(DamageNumber(p.position, ring.damage, is_kill=False))
+                    if died:
+                        game._show_death_screen(p)
+
     # ── Update Collectibles ──
     for col in game.collectibles[:]:
         # Handle pop animation before destruction
@@ -2493,6 +2848,10 @@ def game_update():
                 p.magnet_timer = MAGNET_DURATION
                 game.add_message(f"Magnet Core! Item pull boosted for {MAGNET_DURATION}s!")
                 game._spawn_particles(col.position, color.rgb(200, 50, 255), count=12)
+            elif col.name == 'Time Warp':
+                game.time_warp_timer = TIME_WARP_DURATION
+                game.add_message(f"Time Warp! All enemies slowed for {TIME_WARP_DURATION}s!")
+                game._spawn_particles(col.position, color.rgb(150, 220, 255), count=15)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -2500,7 +2859,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
             # Start pop animation instead of immediate destroy
@@ -2600,6 +2959,122 @@ def game_update():
         if game._is_walkable(cx, cz):
             c = Collectible(position=Vec3(cx, 1, cz))
             game.collectibles.append(c)
+
+    # ── Portal Animation & Teleportation ──
+    for portal in game.portals:
+        portal.animate(game.t)
+        # Check if player steps into portal
+        dist_to_portal = math.sqrt((portal.position.x - p.x) ** 2 + (portal.position.z - p.z) ** 2)
+        if dist_to_portal < 2.5 and portal.cooldown <= 0:
+            # Teleport player to partner portal location
+            target = portal.partner_position
+            # Find the partner portal to set its cooldown too
+            for other_portal in game.portals:
+                if (abs(other_portal.position.x - target.x) < 1 and
+                    abs(other_portal.position.z - target.z) < 1):
+                    other_portal.cooldown = PORTAL_COOLDOWN
+                    break
+            portal.cooldown = PORTAL_COOLDOWN
+            p.x = target.x
+            p.z = target.z
+            game.cam_pivot.position = Vec3(target.x, 0, target.z)
+            game._spawn_particles(p.position, color.rgba(0, 255, 255, 200), count=15)
+            game.add_message("Portal activated!")
+            game.screen_shake = max(game.screen_shake, 0.3)
+
+    # ── Trader Wandering & Interaction ──
+    for trader in game.traders[:]:
+        if not trader.enabled:
+            continue
+        # Wander near home position
+        trader.wander_timer -= time.dt
+        if trader.wander_timer <= 0:
+            wd = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1))
+            trader.wander_dir = wd.normalized() if wd.length() > 0.01 else Vec3(1, 0, 0)
+            trader.wander_timer = random.uniform(3, 6)
+        new_pos = trader.position + trader.wander_dir * TRADER_SPEED * time.dt
+        # Keep trader near home
+        dist_from_home = math.sqrt((new_pos.x - trader.home.x) ** 2 + (new_pos.z - trader.home.z) ** 2)
+        if dist_from_home < TRADER_WANDER_RADIUS and game._is_walkable(new_pos.x, new_pos.z):
+            trader.position = new_pos
+        else:
+            trader.wander_dir = -trader.wander_dir
+        trader.y = 1 + math.sin(game.t * 2 + id(trader) % 100) * 0.2
+        trader.look_at_2d(p.position)
+
+        # Show/hide name label based on distance
+        dist_to_trader = (trader.position - p.position).length()
+        if dist_to_trader < 15:
+            screen_pos = camera.screen_point(trader.position + Vec3(0, 2.5, 0))
+            trader.name_label.position = (screen_pos[0], screen_pos[1] + 0.04)
+            trader.name_label.visible = True
+            # Show trade prompt if close enough and has Space Gloop
+            if dist_to_trader < 4:
+                gloop_count = p.inventory.get('Space Gloop', 0)
+                trader.trade_label.text = f'[E] Trade {TRADER_TRADE_COST} Space Gloop (have: {gloop_count})'
+                trader.trade_label.position = (screen_pos[0], screen_pos[1] - 0.02)
+                trader.trade_label.visible = True
+                trader.trade_prompt_shown = True
+            else:
+                trader.trade_label.visible = False
+                trader.trade_prompt_shown = False
+        else:
+            trader.name_label.visible = False
+            trader.trade_label.visible = False
+            trader.trade_prompt_shown = False
+
+    # ── Handle trader trade (E key) ──
+    if held_keys['e'] and not hasattr(game, '_e_held'):
+        game._e_held = True
+        for trader in game.traders:
+            if trader.trade_prompt_shown and trader.enabled:
+                gloop_count = p.inventory.get('Space Gloop', 0)
+                if gloop_count >= TRADER_TRADE_COST:
+                    # Deduct Space Gloop
+                    p.inventory['Space Gloop'] = gloop_count - TRADER_TRADE_COST
+                    if p.inventory['Space Gloop'] <= 0:
+                        del p.inventory['Space Gloop']
+                    # Give a random rare item
+                    reward_item = random.choice(Trader.TRADE_ITEMS)
+                    c = Collectible(position=p.position + Vec3(0, 2, 0), item_type=reward_item)
+                    game.collectibles.append(c)
+                    game.add_message(f"Traded {TRADER_TRADE_COST} Space Gloop for {reward_item}!")
+                    game._spawn_particles(p.position, color.yellow, count=12)
+                else:
+                    game.add_message(f"Need {TRADER_TRADE_COST} Space Gloop to trade!")
+    elif not held_keys['e']:
+        game._e_held = False
+
+    # ── Trader respawn timer ──
+    game.trader_spawn_timer -= time.dt
+    if game.trader_spawn_timer <= 0 and len([t for t in game.traders if t.enabled]) < TRADER_INITIAL_COUNT + 1:
+        game.trader_spawn_timer = TRADER_RESPAWN_TIME
+        # Spawn a new trader near the player
+        angle = random.uniform(0, math.pi * 2)
+        dist = random.uniform(60, 100)
+        tx = p.x + math.cos(angle) * dist
+        tz = p.z + math.sin(angle) * dist
+        tx = max(10, min(tx, (WORLD_SIZE - 2) * TILE_SCALE))
+        tz = max(10, min(tz, (WORLD_SIZE - 2) * TILE_SCALE))
+        if game._is_walkable(tx, tz):
+            trader = Trader(position=Vec3(tx, 1, tz))
+            game.traders.append(trader)
+            game.add_message(f"A wandering trader ({trader.trader_name}) has appeared!")
+
+    # ── Time Warp visual effect on enemies ──
+    if game.time_warp_timer > 0:
+        # Tint enemies blue-ish when Time Warp is active
+        for enemy in game.enemies:
+            if enemy.alive and not enemy.dying and enemy.hit_flash <= 0:
+                # Flash enemies with a blue tint periodically
+                if int(game.t * 4) % 2 == 0:
+                    tinted = color.rgba(
+                        int(enemy.original_color[0] * 128),
+                        int(enemy.original_color[1] * 128 + 127),
+                        int(min(255, enemy.original_color[2] * 128 + 200)),
+                        int(enemy.original_color[3] * 255) if len(enemy.original_color) > 3 else 255
+                    )
+                    enemy.color = tinted
 
     # ── Missions ──
     game._update_missions()
