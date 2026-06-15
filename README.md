@@ -30,12 +30,12 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.4.2 — 3D!)
+## Features (v2.5.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
-- **12 collectible item types** — including **6 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, **Time Warp**
-- **12 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!)
+- **13 collectible item types** — including **7 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, **Star Fruit** (walk on water/lava!)
+- **13 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!)
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
@@ -44,6 +44,7 @@ python game.py
 - **Health Potion** — restores 30 HP instantly
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
+- **Star Fruit** — walk over water and lava for 6 seconds! Golden shimmer ring appears beneath you
 - **Combo system** — chain kills within 4 seconds for XP and score multipliers! Combo counter displayed on HUD with escalating colors
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel! Step in to teleport to your partner portal with a 3s cooldown
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items by pressing E near them
@@ -89,6 +90,9 @@ python game.py
 - **Smoother camera tracking** — faster camera lerp for tighter, more responsive following
 - **Dash FOV zoom** — camera field of view widens during dash for a satisfying speed rush effect
 - **Enemy alert flash** — enemies flash yellow when they first detect the player, giving you a visual warning before the chase starts
+- **Kill feed** — rolling top-right corner display shows recent enemy kills with fade-out animation
+- **Cosmic Leech enemy** — small, fast enemy that applies a damage-over-time drain debuff on contact (shown as purple flash on player)
+- **Drain DoT system** — Cosmic Leech's drain deals 3 damage/second for 4 seconds; blocked by Shield
 
 ## The Self-Improving Game
 
@@ -130,6 +134,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
 | **Magnet Core** | 20 pts | 2.5x pull radius + 2x pull speed for 6s | Uncommon |
 | **Time Warp** | 25 pts | Slows ALL enemies to 30% speed for 6s | Rare |
+| **Star Fruit** | 20 pts | Walk over water/lava for 6s | Uncommon |
 
 ## Enemies
 
@@ -146,6 +151,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Spore Spitter | 90 | Medium | 15 | **Shoots back** | Fires projectiles at player |
 | Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
 | Crystal Guardian | 200 | Slow | 40 | — | Tough |
+| **Cosmic Leech** | 35 | Fast | 5 | **Drain DoT** | Small & fast, applies damage-over-time |
 | Plasma Drake | 400 | Very Fast | 50 | — | Endgame boss |
 
 ## Combo System
@@ -168,7 +174,7 @@ Chain kills within 4.5 seconds to build combos! Each combo tier grants:
 
 - **Friendly alien NPCs** wander the world, wearing purple hats
 - Approach a trader and press **E** to trade 5 Space Gloop for a random rare item
-- Possible trade rewards: Meteor Shard, Quantum Fuzz, Shield Crystal, Weapon Upgrade, Nebula Dust, Magnet Core, Time Warp
+- Possible trade rewards: Meteor Shard, Quantum Fuzz, Shield Crystal, Weapon Upgrade, Nebula Dust, Magnet Core, Time Warp, Star Fruit
 - New traders spawn periodically if fewer than 3 are alive
 - Trader names: Zix, Glip, Orbix, Fweem
 

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.4.2"
+VERSION = "2.5.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -196,8 +196,20 @@ VOID_BOMBER_FUSE_TIME = 1.4
 VOID_BOMBER_EXPLOSION_RADIUS = 5.5
 VOID_BOMBER_EXPLOSION_DAMAGE = 40
 
+# ─── Cosmic Leech (New Enemy) ────────────────────────────────────────────────
+COSMIC_LEECH_DRAIN_DAMAGE = 3       # Damage per second while drain is active
+COSMIC_LEECH_DRAIN_DURATION = 4.0   # How long the drain DoT lasts
+COSMIC_LEECH_DRAIN_RANGE = 2.0      # How close to apply drain
+
+# ─── Star Fruit (New Collectible) ───────────────────────────────────────────
+STAR_FRUIT_FLOAT_DURATION = 6.0     # How long the float ability lasts
+
+# ─── Kill Feed ───────────────────────────────────────────────────────────────
+KILL_FEED_MAX_ENTRIES = 5           # Maximum number of kill feed entries shown
+KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
+
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
-EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
+EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite', 'Cosmic Leech']
 MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber', 'Starburst Sentinel']
 HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
@@ -265,6 +277,7 @@ COLLECTIBLE_WEIGHTS = {
     'Cosmic Jelly':   3,    # Legendary
     'Plasma Core':    3,    # Mythic
     'Time Warp':      5,    # Rare — slows all enemies to 30% speed
+    'Star Fruit':     6,    # Uncommon — walk over water/lava
 }
 
 # ─── Collectible Rarity Tiers ────────────────────────────────────────────────
@@ -281,6 +294,7 @@ RARITY_TIER = {
     'Weapon Upgrade': 'rare',
     'Time Warp':      'rare',
     'Nebula Dust':    'very_rare',
+    'Star Fruit':     'uncommon',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
 }
@@ -335,6 +349,7 @@ C_PURPLE   = color.rgb(170, 0, 255)
 C_PINK     = color.rgb(255, 80, 180)
 C_MUSHROOM = color.rgb(50, 180, 90)
 C_FLOATING_ISLANDS = color.rgb(180, 140, 220)
+C_STAR_FRUIT = color.rgb(255, 255, 100)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -435,6 +450,8 @@ class Player(Entity):
         self.shield_timer = 0
         self.weapon_upgrade_timer = 0  # Spread shot duration
         self.magnet_timer = 0  # Magnet Core pull boost
+        self.float_timer = 0  # Star Fruit float over water/lava
+        self.drain_timer = 0   # Cosmic Leech drain DoT timer
 
         # Tentacle entities
         self.tentacles = []
@@ -562,7 +579,8 @@ class Enemy(Entity):
         'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 3, 'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 30},
         'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
         'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
-        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70,  'speed': 0, 'damage': 15, 'scale': 1.5,  'model': 'diamond', 'decor': 'shards', 'detect': 30},
+        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70, 'speed': 0, 'damage': 15, 'scale': 1.5, 'model': 'diamond', 'decor': 'shards', 'detect': 30},
+        'Cosmic Leech':    {'color': color.rgb(80, 0, 80),          'hp': 35,  'speed': 6,  'damage': 5, 'scale': 0.7, 'model': 'sphere', 'decor': 'aura', 'detect': 25},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -619,6 +637,9 @@ class Enemy(Entity):
         # Starburst Sentinel: stationary turret that fires expanding shockwave rings
         self.is_starburst = (enemy_type == 'Starburst Sentinel')
         self.shockwave_timer = random.uniform(STARBURST_SHOCKWAVE_INTERVAL_MIN, STARBURST_SHOCKWAVE_INTERVAL_MAX) if self.is_starburst else 0
+
+        # Cosmic Leech: fast enemy that applies a drain DoT on contact
+        self.is_cosmic_leech = (enemy_type == 'Cosmic Leech')
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -772,6 +793,7 @@ class Collectible(Entity):
         'Weapon Upgrade': {'color': color.rgb(255, 150, 0),  'value': 20,  'model': 'diamond'},
         'Magnet Core':    {'color': color.rgb(200, 50, 255),'value': 20,  'model': 'sphere'},
         'Time Warp':      {'color': color.rgb(150, 220, 255),'value': 25,  'model': 'diamond'},
+        'Star Fruit':     {'color': color.rgb(255, 255, 100), 'value': 20,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -941,7 +963,7 @@ class Trader(Entity):
     5 Space Gloop into a random rare item.
     """
 
-    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp']
+    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit']
 
     def __init__(self, position, name=None):
         if name is None:
@@ -1165,6 +1187,8 @@ MISSION_TEMPLATES = [
     ("Core Collector",       "Gather Plasma Cores for the warp drive",     "Plasma Core",    2, "collect", 600),
     ("Sentinel Sweep",       "Destroy Starburst Sentinels guarding the wastes", "Starburst Sentinel", 2, "kill", 400),
     ("Time Bandit",          "Find Time Warps to slow the alien horde",    "Time Warp",      2, "collect", 300),
+    ("Leech Hunter",         "Suck out the Cosmic Leeches infesting the area", "Cosmic Leech", 3, "kill", 250),
+    ("Star Walker",          "Collect Star Fruits to cross treacherous terrain", "Star Fruit", 3, "collect", 200),
 ]
 
 class Mission:
@@ -1222,6 +1246,9 @@ class Game:
         self.combo_count = 0
         self.combo_timer = 0.0
         self.combo_display_timer = 0.0
+
+        # Kill feed: list of (timestamp, text) entries
+        self.kill_feed = []
 
         # Weather particles
         self.weather_particles = []
@@ -1434,6 +1461,8 @@ class Game:
         if self.player and self.player.enabled:
             if hasattr(self.player, 'ground_shadow') and self.player.ground_shadow:
                 destroy(self.player.ground_shadow)
+            if hasattr(self.player, 'float_ring') and self.player.float_ring is not None:
+                destroy(self.player.float_ring)
             destroy(self.player)
         # Player's children cascade-destroy: tentacles, eyes, pupils, shield_visual
 
@@ -1444,7 +1473,7 @@ class Game:
                       'game_over_text', 'game_over_sub', 'game_over_stats',
                       'game_over_restart', 'level_up_text', 'dash_text',
                       'powerup_text', 'crosshair', 'crosshair2',
-                      'combo_text', 'weapon_text'):
+                      'combo_text', 'weapon_text', 'effect_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -1452,6 +1481,12 @@ class Game:
             if t:
                 destroy(t)
         self.msg_texts.clear()
+
+        # Destroy kill feed texts
+        for t in self.kill_feed_texts:
+            if t and hasattr(t, 'enabled'):
+                destroy(t)
+        self.kill_feed_texts.clear()
 
         # Destroy minimap entities
         if self.minimap_entity and hasattr(self.minimap_entity, 'enabled'):
@@ -1800,7 +1835,7 @@ class Game:
         self.mission_panel_shown = False
         self.mission_text = Text(text='', position=(-0.15, 0.35), scale=1.0, color=color.cyan, visible=False)
         self.controls_text = Text(
-            text='WASD:Move | Click:Shoot | Space:Dash | E:Trade | M:Minimap | Tab:Missions | P:Pause',
+            text='WASD:Move | Click:Shoot | Space:Dash | E:Trade | M:Minimap | Tab:Missions | P:Pause | Float over water with Star Fruit!',
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
@@ -1821,6 +1856,16 @@ class Game:
 
         # Weapon upgrade indicator
         self.weapon_text = Text(text='', position=(-0.75, 0.29), scale=0.85, color=color.orange)
+
+        # Kill feed (top-right, fading entries)
+        self.kill_feed_texts = []
+        for i in range(KILL_FEED_MAX_ENTRIES):
+            t = Text(text='', position=(0.85, 0.45 - i * 0.035), scale=0.75,
+                     color=color.white, origin=(1, 0), visible=False)
+            self.kill_feed_texts.append(t)
+
+        # Drain/float indicator
+        self.effect_text = Text(text='', position=(-0.75, 0.25), scale=0.85, color=color.magenta)
 
         # Minimap
         self.minimap_shown = True
@@ -2200,6 +2245,35 @@ class Game:
             self.weapon_text.text = ''
             self.weapon_text.color = color.gray
 
+        # Drain/Float effect indicators
+        effect_lines = []
+        if p.drain_timer > 0:
+            effect_lines.append(f'DRAIN: {p.drain_timer:.1f}s')
+        if p.float_timer > 0:
+            effect_lines.append(f'FLOAT: {p.float_timer:.1f}s')
+        self.effect_text.text = '  |  '.join(effect_lines)
+        if p.drain_timer > 0:
+            self.effect_text.color = color.rgb(200, 0, 200)
+        elif p.float_timer > 0:
+            self.effect_text.color = color.yellow
+        else:
+            self.effect_text.color = color.gray
+
+        # Kill feed display — show recent kills with fade-out
+        now = self.t
+        self.kill_feed = [(t, txt) for t, txt in self.kill_feed if now - t < KILL_FEED_LIFETIME]
+        for i, kf_text in enumerate(self.kill_feed_texts):
+            if i < len(self.kill_feed):
+                t, txt = self.kill_feed[-(i + 1)]  # Most recent first
+                age = now - t
+                alpha = max(0, min(255, int(255 * (1.0 - age / KILL_FEED_LIFETIME))))
+                kf_text.text = txt
+                kf_text.color = color.rgba(255, 200, 50, alpha)
+                kf_text.visible = True
+            else:
+                kf_text.text = ''
+                kf_text.visible = False
+
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
         p = self.player
@@ -2350,7 +2424,7 @@ def game_update():
         # Currently dashing
         p.dash_timer -= time.dt
         dash_pos = p.position + p.dash_direction * DASH_SPEED * time.dt
-        if game._is_walkable(dash_pos.x, dash_pos.z):
+        if game._is_walkable(dash_pos.x, dash_pos.z) or (p.float_timer > 0 and game._get_biome_at(dash_pos.x, dash_pos.z) in ('water', 'lava')):
             p.x = max(1, min(dash_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
             p.z = max(1, min(dash_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
         # Dash trail particles
@@ -2379,6 +2453,25 @@ def game_update():
         # Pulsing shield effect
         p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
 
+    # Float visual update — show golden shimmer when floating
+    if p.float_timer > 0:
+        if not hasattr(p, 'float_ring') or p.float_ring is None:
+            p.float_ring = Entity(
+                model='quad',
+                color=color.rgba(255, 255, 100, 80),
+                scale=2.0,
+                position=(p.x, 0.08, p.z),
+                rotation_x=90,
+            )
+        p.float_ring.visible = True
+        p.float_ring.scale = 2.0 + math.sin(game.t * 6) * 0.3
+        p.float_ring.position = (p.x, 0.08, p.z)
+        p.float_ring.color = color.rgba(255, 255, 100, int(80 + 40 * math.sin(game.t * 4)))
+    else:
+        if hasattr(p, 'float_ring') and p.float_ring is not None:
+            destroy(p.float_ring)
+            p.float_ring = None
+
     # Weapon upgrade timer
     if p.weapon_upgrade_timer > 0:
         p.weapon_upgrade_timer -= time.dt
@@ -2386,6 +2479,28 @@ def game_update():
     # Magnet Core timer
     if p.magnet_timer > 0:
         p.magnet_timer -= time.dt
+
+    # Star Fruit float timer
+    if p.float_timer > 0:
+        p.float_timer -= time.dt
+
+    # Cosmic Leech drain DoT — deals damage over time
+    if p.drain_timer > 0:
+        p.drain_timer -= time.dt
+        # Apply drain damage every 0.5 seconds
+        if not hasattr(p, '_drain_tick'):
+            p._drain_tick = 0
+        p._drain_tick += time.dt
+        if p._drain_tick >= 0.5:
+            p._drain_tick = 0
+            if p.shield_timer <= 0:  # Shield blocks drain damage
+                drain_dmg = int(COSMIC_LEECH_DRAIN_DAMAGE * 0.5)  # damage per tick (half-second)
+                if drain_dmg > 0:
+                    died = p.take_damage(drain_dmg)
+                    game._spawn_particles(p.position, color.rgb(150, 0, 150), count=3)
+                    game.damage_numbers.append(DamageNumber(p.position, drain_dmg, is_kill=False))
+                    if died:
+                        game._show_death_screen(p)
 
     # Time Warp timer — slows all enemies
     if game.time_warp_timer > 0:
@@ -2408,7 +2523,7 @@ def game_update():
     if move_dir.length() > 0 and p.dash_timer <= 0:
         move_dir = move_dir.normalized()
         new_pos = p.position + move_dir * effective_speed * time.dt
-        if game._is_walkable(new_pos.x, new_pos.z):
+        if game._is_walkable(new_pos.x, new_pos.z) or (p.float_timer > 0 and game._get_biome_at(new_pos.x, new_pos.z) in ('water', 'lava')):
             p.x = max(1, min(new_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
             p.z = max(1, min(new_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
             p.facing = move_dir
@@ -2435,6 +2550,10 @@ def game_update():
         p.invuln_timer -= time.dt
         # Blink
         p.visible = int(game.t * PLAYER_BLINK_RATE) % 2 == 0
+    elif p.drain_timer > 0:
+        # Drain visual: pulse purple when under drain DoT
+        p.color = color.rgb(180, 0, 180) if int(game.t * 6) % 2 == 0 else C_ALIEN
+        p.visible = True
     else:
         p.visible = True
 
@@ -2717,6 +2836,14 @@ def game_update():
                     game.shockwave_rings.append(ring)
                     game._spawn_particles(enemy.position, color.rgb(255, 220, 50), count=6)
                     enemy.shockwave_timer = random.uniform(STARBURST_SHOCKWAVE_INTERVAL_MIN, STARBURST_SHOCKWAVE_INTERVAL_MAX)
+
+            # ── Cosmic Leech: Applies drain DoT on contact ──
+            if enemy.is_cosmic_leech and dist_to_player < COSMIC_LEECH_DRAIN_RANGE:
+                # Apply drain debuff to player on contact
+                if p.drain_timer <= 0:
+                    game.add_message("Cosmic Leech is draining you!")
+                    game._spawn_particles(p.position, color.rgb(200, 0, 200), count=6)
+                p.drain_timer = COSMIC_LEECH_DRAIN_DURATION
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -2822,6 +2949,8 @@ def game_update():
                             game.collectibles.append(c)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game.add_message(f"Defeated {enemy.name}!")
+                    # Add to kill feed
+                    game.kill_feed.append((game.t, f"✦ {enemy.name}"))
                 break
 
         # Remove if out of world
@@ -2953,6 +3082,10 @@ def game_update():
                 game.time_warp_timer = TIME_WARP_DURATION
                 game.add_message(f"Time Warp! All enemies slowed for {TIME_WARP_DURATION}s!")
                 game._spawn_particles(col.position, color.rgb(150, 220, 255), count=15)
+            elif col.name == 'Star Fruit':
+                p.float_timer = STAR_FRUIT_FLOAT_DURATION
+                game.add_message(f"Star Fruit! Walk over water/lava for {STAR_FRUIT_FLOAT_DURATION:.0f}s!")
+                game._spawn_particles(col.position, color.rgb(255, 255, 100), count=15)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -2960,7 +3093,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
             # Start pop animation instead of immediate destroy
