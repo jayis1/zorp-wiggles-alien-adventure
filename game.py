@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.4.1"
+VERSION = "2.4.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -23,7 +23,7 @@ TILE_SCALE = 4
 PLAYER_SPEED = 12
 PLAYER_INVULN_DURATION = 0.5
 PLAYER_BLINK_RATE = 20
-PLAYER_START_HP = 100
+PLAYER_START_HP = 120
 
 # ─── Combat ───────────────────────────────────────────────────────────────────
 SHOOT_COOLDOWN = 0.12
@@ -40,7 +40,7 @@ ENEMY_ATTACK_COOLDOWN = 1.0
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
-ENEMY_WANDER_SPEED_FACTOR = 0.3
+ENEMY_WANDER_SPEED_FACTOR = 0.25
 ENEMY_WANDER_INTERVAL_MIN = 2.0
 ENEMY_WANDER_INTERVAL_MAX = 5.0
 ENEMY_WANDER_DIR_JITTER = 1.5
@@ -53,8 +53,8 @@ ENEMY_SPAWN_INTERVAL = 10
 ENEMY_SPAWN_INTERVAL_LEVEL_DECAY = 0.5   # seconds faster per player level tier
 ENEMY_SPAWN_DISTANCE_MIN = 30
 ENEMY_SPAWN_DISTANCE_MAX = 60
-LOOT_DROP_MIN = 1
-LOOT_DROP_MAX = 3
+LOOT_DROP_MIN = 2
+LOOT_DROP_MAX = 4
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
 SPAWN_SAFE_RADIUS = 15
@@ -69,11 +69,11 @@ BASE_KILL_XP = 25
 KILL_XP_HP_DIVISOR = 10
 
 # ─── Visual Effects ───────────────────────────────────────────────────────────
-DEATH_ANIM_DURATION = 0.4
+DEATH_ANIM_DURATION = 0.45
 SCREEN_SHAKE_DAMAGE = 0.35
 SCREEN_SHAKE_KILL = 0.6
 SCREEN_SHAKE_DECAY = 10.0
-LEVEL_UP_FLASH_DURATION = 1.5
+LEVEL_UP_FLASH_DURATION = 2.0
 CAMERA_LERP_SPEED = 6.0
 CAMERA_HEIGHT = 18
 CAMERA_DISTANCE = 22
@@ -84,9 +84,9 @@ PARTICLE_GRAVITY = 9.8
 PARTICLE_SCALE_DECAY = 0.97
 MAX_PARTICLES = 150
 PARTICLE_HIT_COUNT = 8
-PARTICLE_KILL_COUNT = 14
+PARTICLE_KILL_COUNT = 18
 PARTICLE_DAMAGE_COUNT = 6
-PARTICLE_COLLECT_COUNT = 10
+PARTICLE_COLLECT_COUNT = 14
 PARTICLE_LEVELUP_COUNT = 20
 
 # ─── Projectile Trail ────────────────────────────────────────────────────────
@@ -127,23 +127,23 @@ DEATH_SCREEN_STATS_COLOR = color.white
 DEATH_SCREEN_TITLE_COLOR = color.red
 
 # ─── Stars ────────────────────────────────────────────────────────────────────
-STAR_COUNT = 50
+STAR_COUNT = 80
 STAR_HEIGHT_MIN = 80
 STAR_HEIGHT_MAX = 150
 STAR_SPREAD = 200
 
 # ─── Biome Fog ────────────────────────────────────────────────────────────────
 BIOME_FOG = {
-    'grass':   {'color': color.rgb(25, 0, 60),   'density': 0.007},
-    'desert':  {'color': color.rgb(60, 40, 20),   'density': 0.012},
-    'water':   {'color': color.rgb(10, 30, 80),   'density': 0.009},
-    'lava':    {'color': color.rgb(60, 10, 10),   'density': 0.015},
-    'forest':  {'color': color.rgb(10, 30, 10),   'density': 0.010},
-    'crystal': {'color': color.rgb(15, 30, 50),   'density': 0.008},
-    'snow':    {'color': color.rgb(40, 40, 55),    'density': 0.006},
-    'swamp':   {'color': color.rgb(25, 35, 15),    'density': 0.014},
-    'mushroom': {'color': color.rgb(20, 10, 40),   'density': 0.011},
-    'floating_islands': {'color': color.rgb(30, 20, 50),   'density': 0.006},
+    'grass':   {'color': color.rgb(20, 0, 50),    'density': 0.006},
+    'desert':  {'color': color.rgb(80, 55, 25),    'density': 0.014},
+    'water':   {'color': color.rgb(5, 20, 70),     'density': 0.010},
+    'lava':    {'color': color.rgb(80, 15, 5),     'density': 0.016},
+    'forest':  {'color': color.rgb(5, 25, 5),      'density': 0.012},
+    'crystal': {'color': color.rgb(10, 25, 55),    'density': 0.007},
+    'snow':    {'color': color.rgb(50, 55, 70),    'density': 0.005},
+    'swamp':   {'color': color.rgb(20, 30, 10),    'density': 0.016},
+    'mushroom': {'color': color.rgb(25, 5, 35),    'density': 0.012},
+    'floating_islands': {'color': color.rgb(25, 15, 45), 'density': 0.005},
 }
 
 # ─── Biome Generation ─────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
 SPEED_BOOST_DURATION = 5.0
 SPEED_BOOST_MULTIPLIER = 1.8
 SHIELD_DURATION = 4.0
-HEALTH_POTION_HEAL = 30
+HEALTH_POTION_HEAL = 40
 
 # ─── Combo System ────────────────────────────────────────────────────────────
 COMBO_TIMEOUT = 4.5        # seconds before combo resets (tightened from 5.0 for more skillful chaining)
@@ -304,13 +304,16 @@ MINIMAP_PLAYER_DOT_SIZE = 0.008
 MINIMAP_PLAYER_DOT_RGB = (255, 255, 255)
 MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
 
+# ─── Performance: Visual Culling ──────────────────────────────────────────────
+VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
+
 # ─── Collectible Glow Pulse ──────────────────────────────────────────────────
 GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
 GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
 GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
 
 # ─── Sky Nebula ──────────────────────────────────────────────────────────────
-NEBULA_CLOUD_COUNT = 8
+NEBULA_CLOUD_COUNT = 12
 NEBULA_SPREAD = 250
 NEBULA_HEIGHT_MIN = 100
 NEBULA_HEIGHT_MAX = 180
@@ -548,7 +551,7 @@ class Enemy(Entity):
     """An enemy entity that chases the player when in detection range."""
 
     TYPES = {
-        'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
+        'Slime Blob':      {'color': color.lime,         'hp': 25,  'speed': 3,  'damage': 8,  'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
         'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
         'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
         'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
@@ -556,10 +559,10 @@ class Enemy(Entity):
         'Plasma Drake':    {'color': color.magenta,       'hp': 400, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
         'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
         'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
-        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 4, 'scale': 0.5, 'model': 'sphere', 'decor': 'none', 'detect': 30},
+        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 3, 'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 30},
         'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
         'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
-        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70, 'speed': 0, 'damage': 15, 'scale': 1.5, 'model': 'diamond', 'decor': 'shards', 'detect': 30},
+        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70,  'speed': 0, 'damage': 15, 'scale': 1.5,  'model': 'diamond', 'decor': 'shards', 'detect': 30},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -708,11 +711,11 @@ class Enemy(Entity):
             return True
         self.death_timer -= dt
         progress = 1.0 - (self.death_timer / DEATH_ANIM_DURATION)
-        # Pop upward at start, then fall
-        if progress < 0.3:
-            pop_height = math.sin(progress / 0.3 * math.pi) * 1.5
+        # Pop upward at start, then fall — bigger initial pop for impact
+        if progress < 0.25:
+            pop_height = math.sin(progress / 0.25 * math.pi) * 2.0
         else:
-            pop_height = max(0, 1.5 * (1.0 - (progress - 0.3) / 0.7))
+            pop_height = max(0, 2.0 * (1.0 - (progress - 0.25) / 0.75))
         self.y = 1 + pop_height
         # Shrink with easing (fast start, slow end)
         ease_progress = 1.0 - (1.0 - progress) ** 2
@@ -2748,13 +2751,19 @@ def game_update():
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
 
         # Float enemies (except Nebula Phantom which controls its own Y)
+        # PERFORMANCE: skip bob animation for distant enemies (beyond visual cull range)
         if not enemy.is_nebula_phantom:
-            enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
+            if dist_to_player < VISUAL_CULL_RANGE:
+                enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
+            else:
+                enemy.y = 1  # Static position when culled
         # Update ground shadow position to follow enemy (world-space, on ground plane)
-        if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
-            enemy.ground_shadow.x = enemy.x
-            enemy.ground_shadow.z = enemy.z
-        enemy.update_hp_bar()
+        # PERFORMANCE: only update shadows/HP bars for nearby enemies
+        if dist_to_player < VISUAL_CULL_RANGE:
+            if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
+                enemy.ground_shadow.x = enemy.x
+                enemy.ground_shadow.z = enemy.z
+            enemy.update_hp_bar()
 
     # ── Update Projectiles ──
     for proj in game.projectiles[:]:
@@ -2957,6 +2966,8 @@ def game_update():
             # Start pop animation instead of immediate destroy
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
+            # Brief screen flash on pickup for satisfying feedback
+            game.screen_shake = max(game.screen_shake, 0.08)
 
     # ── Update Particles ──
     # Bug fix: must update the tuple in-place; Python tuple unpacking creates local copies
@@ -3006,12 +3017,12 @@ def game_update():
     fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
     target_fog_color = fog_info['color']
     target_fog_density = fog_info['density']
-    # Lerp fog toward target biome's settings
-    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * 2)
-    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * 2)
-    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 2)
+    # Lerp fog toward target biome's settings (faster transition for snappier atmosphere changes)
+    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * 3)
+    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * 3)
+    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 3)
     scene.fog_color = color.rgb(int(r), int(g), int(b))
-    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 2)
+    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 3)
 
     # ── Weather Effects ──
     game._update_weather(time.dt, p.position)
