@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.6.1"
+VERSION = "2.6.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -29,14 +29,14 @@ PLAYER_START_HP = 120
 SHOOT_COOLDOWN = 0.11               # Slightly snappier shooting feel
 COLLECT_RADIUS = 2.8                # More forgiving pickup radius
 COLLECT_PULL_RADIUS = 5.5           # Magnetic pull starts a bit further out
-COLLECT_PULL_SPEED = 14.0           # Items zip to you faster — more satisfying
+COLLECT_PULL_SPEED = 16.0           # Items zip to you faster — more satisfying snap
 PROJECTILE_BASE_DAMAGE = 20
 PROJECTILE_LEVEL_DAMAGE_BONUS = 2
 PROJECTILE_SPEED = 55
 PROJECTILE_LIFETIME = 2.0
 ENEMY_DETECT_RANGE = 32
-ENEMY_ATTACK_RANGE = 2.2            # Tighter melee range — fairer feel
-ENEMY_ATTACK_COOLDOWN = 1.1         # Slightly slower enemy attacks for readability
+ENEMY_ATTACK_RANGE = 2.0            # Tighter melee range — more dodge room for the player
+ENEMY_ATTACK_COOLDOWN = 1.2         # Slower enemy attacks — more readable patterns
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
@@ -48,25 +48,41 @@ ENEMY_WANDER_DIR_JITTER = 1.0
 # ─── Spawning ─────────────────────────────────────────────────────────────────
 MAX_ACTIVE_ENEMIES = 40
 MIN_COLLECTIBLES = 120
-COLLECTIBLE_RESPAWN_CHANCE = 0.015   # Slightly increased from 0.01 for better item availability
+COLLECTIBLE_RESPAWN_CHANCE = 0.02   # Slightly increased for better world population density
 ENEMY_SPAWN_INTERVAL = 10
 ENEMY_SPAWN_INTERVAL_LEVEL_DECAY = 0.5   # seconds faster per player level tier
 ENEMY_SPAWN_DISTANCE_MIN = 30
 ENEMY_SPAWN_DISTANCE_MAX = 60
-LOOT_DROP_MIN = 2
-LOOT_DROP_MAX = 4
+# ─── Loot Drop Scaling ─────────────────────────────────────────────────────
+# Stronger enemies drop more items — makes fighting tough enemies more rewarding
+ENEMY_LOOT_DROPS = {
+    'Slime Blob':          (1, 2),   # Easy: 1-2 items
+    'Space Beetle':        (1, 2),
+    'Swarm Mite':          (1, 2),
+    'Cosmic Leech':        (2, 3),   # Easy-mid: 2-3 items
+    'Phase Shifter':       (2, 3),
+    'Void Bomber':         (2, 3),
+    'Spore Spitter':       (2, 3),
+    'Void Wraith':         (2, 4),   # Mid: 2-4 items
+    'Nebula Phantom':      (2, 4),
+    'Void Stalker':        (2, 4),
+    'Lava Crawler':        (3, 5),   # Hard: 3-5 items
+    'Crystal Guardian':     (3, 5),
+    'Starburst Sentinel':  (3, 5),
+    'Plasma Drake':        (4, 6),   # Boss-tier: 4-6 items
+}
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
 SPAWN_SAFE_RADIUS = 15
 ENEMY_SPAWN_SAFE_RADIUS = 30
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-LEVEL_UP_HEAL_AMOUNT = 35              # More generous heal on level-up to reward progression
-LEVEL_UP_HP_BONUS = 10
-LEVEL_UP_SPEED_BONUS = 0.3
-XP_SCALE_FACTOR = 1.45   # Slightly reduced from 1.5 for smoother leveling progression
-BASE_KILL_XP = 25
-KILL_XP_HP_DIVISOR = 10
+LEVEL_UP_HEAL_AMOUNT = 40              # Generous heal — rewards survival and leveling up
+LEVEL_UP_HP_BONUS = 12                 # More HP per level — 120→132→144→... feels meaningful
+LEVEL_UP_SPEED_BONUS = 0.4             # Slightly more speed per level for better kite feel
+XP_SCALE_FACTOR = 1.40                 # Flatter XP curve — levels come faster in late game
+BASE_KILL_XP = 30                       # Higher base kill XP — kills feel rewarding earlier
+KILL_XP_HP_DIVISOR = 8                 # Tougher enemies give proportionally more XP
 
 # ─── Visual Effects ───────────────────────────────────────────────────────────
 DEATH_ANIM_DURATION = 0.5             # Slightly longer death for better readability
@@ -114,8 +130,8 @@ ENEMY_KNOCKBACK_FORCE = 4.0    # How far enemies get pushed on hit
 ENEMY_KNOCKBACK_UP = 2.0       # Upward component of knockback
 
 # ─── Collectible Pop ──────────────────────────────────────────────────────────
-COLLECT_POP_DURATION = 0.22    # Longer pop for more satisfying pickup feel
-COLLECT_POP_MAX_SCALE = 2.5    # Bigger overshoot — punchier visual feedback
+COLLECT_POP_DURATION = 0.18    # Tighter pop for snappier feedback
+COLLECT_POP_MAX_SCALE = 2.8    # Bigger overshoot — more dramatic punch
 
 # ─── Player-Level Difficulty Scaling ──────────────────────────────────────────
 PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
@@ -135,8 +151,8 @@ LEVEL_UP_COLOR_FLASH_DURATION = 0.5     # How long the player model flashes yell
 LEVEL_UP_SCREEN_SHAKE = 0.2             # Small screen shake on level-up for impact
 
 # ─── Death Screen ────────────────────────────────────────────────────────────
-DEATH_SCREEN_STATS_COLOR = color.white
-DEATH_SCREEN_TITLE_COLOR = color.red
+DEATH_SCREEN_TITLE_COLOR = color.rgb(255, 40, 40)    # Brighter red for more impact
+DEATH_SCREEN_STATS_COLOR = color.rgba(220, 220, 255, 255)  # Slightly blue-white for readability
 
 # ─── Stars ────────────────────────────────────────────────────────────────────
 STAR_COUNT = 80
@@ -184,8 +200,8 @@ HEALTH_POTION_HEAL = 55                 # More healing — 50 felt underwhelming
 
 # ─── Combo System ────────────────────────────────────────────────────────────
 COMBO_TIMEOUT = 4.5        # seconds before combo resets (tightened from 5.0 for more skillful chaining)
-COMBO_XP_BONUS_PER_TIER = 0.12  # +12% XP per combo tier (up from 10% for better reward)
-COMBO_SCORE_BONUS_PER_TIER = 0.06  # +6% score per combo tier (up from 5%)
+COMBO_XP_BONUS_PER_TIER = 0.15  # +15% XP per combo tier (up from 12% — rewards skillful chains)
+COMBO_SCORE_BONUS_PER_TIER = 0.08  # +8% score per combo tier (up from 6%)
 COMBO_DISPLAY_LIFETIME = 2.5
 
 # ─── Weapon Upgrade (Spread Shot) ────────────────────────────────────────────
@@ -225,8 +241,8 @@ KILL_FEED_MAX_ENTRIES = 5           # Maximum number of kill feed entries shown
 KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
-EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite', 'Cosmic Leech']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber', 'Starburst Sentinel', 'Void Stalker']
+EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber']
 HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
@@ -266,6 +282,8 @@ VOID_STALKER_DECLOAK_BURST_RANGE = 6   # Range at which stalker decloaks to atta
 CRIT_CHANCE = 0.15                      # 15% chance per projectile hit
 CRIT_DAMAGE_MULT = 2.0                  # Critical hits deal 2x damage
 CRIT_NUMBER_COLOR = color.rgb(255, 200, 0)  # Gold for crit numbers
+CRIT_SCREEN_SHAKE = 0.35               # Extra screen shake on critical hits
+CRIT_HIT_STOP_DURATION = 0.06          # Brief freeze on crit hits for satisfying impact
 
 # ─── Biome Indicator HUD ──────────────────────────────────────────────────
 BIOME_INDICATOR_POSITION = (0.72, 0.44)
@@ -617,20 +635,20 @@ class Enemy(Entity):
     """An enemy entity that chases the player when in detection range."""
 
     TYPES = {
-        'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
-        'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
-        'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
-        'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
-        'Crystal Guardian': {'color': color.cyan,         'hp': 200, 'speed': 2.5, 'damage': 40, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
-        'Plasma Drake':    {'color': color.magenta,       'hp': 400, 'speed': 7,  'damage': 50, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
-        'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 70,  'speed': 5,  'damage': 20, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
-        'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 90,  'speed': 3.5,'damage': 15, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
-        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 15,  'speed': 8,  'damage': 3, 'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 30},
-        'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 60,  'speed': 4,  'damage': 20, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 30},
-        'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
-        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70, 'speed': 0, 'damage': 15, 'scale': 1.5, 'model': 'diamond', 'decor': 'shards', 'detect': 30},
-        'Cosmic Leech':    {'color': color.rgb(80, 0, 80),          'hp': 35,  'speed': 6,  'damage': 5, 'scale': 0.7, 'model': 'sphere', 'decor': 'aura', 'detect': 25},
-        'Void Stalker':     {'color': color.rgb(40, 40, 60),        'hp': 60,  'speed': 7,  'damage': 18, 'scale': 1.1, 'model': 'diamond', 'decor': 'aura', 'detect': 35},
+        'Slime Blob':      {'color': color.lime,         'hp': 25,  'speed': 3,  'damage': 8,  'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
+        'Space Beetle':    {'color': color.brown,         'hp': 45,  'speed': 4.5,'damage': 12, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
+        'Void Wraith':     {'color': color.violet,        'hp': 70,  'speed': 4,  'damage': 22, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
+        'Lava Crawler':    {'color': color.orange,        'hp': 100, 'speed': 5.5,'damage': 28, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
+        'Crystal Guardian': {'color': color.cyan,         'hp': 180, 'speed': 2.2,'damage': 38, 'scale': 1.8,  'model': 'diamond', 'decor': 'shards'},
+        'Plasma Drake':    {'color': color.magenta,       'hp': 350, 'speed': 6.5,'damage': 45, 'scale': 2.2,  'model': 'diamond', 'decor': 'wings'},
+        'Phase Shifter':   {'color': color.rgba(180, 0, 255, 200), 'hp': 60,  'speed': 5,  'damage': 18, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura'},
+        'Spore Spitter':   {'color': color.rgb(200, 100, 0),       'hp': 80,  'speed': 3,  'damage': 12, 'scale': 1.4,  'model': 'sphere', 'decor': 'spikes'},
+        'Swarm Mite':      {'color': color.rgb(150, 200, 50),      'hp': 12,  'speed': 7,  'damage': 3,  'scale': 0.5,  'model': 'sphere', 'decor': 'none', 'detect': 28},
+        'Void Bomber':     {'color': color.rgb(80, 0, 40),        'hp': 50,  'speed': 3.5,'damage': 15, 'scale': 1.1,  'model': 'sphere', 'decor': 'spikes', 'detect': 28},
+        'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 90,  'speed': 5.5,'damage': 25, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 38},
+        'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 60,  'speed': 0, 'damage': 12, 'scale': 1.5,  'model': 'diamond', 'decor': 'shards', 'detect': 28},
+        'Cosmic Leech':    {'color': color.rgb(80, 0, 80),          'hp': 30,  'speed': 5.5,'damage': 4,  'scale': 0.7,  'model': 'sphere', 'decor': 'aura', 'detect': 22},
+        'Void Stalker':     {'color': color.rgb(40, 40, 60),        'hp': 55,  'speed': 6.5,'damage': 15, 'scale': 1.1,  'model': 'diamond', 'decor': 'aura', 'detect': 32},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -1187,10 +1205,19 @@ class DamageNumber:
     Tracks its own lifetime and handles cleanup.
     """
 
-    def __init__(self, position, amount, is_kill=False):
-        col = color.yellow if is_kill else color.white
-        text_str = str(amount) if not is_kill else f"{amount} KILL!"
-        scale_factor = 1.4 if is_kill else 1.0
+    def __init__(self, position, amount, is_kill=False, is_crit=False):
+        # Color: gold for crits, yellow for kills, white for normal hits
+        if is_crit and not is_kill:
+            col = CRIT_NUMBER_COLOR
+            text_str = f"★{amount}"
+        elif is_kill:
+            col = color.yellow
+            text_str = f"{amount} KILL!"
+        else:
+            col = color.white
+            text_str = str(amount)
+        # Scale: crits pop bigger than normal hits, kills pop biggest
+        scale_factor = 1.4 if is_kill else (1.25 if is_crit else 1.0)
 
         # 3D billboard quad as a glowing background dot behind the number
         self.bg_dot = Entity(
@@ -1213,6 +1240,7 @@ class DamageNumber:
         self.max_lifetime = DMG_NUMBER_LIFETIME
         self.world_pos = Vec3(position.x, position.y + 2.0, position.z)
         self.is_kill = is_kill
+        self.is_crit = is_crit
         self.alive = True
 
     def update(self, dt):
@@ -1232,6 +1260,8 @@ class DamageNumber:
         r, g, b = int(self.text_ent.color[0] * 255), int(self.text_ent.color[1] * 255), int(self.text_ent.color[2] * 255)
         if self.is_kill:
             self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
+        elif self.is_crit:
+            self.text_ent.color = color.rgba(255, 200, 0, int(255 * alpha))
         else:
             self.text_ent.color = color.rgba(255, 255, 255, int(255 * alpha))
         self.bg_dot.color = color.rgba(255, 255, 255, int(80 * alpha))
@@ -1772,21 +1802,56 @@ class Game:
                         )
                         self.crystal_entities.append(wall)
 
-    def _is_walkable(self, world_x, world_z):
-        """Check if a world position is on walkable terrain."""
+    def _is_walkable(self, world_x: float, world_z: float) -> bool:
+        """Check if a world position is on walkable terrain.
+
+        Args:
+            world_x: X coordinate in world space.
+            world_z: Z coordinate in world space.
+
+        Returns:
+            True if the tile at that position is walkable, False if out of bounds
+            or on an unwalkable biome (water/lava).
+        """
         tx = int(world_x / TILE_SCALE)
         tz = int(world_z / TILE_SCALE)
         if 0 <= tx < WORLD_SIZE and 0 <= tz < WORLD_SIZE:
             return self.world_grid[tz][tx] in WALKABLE
         return False  # Out of bounds is not walkable
 
-    def _get_biome_at(self, world_x, world_z):
-        """Return the biome name at a world position."""
+    def _get_biome_at(self, world_x: float, world_z: float) -> str:
+        """Return the biome name at a world position.
+
+        Args:
+            world_x: X coordinate in world space.
+            world_z: Z coordinate in world space.
+
+        Returns:
+            Biome name string (e.g. 'grass', 'lava', 'crystal').
+        """
         tx = int(world_x / TILE_SCALE)
         tz = int(world_z / TILE_SCALE)
         tx = max(0, min(tx, WORLD_SIZE - 1))
         tz = max(0, min(tz, WORLD_SIZE - 1))
         return self.world_grid[tz][tx]
+
+    @staticmethod
+    def _dist2d(a: 'Entity', b: 'Entity') -> float:
+        """Compute 2D (XZ-plane) distance between two entities.
+
+        Uses flat distance (ignores Y) since all ground-level gameplay
+        happens on the XZ plane. More readable than inline math.
+
+        Args:
+            a: First entity (must have .x and .z attributes).
+            b: Second entity (must have .x and .z attributes).
+
+        Returns:
+            Euclidean distance on the XZ plane.
+        """
+        dx = a.x - b.x
+        dz = a.z - b.z
+        return math.sqrt(dx * dx + dz * dz)
 
     def _show_death_screen(self, p):
         """Display the game over screen with detailed survival stats."""
@@ -1817,7 +1882,11 @@ class Game:
         self.game_over_restart.text = 'Press R to Restart'
 
     def _spawn_initial_entities(self):
-        """Populate the world with initial collectibles and enemies."""
+        """Populate the world with initial collectibles and enemies.
+
+        Spawns collectibles on walkable tiles away from the center safe zone,
+        and enemies scaled by distance from spawn for gradual difficulty.
+        """
         spawn_x = WORLD_SIZE // 2 * TILE_SCALE
         spawn_z = WORLD_SIZE // 2 * TILE_SCALE
 
@@ -1843,8 +1912,15 @@ class Game:
                     e = Enemy(position=Vec3(x, 1, z), enemy_type=enemy_type)
                     self.enemies.append(e)
 
-    def _pick_enemy_type(self, distance_from_spawn):
-        """Pick an enemy type based on distance from spawn (farther = harder)."""
+    def _pick_enemy_type(self, distance_from_spawn: float) -> str:
+        """Pick an enemy type based on distance from spawn (farther = harder).
+
+        Args:
+            distance_from_spawn: Distance in world units from the spawn point.
+
+        Returns:
+            Enemy type name string suitable for the difficulty tier.
+        """
         tier = min(int(distance_from_spawn / DIFFICULTY_SCALE_DISTANCE), 2)
         if tier == 0:
             return random.choice(EASY_ENEMY_TYPES)
@@ -1853,11 +1929,14 @@ class Game:
         else:
             return random.choice(HARD_ENEMY_TYPES)
 
-    def _scale_enemy_to_player_level(self, enemy):
+    def _scale_enemy_to_player_level(self, enemy: Enemy) -> None:
         """Scale enemy HP and damage based on player level for balanced difficulty.
 
         Higher-level players face tougher variants of the same enemy type,
         keeping early enemies relevant while making the game progressively harder.
+
+        Args:
+            enemy: The Enemy entity to scale (modified in-place).
         """
         p = self.player
         tier_above_base = max(0, (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL)
@@ -1868,8 +1947,12 @@ class Game:
             enemy.max_hp = enemy.hp
             enemy.damage = int(enemy.damage * dmg_mult)
 
-    def _assign_missions(self, count=1):
-        """Assign new random missions from templates."""
+    def _assign_missions(self, count: int = 1) -> None:
+        """Assign new random missions from templates.
+
+        Args:
+            count: Number of missions to assign.
+        """
         templates = list(MISSION_TEMPLATES)
         random.shuffle(templates)
         for template in templates[:count]:
@@ -1959,9 +2042,9 @@ class Game:
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
-        self.game_over_text = Text(text='', position=(0, 0.15), origin=(0, 0), scale=4, color=color.red, visible=False)
+        self.game_over_text = Text(text='', position=(0, 0.15), origin=(0, 0), scale=4, color=DEATH_SCREEN_TITLE_COLOR, visible=False)
         self.game_over_sub = Text(text='', position=(0, 0.05), origin=(0, 0), scale=2, color=color.white, visible=False)
-        self.game_over_stats = Text(text='', position=(0, -0.05), origin=(0, 0), scale=1.3, color=color.rgba(200, 200, 255, 255), visible=False)
+        self.game_over_stats = Text(text='', position=(0, -0.05), origin=(0, 0), scale=1.3, color=DEATH_SCREEN_STATS_COLOR, visible=False)
         self.game_over_restart = Text(text='', position=(0, -0.25), origin=(0, 0), scale=1.5, color=color.yellow, visible=False)
 
         # Level-up popup
@@ -3161,9 +3244,11 @@ def game_update():
                 if is_crit:
                     # Critical hit: extra particles and bigger shake
                     game._spawn_particles(enemy.position, color.rgb(255, 200, 0), count=PARTICLE_HIT_COUNT + 5)
-                    game.screen_shake = max(game.screen_shake, 0.3)
-                    game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
-                    # Extra flash on the enemy for crit
+                    game.screen_shake = max(game.screen_shake, CRIT_SCREEN_SHAKE)
+                    game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False, is_crit=True))
+                    # Brief hit-stop on crit for satisfying impact
+                    game.hit_stop_timer = max(game.hit_stop_timer, CRIT_HIT_STOP_DURATION)
+                    # Extra flash on the enemy for crit — yellow lingers slightly longer
                     enemy.color = color.yellow
                     invoke(setattr, enemy, 'color', enemy.original_color, delay=0.15)
                 else:
@@ -3193,7 +3278,10 @@ def game_update():
                     # Drop loot
                     # BUG FIX: loot drops now check walkability so collectibles don't
                     # spawn in unreachable water/lava tiles.
-                    for _ in range(random.randint(LOOT_DROP_MIN, LOOT_DROP_MAX)):
+                    # Drop loot — count scales with enemy toughness
+                    loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
+                    loot_count = random.randint(loot_range[0], loot_range[1])
+                    for _ in range(loot_count):
                         offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
                         drop_pos = enemy.position + offset
                         if game._is_walkable(drop_pos.x, drop_pos.z):
@@ -3306,10 +3394,13 @@ def game_update():
         pull_speed = COLLECT_PULL_SPEED * (MAGNET_PULL_SPEED_MULT if p.magnet_timer > 0 else 1.0)
         if dist < pull_radius and dist > 0.1:
             pull_dir = (p.position - col.position).normalized()
-            pull_strength = 1.0 - (dist / pull_radius)  # stronger when closer
+            # Acceleration curve: pull gets dramatically stronger as item approaches
+            # This creates a satisfying "snap" feel rather than a linear pull
+            closeness = 1.0 - (dist / pull_radius)  # 0 at edge, ~1 near center
+            pull_strength = closeness ** 0.6  # Exponential ramp — gentle start, snappy finish
             col.position += pull_dir * pull_speed * pull_strength * time.dt
-            # Spin faster as pulled
-            col.rotation_y += 200 * pull_strength * time.dt
+            # Spin faster as pulled — proportional to closeness
+            col.rotation_y += 200 * closeness * time.dt
         if dist < COLLECT_RADIUS:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
@@ -3404,12 +3495,12 @@ def game_update():
     fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
     target_fog_color = fog_info['color']
     target_fog_density = fog_info['density']
-    # Lerp fog toward target biome's settings (faster transition for snappier atmosphere changes)
-    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * 3)
-    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * 3)
-    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 3)
+    # Lerp fog toward target biome's settings (fast transition for snappier atmosphere changes)
+    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * 5)
+    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * 5)
+    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 5)
     scene.fog_color = color.rgb(int(r), int(g), int(b))
-    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 3)
+    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 5)
 
     # ── Weather Effects ──
     game._update_weather(time.dt, p.position)

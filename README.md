@@ -30,45 +30,46 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.6.1 — 3D!)
+## Features (v2.6.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
 - **13 collectible item types** — including **7 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, **Star Fruit** (walk on water/lava!)
 - **14 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!)
-- **Critical Hit system** — 15% chance per shot to deal 2x damage with golden particles and screen shake!
+- **Critical Hit system** — 15% chance per shot to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 5 seconds
 - **Speed Boost** — 1.8x speed for 6 seconds
-- **Health Potion** — restores 50 HP instantly
+- **Health Potion** — restores 55 HP instantly
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
 - **Star Fruit** — walk over water and lava for 6 seconds! Golden shimmer ring appears beneath you
-- **Combo system** — chain kills within 4 seconds for XP and score multipliers! Combo counter displayed on HUD with escalating colors
-- **Portal system** — 4 pairs of linked portals scattered across the world for fast travel! Step in to teleport to your partner portal with a 3s cooldown
-- **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items by pressing E near them
-- **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes, **toxic spore drift in Toxic Bog biomes**
+- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier
+- **Portal system** — 4 pairs of linked portals scattered across the world for fast travel!
+- **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items
+- **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes, toxic spore drift in Toxic Bog
 - **Biome indicator HUD** — shows your current biome name with color-matching text
-- Mission system with collection and kill objectives (14 missions!)
-- XP and leveling system (get stronger over time!)
+- Mission system with collection and kill objectives (16 missions!)
+- XP and leveling system (get stronger over time — +12 HP, +0.4 speed, and a heal per level!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
-- Minimap with player tracking
+- **Per-enemy loot drops** — tougher enemies drop more items! Plasma Drake drops 4–6 items, Slime Blobs drop 1–2
+- Minimap with player tracking and enemy dots
 - Enemy HP bars with green→yellow→red color gradient
-- 3D trees in forests, crystal spires in crystal biomes, **colorful alien mushrooms** in mushroom biomes
-- **Floating Islands biome** — raised platforms hovering above the ground with purple crystals and shadow projections
-- **Alien Ruins** — stone pillars and broken walls spawning in desert biomes
-- **Toxic Bog biome** — murky green terrain with bubbling toxic pools, twisted fungal stalks, and drifting toxic spores
-- Atmospheric fog and lighting with starfield sky
-- Smooth camera follow with screen shake on hits and kills
+- 3D trees in forests, crystal spires in crystal biomes, alien mushrooms in mushroom biomes
+- **Floating Islands biome** — raised platforms with purple crystals and shadow projections
+- **Alien Ruins** — stone pillars and broken walls in desert biomes
+- **Toxic Bog biome** — toxic pools, fungal stalks, and drifting spores
+- Atmospheric fog and lighting with nebula starfield sky
+- Smooth camera follow with screen shake on hits, kills, and crits
 - Enemy death animations (pop upward, shrink, flash, and dissolve)
 - Level-up flash effect and scale pulse
-- Satisfying collectible pickup burst particles
-- Magnetic item pull (items are drawn toward you when nearby)
+- Satisfying collectible pickup burst particles with magnetic pull snap
+- **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
-- Detailed death screen with survival stats
-- Distinct enemy shapes (spheres, cubes, diamonds) and decorations (wings, auras, spikes, shards)
+- Detailed death screen with survival stats (time, KPM, inventory breakdown)
+- Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
 - Enemy respawning and loot drops
 - Particle system for hits, kills, and pickups
@@ -133,7 +134,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Nebula Dust | 100 pts | Score only | Very Rare |
 | Cosmic Jelly | 200 pts | Score only | Legendary |
 | Plasma Core | 350 pts | Score only | Mythic |
-| **Health Potion** | 15 pts | Restores 50 HP | Uncommon |
+| **Health Potion** | 15 pts | Restores 55 HP | Common |
 | **Speed Boost** | 15 pts | 1.8x speed for 6s | Uncommon |
 | **Shield Crystal** | 15 pts | Blocks all damage for 5s | Rare |
 | **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
@@ -145,26 +146,26 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 
 | Enemy | HP | Speed | Damage | Special | Notes |
 |-------|----|-------|--------|---------|-------|
-| Slime Blob | 30 | Slow | 10 | — | Common, easy |
-| Swarm Mite | 15 | Very Fast | 5 | — | Tiny & fast, spawns in groups |
-| Space Beetle | 50 | Medium | 15 | — | Aggressive |
-| Phase Shifter | 70 | Medium | 20 | **Teleports** | Warps near player periodically |
-| **Starburst Sentinel** | 70 | Stationary | 15 | **Shockwave Rings** | Immobile turret that fires expanding energy rings |
-| **Void Bomber** | 60 | Medium | 20 | **Kamikaze!** | Explodes near player, also damages other enemies |
-| **Nebula Phantom** | 100 | Fast | 30 | **Orbit + Dive** | Circles player in the air, then dive-attacks! |
-| Void Wraith | 80 | Medium | 25 | — | Spooky |
-| Spore Spitter | 90 | Medium | 15 | **Shoots back** | Fires projectiles at player |
-| Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
-| Crystal Guardian | 200 | Slow | 40 | — | Tough |
-| **Cosmic Leech** | 35 | Fast | 5 | **Drain DoT** | Small & fast, applies damage-over-time |
-| **Void Stalker** | 60 | Fast | 18 | **Stealth Cloak** | Nearly invisible when cloaked, decloaks to ambush for 50% bonus damage |
-| Plasma Drake | 400 | Very Fast | 50 | — | Endgame boss |
+| Slime Blob | 25 | Slow | 8 | — | Common, easy |
+| Swarm Mite | 12 | Very Fast | 3 | — | Tiny & fast, spawns in groups |
+| Space Beetle | 45 | Medium | 12 | — | Aggressive |
+| Phase Shifter | 60 | Medium | 18 | **Teleports** | Warps near player periodically |
+| **Starburst Sentinel** | 60 | Stationary | 12 | **Shockwave Rings** | Immobile turret that fires expanding energy rings |
+| **Void Bomber** | 50 | Medium | 15 | **Kamikaze!** | Explodes near player, also damages other enemies |
+| **Nebula Phantom** | 90 | Fast | 25 | **Orbit + Dive** | Circles player in the air, then dive-attacks! |
+| Void Wraith | 70 | Medium | 22 | — | Spooky |
+| Spore Spitter | 80 | Slow | 12 | **Shoots back** | Fires projectiles at player |
+| **Cosmic Leech** | 30 | Fast | 4 | **Drain DoT** | Small & fast, applies damage-over-time |
+| **Void Stalker** | 55 | Fast | 15 | **Stealth Cloak** | Nearly invisible when cloaked, decloaks to ambush for 50% bonus damage |
+| Lava Crawler | 100 | Medium | 28 | — | Hot-headed |
+| Crystal Guardian | 180 | Slow | 38 | — | Tough |
+| Plasma Drake | 350 | Fast | 45 | — | Endgame boss |
 
 ## Combo System
 
 Chain kills within 4.5 seconds to build combos! Each combo tier grants:
-- **+12% XP bonus** per tier (up to 10 tiers)
-- **+6% score bonus** per tier (up to 10 tiers)
+- **+15% XP bonus** per tier (up to 10 tiers)
+- **+8% score bonus** per tier (up to 10 tiers)
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
 
