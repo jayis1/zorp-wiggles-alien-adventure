@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.6.2"
+VERSION = "2.7.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -70,6 +70,7 @@ ENEMY_LOOT_DROPS = {
     'Crystal Guardian':     (3, 5),
     'Starburst Sentinel':  (3, 5),
     'Plasma Drake':        (4, 6),   # Boss-tier: 4-6 items
+    'Plasma Serpent':      (3, 5),   # Mid-hard: head splits into segments
 }
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
@@ -243,7 +244,7 @@ KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
 MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
@@ -277,6 +278,28 @@ VOID_STALKER_CLOAK_SPEED = 4.0        # Seconds cloaked before decloaking
 VOID_STALKER_DECLOAK_SPEED = 2.0       # Seconds decloaked before re-cloaking
 VOID_STALKER_AMBUSH_DAMAGE_MULT = 1.5  # 50% bonus damage on ambush hit from stealth
 VOID_STALKER_DECLOAK_BURST_RANGE = 6   # Range at which stalker decloaks to attack
+
+# ─── Plasma Serpent (New Enemy) ──────────────────────────────────────────
+PLASMA_SERPENT_SEGMENTS = 4          # Number of body segments (not counting head)
+PLASMA_SERPENT_SEGMENT_SPACING = 1.8  # Distance between segments
+PLASMA_SERPENT_SCATTER_HP = 8        # HP of each scattered segment after head dies
+PLASMA_SERPENT_SCATTER_DAMAGE = 4    # Damage of scattered segments
+PLASMA_SERPENT_SCATTER_SPEED = 6    # Speed of scattered segments
+
+# ─── XP Orb (New Collectible) ────────────────────────────────────────────
+XP_ORB_BASE_XP = 50                  # Base XP granted by an XP Orb
+XP_ORB_DISTANCE_BONUS = 2            # Bonus XP per 50 world units from spawn center
+XP_ORB_MAX_XP = 300                  # Cap on XP Orb value
+
+# ─── Alien Monolith (World Feature) ──────────────────────────────────────
+MONOLITH_SPAWN_CHANCE_CRYSTAL = 0.06  # Chance per crystal tile to have a monolith
+MONOLITH_SPAWN_CHANCE_SNOW = 0.04     # Chance per snow tile to have a monolith
+MONOLITH_BUFF_DURATION = 10.0        # Duration of monolith buffs
+MONOLITH_COOLDOWN = 45.0             # Seconds before a monolith can activate again
+MONOLITH_ACTIVATE_RANGE = 4.5        # How close the player must be to activate
+MONOLITH_SPEED_MULT = 1.5            # Speed buff multiplier from monolith
+MONOLITH_DAMAGE_MULT = 1.4           # Damage buff multiplier from monolith
+MONOLITH_XP_MULT = 2.0               # XP multiplier from monolith
 
 # ─── Critical Hit System ──────────────────────────────────────────────────
 CRIT_CHANCE = 0.15                      # 15% chance per projectile hit
@@ -328,6 +351,7 @@ COLLECTIBLE_WEIGHTS = {
     'Plasma Core':    3,    # Mythic
     'Time Warp':      5,    # Rare — slows all enemies to 30% speed
     'Star Fruit':     6,    # Uncommon — walk over water/lava
+    'XP Orb':         6,    # Uncommon — grants bonus XP scaled by distance
 }
 
 # ─── Collectible Rarity Tiers ────────────────────────────────────────────────
@@ -345,6 +369,7 @@ RARITY_TIER = {
     'Time Warp':      'rare',
     'Nebula Dust':    'very_rare',
     'Star Fruit':     'uncommon',
+    'XP Orb':         'uncommon',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
 }
@@ -505,6 +530,11 @@ class Player(Entity):
         self.float_timer = 0  # Star Fruit float over water/lava
         self.drain_timer = 0   # Cosmic Leech drain DoT timer
 
+        # Monolith buff timers
+        self.monolith_speed_timer = 0.0    # Speed buff from monolith
+        self.monolith_damage_timer = 0.0   # Damage buff from monolith
+        self.monolith_xp_timer = 0.0       # XP multiplier buff from monolith
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -649,6 +679,7 @@ class Enemy(Entity):
         'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 60,  'speed': 0, 'damage': 12, 'scale': 1.5,  'model': 'diamond', 'decor': 'shards', 'detect': 28},
         'Cosmic Leech':    {'color': color.rgb(80, 0, 80),          'hp': 30,  'speed': 5.5,'damage': 4,  'scale': 0.7,  'model': 'sphere', 'decor': 'aura', 'detect': 22},
         'Void Stalker':     {'color': color.rgb(40, 40, 60),        'hp': 55,  'speed': 6.5,'damage': 15, 'scale': 1.1,  'model': 'diamond', 'decor': 'aura', 'detect': 32},
+        'Plasma Serpent':   {'color': color.rgb(0, 255, 200),       'hp': 120, 'speed': 3.5,'damage': 20, 'scale': 1.0,  'model': 'sphere', 'decor': 'aura', 'detect': 34},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -714,6 +745,29 @@ class Enemy(Entity):
         self.cloak_state = 'cloaked' if self.is_void_stalker else None  # 'cloaked' or 'decloaked'
         self.cloak_timer = random.uniform(2, VOID_STALKER_CLOAK_SPEED) if self.is_void_stalker else 0
         self.ambush_hit = False  # Whether the first hit from stealth has been delivered
+
+        # Plasma Serpent: segmented snake that splits into mini-enemies on death
+        self.is_plasma_serpent = (enemy_type == 'Plasma Serpent')
+        self.segment_entities = []  # Visual segment entities (for rendering only)
+        self.segment_positions = []  # Position history for segment following
+        if self.is_plasma_serpent:
+            # Initialize position history for smooth following
+            for i in range(PLASMA_SERPENT_SEGMENTS + 1):
+                self.segment_positions.append(Vec3(position.x, 1, position.z))
+            # Create visual segment entities
+            for i in range(PLASMA_SERPENT_SEGMENTS):
+                seg_scale = max(0.3, self.original_scale * 0.8 - i * 0.12)
+                seg_color_choices = [color.rgb(0, 220, 180), color.rgb(0, 200, 160), color.rgb(0, 180, 140)]
+                seg = Entity(
+                    model='sphere',
+                    color=seg_color_choices[i % len(seg_color_choices)],
+                    scale=seg_scale,
+                    position=position,
+                    collider=None,  # Segments are visual only — no independent collision
+                )
+                seg_eye_l = Entity(model='sphere', color=color.cyan, scale=0.15, parent=seg, position=(-0.15, 0.15, -0.3))
+                seg_eye_r = Entity(model='sphere', color=color.cyan, scale=0.15, parent=seg, position=(0.15, 0.15, -0.3))
+                self.segment_entities.append(seg)
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -880,6 +934,7 @@ class Collectible(Entity):
         'Magnet Core':    {'color': color.rgb(200, 50, 255),'value': 20,  'model': 'sphere'},
         'Time Warp':      {'color': color.rgb(150, 220, 255),'value': 25,  'model': 'diamond'},
         'Star Fruit':     {'color': color.rgb(255, 255, 100), 'value': 20,  'model': 'diamond'},
+        'XP Orb':         {'color': color.rgb(100, 200, 255), 'value': 25,  'model': 'sphere'},
     }
 
     def __init__(self, position, item_type=None):
@@ -1041,6 +1096,124 @@ class Portal:
         destroy(self.ground_glow)
         for p in self.pillars:
             destroy(p)
+
+
+# ─── Alien Monolith (World Feature) ──────────────────────────────────────────
+class AlienMonolith:
+    """A mysterious ancient structure that grants temporary buffs when activated.
+
+    Monoliths are found in crystal and snow biomes. When the player approaches
+    within range, the monolith activates and randomly grants one of three buffs:
+    - Speed Surge: 1.5x movement speed for 10 seconds
+    - Power Surge: 1.4x projectile damage for 10 seconds
+    - Wisdom Aura: 2x XP gain for 10 seconds
+
+    After activation, a monolith enters a cooldown period before it can be used again.
+    """
+
+    BUFF_TYPES = ['speed', 'damage', 'xp']
+    BUFF_NAMES = {
+        'speed': 'Speed Surge',
+        'damage': 'Power Surge',
+        'xp': 'Wisdom Aura',
+    }
+    BUFF_COLORS = {
+        'speed': color.rgb(50, 255, 50),
+        'damage': color.rgb(255, 100, 50),
+        'xp': color.rgb(100, 200, 255),
+    }
+
+    def __init__(self, position):
+        self.position = position
+        self.cooldown = 0.0  # Seconds until next activation
+        self.bob_offset = random.uniform(0, math.pi * 2)
+        self.active_buff = None  # Which buff is currently glowing
+        self.glow_phase = random.uniform(0, math.pi * 2)
+
+        # Main monolith body — tall, thin, ancient-looking structure
+        self.body = Entity(
+            model='cube',
+            color=color.rgb(80, 60, 120),
+            position=position + Vec3(0, 3, 0),
+            scale=(0.8, 6, 0.8),
+        )
+
+        # Top crystal cap — glows and pulses when active
+        self.cap = Entity(
+            model='diamond',
+            color=color.rgb(150, 100, 255),
+            position=position + Vec3(0, 6.5, 0),
+            scale=1.2,
+        )
+
+        # Floating ring around the monolith — rotates and changes color with buff
+        self.ring = Entity(
+            model='quad',
+            color=color.rgba(150, 100, 255, 80),
+            position=position + Vec3(0, 4, 0),
+            scale=3.0,
+            rotation_x=90,
+        )
+
+        # Ground glow disc
+        self.ground_glow = Entity(
+            model='quad',
+            color=color.rgba(150, 100, 255, 30),
+            position=position + Vec3(0, 0.1, 0),
+            scale=4.0,
+            rotation_x=90,
+        )
+
+        # Side rune panels — decorative markings
+        for angle_deg in [0, 90, 180, 270]:
+            rad = math.radians(angle_deg)
+            rune = Entity(
+                model='quad',
+                color=color.rgb(180, 140, 220),
+                position=position + Vec3(math.cos(rad) * 0.5, 3, math.sin(rad) * 0.5),
+                scale=(0.6, 2.5),
+                rotation_y=angle_deg,
+            )
+
+    def animate(self, t):
+        """Animate monolith: pulse glow, rotate ring, update cooldown."""
+        # Pulse the cap crystal
+        pulse = 0.8 + 0.4 * math.sin(t * 3 + self.glow_phase)
+        self.cap.scale = pulse
+
+        # Rotate ring
+        self.ring.rotation_y += 90 * time.dt if hasattr(self, 'ring') else 0
+
+        # If on cooldown, dim everything; otherwise, vibrant glow
+        if self.cooldown > 0:
+            self.cooldown -= time.dt if hasattr(self, 'cooldown') else 0
+            # Dimmed state — gray and dormant
+            dim_alpha = int(40 + 20 * math.sin(t * 2))
+            self.cap.color = color.rgb(80, 60, 100)
+            self.ring.color = color.rgba(80, 60, 100, dim_alpha)
+            self.ground_glow.color = color.rgba(80, 60, 100, 15)
+            self.body.color = color.rgb(60, 45, 80)
+        else:
+            # Active state — glowing based on last buff or default purple
+            if self.active_buff:
+                bc = self.BUFF_COLORS.get(self.active_buff, color.rgb(150, 100, 255))
+                glow_a = int(100 + 50 * math.sin(t * 4))
+                self.cap.color = bc
+                self.ring.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), glow_a)
+                self.ground_glow.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), 40)
+            else:
+                bright_a = int(80 + 40 * math.sin(t * 3))
+                self.cap.color = color.rgb(180, 140, 255)
+                self.ring.color = color.rgba(150, 100, 255, bright_a)
+                self.ground_glow.color = color.rgba(150, 100, 255, 30)
+                self.body.color = color.rgb(80, 60, 120)
+
+    def destroy_all(self):
+        """Clean up all monolith entities."""
+        destroy(self.body)
+        destroy(self.cap)
+        destroy(self.ring)
+        destroy(self.ground_glow)
 
 
 # ─── Wandering Trader (NPC) ──────────────────────────────────────────────────
@@ -1327,6 +1500,7 @@ class Game:
         self.shockwave_rings = []  # Starburst Sentinel shockwave rings
         self.portals = []          # Portal pairs for fast travel
         self.traders = []          # Wandering Trader NPCs
+        self.monoliths = []        # Alien Monoliths — world structures granting buffs
         self.trader_spawn_timer = TRADER_RESPAWN_TIME / 2  # Initial spawn delay
         self.time_warp_timer = 0   # Time Warp slow-mo for enemies
         self.missions = []
@@ -1373,6 +1547,7 @@ class Game:
         self._spawn_initial_entities()
         self._spawn_portals()
         self._spawn_initial_traders()
+        self._spawn_monoliths()
         self._assign_missions(count=3)
 
         # Lighting
@@ -1464,6 +1639,14 @@ class Game:
             if e and e.enabled:
                 for d in e.decor_entities:
                     destroy(d)
+                # Clean up Plasma Serpent segments if present
+                if hasattr(e, 'segment_entities') and e.segment_entities:
+                    for seg in e.segment_entities:
+                        for child in seg.children:
+                            if hasattr(child, 'enabled') and child.enabled:
+                                destroy(child)
+                        destroy(seg)
+                    e.segment_entities.clear()
                 destroy(e.eye_l)
                 destroy(e.eye_r)
                 destroy(e.hp_bar_bg)
@@ -1531,6 +1714,11 @@ class Game:
                 destroy(trader)
         self.traders.clear()
 
+        # Destroy monoliths
+        for monolith in self.monoliths:
+            monolith.destroy_all()
+        self.monoliths.clear()
+
         # Destroy terrain and decoration entities
         for t in self.terrain_entities:
             if t and t.enabled:
@@ -1565,6 +1753,8 @@ class Game:
                 destroy(self.player.ground_shadow)
             if hasattr(self.player, 'float_ring') and self.player.float_ring is not None:
                 destroy(self.player.float_ring)
+            if hasattr(self.player, 'monolith_ring') and self.player.monolith_ring is not None:
+                destroy(self.player.monolith_ring)
             destroy(self.player)
         # Player's children cascade-destroy: tentacles, eyes, pupils, shield_visual
 
@@ -2007,6 +2197,34 @@ class Game:
                     trader = Trader(position=Vec3(tx, 1, tz))
                     self.traders.append(trader)
                     break
+
+    def _spawn_monoliths(self):
+        """Spawn Alien Monoliths in crystal and snow biomes.
+
+        Monoliths are tall ancient structures that grant random buffs when the
+        player approaches within range. They appear more frequently in crystal
+        biomes and less in snow biomes for risk/reward balance.
+        """
+        spawn_center = WORLD_SIZE // 2 * TILE_SCALE
+        for gx in range(WORLD_SIZE):
+            for gz in range(WORLD_SIZE):
+                biome = self.biome_map[gx][gz]
+                # Crystal biomes have higher monolith spawn rate
+                if biome == 'crystal' and random.random() < MONOLITH_SPAWN_CHANCE_CRYSTAL:
+                    wx = gx * TILE_SCALE
+                    wz = gz * TILE_SCALE
+                    # Don't place too close to spawn
+                    dist_from_spawn = math.sqrt((wx - spawn_center) ** 2 + (wz - spawn_center) ** 2)
+                    if dist_from_spawn > 60 and self._is_walkable(wx, wz):
+                        monolith = AlienMonolith(position=Vec3(wx, 0, wz))
+                        self.monoliths.append(monolith)
+                elif biome == 'snow' and random.random() < MONOLITH_SPAWN_CHANCE_SNOW:
+                    wx = gx * TILE_SCALE
+                    wz = gz * TILE_SCALE
+                    dist_from_spawn = math.sqrt((wx - spawn_center) ** 2 + (wz - spawn_center) ** 2)
+                    if dist_from_spawn > 60 and self._is_walkable(wx, wz):
+                        monolith = AlienMonolith(position=Vec3(wx, 0, wz))
+                        self.monoliths.append(monolith)
 
     def add_message(self, msg):
         """Add a timed message to the HUD message queue."""
@@ -2457,6 +2675,14 @@ class Game:
             pu_lines.append(f'MAGNET: {p.magnet_timer:.1f}s')
         if self.time_warp_timer > 0:
             pu_lines.append(f'TIME WARP: {self.time_warp_timer:.1f}s')
+        if p.float_timer > 0:
+            pu_lines.append(f'STAR FRUIT: {p.float_timer:.1f}s')
+        if p.monolith_speed_timer > 0:
+            pu_lines.append(f'SPEED SURGE: {p.monolith_speed_timer:.1f}s')
+        if p.monolith_damage_timer > 0:
+            pu_lines.append(f'POWER SURGE: {p.monolith_damage_timer:.1f}s')
+        if p.monolith_xp_timer > 0:
+            pu_lines.append(f'WISDOM AURA: {p.monolith_xp_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
@@ -2682,6 +2908,9 @@ def game_update():
     if p.speed_boost_timer > 0:
         effective_speed *= SPEED_BOOST_MULTIPLIER
         p.speed_boost_timer -= time.dt
+    # Apply monolith speed buff
+    if p.monolith_speed_timer > 0:
+        effective_speed *= MONOLITH_SPEED_MULT
 
     # ── Dash Ability ──
     if p.dash_cooldown > 0:
@@ -2737,6 +2966,33 @@ def game_update():
         if hasattr(p, 'float_ring') and p.float_ring is not None:
             destroy(p.float_ring)
             p.float_ring = None
+
+    # Monolith buff visual — colored ring around player when any monolith buff is active
+    if p.monolith_speed_timer > 0 or p.monolith_damage_timer > 0 or p.monolith_xp_timer > 0:
+        if not hasattr(p, 'monolith_ring') or p.monolith_ring is None:
+            p.monolith_ring = Entity(
+                model='quad',
+                color=color.rgba(150, 100, 255, 60),
+                scale=2.2,
+                position=(p.x, 0.05, p.z),
+                rotation_x=90,
+            )
+        p.monolith_ring.visible = True
+        p.monolith_ring.position = (p.x, 0.05, p.z)
+        # Color based on which buff is active (priority: damage > speed > xp)
+        if p.monolith_damage_timer > 0:
+            ring_r, ring_g, ring_b = 255, 100, 50
+        elif p.monolith_speed_timer > 0:
+            ring_r, ring_g, ring_b = 50, 255, 50
+        else:
+            ring_r, ring_g, ring_b = 100, 200, 255
+        pulse_alpha = int(60 + 40 * math.sin(game.t * 5))
+        p.monolith_ring.color = color.rgba(ring_r, ring_g, ring_b, pulse_alpha)
+        p.monolith_ring.scale = 2.2 + math.sin(game.t * 4) * 0.3
+    else:
+        if hasattr(p, 'monolith_ring') and p.monolith_ring is not None:
+            destroy(p.monolith_ring)
+            p.monolith_ring = None
 
     # Weapon upgrade timer
     if p.weapon_upgrade_timer > 0:
@@ -2876,6 +3132,14 @@ def game_update():
                 # Death animation complete, remove enemy
                 for d in enemy.decor_entities:
                     destroy(d)
+                # Clean up Plasma Serpent segments if present
+                if hasattr(enemy, 'segment_entities') and enemy.segment_entities:
+                    for seg in enemy.segment_entities:
+                        for child in seg.children:
+                            if hasattr(child, 'enabled') and child.enabled:
+                                destroy(child)
+                        destroy(seg)
+                    enemy.segment_entities.clear()
                 destroy(enemy)
                 destroy(enemy.eye_l)
                 destroy(enemy.eye_r)
@@ -2896,6 +3160,14 @@ def game_update():
         if not enemy.alive:
             for d in enemy.decor_entities:
                 destroy(d)
+            # Clean up Plasma Serpent segments if present
+            if hasattr(enemy, 'segment_entities') and enemy.segment_entities:
+                for seg in enemy.segment_entities:
+                    for child in seg.children:
+                        if hasattr(child, 'enabled') and child.enabled:
+                            destroy(child)
+                    destroy(seg)
+                enemy.segment_entities.clear()
             destroy(enemy)
             destroy(enemy.eye_l)
             destroy(enemy.eye_r)
@@ -3158,6 +3430,22 @@ def game_update():
                         enemy.cloak_state = 'cloaked'
                         enemy.cloak_timer = random.uniform(2, VOID_STALKER_CLOAK_SPEED)
                         game._spawn_particles(enemy.position, color.rgba(40, 40, 60, 150), count=6)
+
+            # ── Plasma Serpent: Segmented snake that follows the head smoothly ──
+            if enemy.is_plasma_serpent and enemy.alive and not enemy.dying:
+                # Update position history: shift and push head position
+                if len(enemy.segment_positions) > 0:
+                    enemy.segment_positions.pop(0)
+                    enemy.segment_positions.append(Vec3(enemy.x, enemy.y, enemy.z))
+                # Move each segment entity to follow the history
+                for i, seg in enumerate(enemy.segment_entities):
+                    if i + 1 < len(enemy.segment_positions):
+                        target = enemy.segment_positions[i + 1]
+                        seg.x = lerp(seg.x, target.x, time.dt * 10)
+                        seg.z = lerp(seg.z, target.z, time.dt * 10)
+                        seg.y = 1 + math.sin(game.t * 2.5 + i * 0.8) * 0.15
+                # Sinuous movement: add a lateral sway to the serpent's chase
+                sway = math.sin(game.t * 4 + id(enemy) % 100) * 0.3
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -3238,6 +3526,9 @@ def game_update():
                 # Critical hit system: 15% chance for 2x damage
                 is_crit = random.random() < CRIT_CHANCE
                 damage = int(proj.damage * CRIT_DAMAGE_MULT) if is_crit else proj.damage
+                # Apply monolith damage buff
+                if p.monolith_damage_timer > 0:
+                    damage = int(damage * MONOLITH_DAMAGE_MULT)
                 # Pass projectile direction for knockback
                 hit_dir = proj.direction
                 killed = enemy.take_damage(damage, hit_direction=hit_dir)
@@ -3266,7 +3557,9 @@ def game_update():
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
                     combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
-                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult)
+                    # Apply monolith XP multiplier buff
+                    monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                     p.gain_xp(xp_gain)
                     p.score += int(enemy.max_hp * combo_score_mult)
                     game.screen_shake = SCREEN_SHAKE_KILL
@@ -3291,6 +3584,31 @@ def game_update():
                     game.add_message(f"Defeated {enemy.name}!")
                     # Add to kill feed
                     game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                    # ── Plasma Serpent: Split into mini-enemies on death ──
+                    if enemy.is_plasma_serpent:
+                        game.add_message("Plasma Serpent splits!")
+                        game._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
+                        game.screen_shake = max(game.screen_shake, 0.5)
+                        for seg in enemy.segment_entities:
+                            # Spawn a mini serpent segment as an independent enemy
+                            seg_pos = Vec3(seg.x, 1, seg.z)
+                            if game._is_walkable(seg_pos.x, seg_pos.z):
+                                mini = Enemy(position=seg_pos, enemy_type='Swarm Mite')
+                                mini.hp = PLASMA_SERPENT_SCATTER_HP
+                                mini.max_hp = PLASMA_SERPENT_SCATTER_HP
+                                mini.damage = PLASMA_SERPENT_SCATTER_DAMAGE
+                                mini.speed = PLASMA_SERPENT_SCATTER_SPEED
+                                mini.original_color = color.rgb(0, 200, 160)
+                                mini.color = color.rgb(0, 200, 160)
+                                game._scale_enemy_to_player_level(mini)
+                                game.enemies.append(mini)
+                        # Destroy segment visual entities since they've been replaced by real enemies
+                        for seg in enemy.segment_entities:
+                            for child in seg.children:
+                                if hasattr(child, 'enabled') and child.enabled:
+                                    destroy(child)
+                            destroy(seg)
+                        enemy.segment_entities.clear()
                 break
 
         # Remove if out of world
@@ -3431,6 +3749,19 @@ def game_update():
                 p.float_timer = STAR_FRUIT_FLOAT_DURATION
                 game.add_message(f"Star Fruit! Walk over water/lava for {STAR_FRUIT_FLOAT_DURATION:.0f}s!")
                 game._spawn_particles(col.position, color.rgb(255, 255, 100), count=15)
+            elif col.name == 'XP Orb':
+                # XP Orb grants bonus XP that scales with distance from spawn center
+                spawn_center = WORLD_SIZE // 2 * TILE_SCALE
+                dist_from_spawn = math.sqrt((p.x - spawn_center) ** 2 + (p.z - spawn_center) ** 2)
+                xp_bonus = min(XP_ORB_MAX_XP, XP_ORB_BASE_XP + int(dist_from_spawn / 50) * XP_ORB_DISTANCE_BONUS)
+                # Apply monolith XP multiplier if active
+                xp_mult = MONOLITH_XP_MULT if hasattr(p, 'monolith_xp_timer') and p.monolith_xp_timer > 0 else 1.0
+                xp_gain = int(xp_bonus * xp_mult)
+                p.gain_xp(xp_gain)
+                game.add_message(f"XP Orb! +{xp_gain} XP!")
+                game._spawn_particles(col.position, color.rgb(100, 200, 255), count=18)
+                game.damage_numbers.append(DamageNumber(p.position, xp_gain, is_kill=False))
+                game.screen_shake = max(game.screen_shake, 0.15)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -3438,7 +3769,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
             # Start pop animation instead of immediate destroy
@@ -3641,6 +3972,40 @@ def game_update():
             trader = Trader(position=Vec3(tx, 1, tz))
             game.traders.append(trader)
             game.add_message(f"A wandering trader ({trader.trader_name}) has appeared!")
+
+    # ── Monolith Animation & Activation ──
+    for monolith in game.monoliths:
+        monolith.animate(game.t)
+        # Check if player is within activation range
+        dist_to_monolith = math.sqrt((monolith.position.x - p.x) ** 2 + (monolith.position.z - p.z) ** 2)
+        if dist_to_monolith < MONOLITH_ACTIVATE_RANGE and monolith.cooldown <= 0:
+            # Activate! Grant a random buff
+            buff_type = random.choice(AlienMonolith.BUFF_TYPES)
+            buff_name = AlienMonolith.BUFF_NAMES[buff_type]
+            buff_color = AlienMonolith.BUFF_COLORS[buff_type]
+            monolith.active_buff = buff_type
+            monolith.cooldown = MONOLITH_COOLDOWN
+            if buff_type == 'speed':
+                p.monolith_speed_timer = MONOLITH_BUFF_DURATION
+                game.add_message(f"Monolith: {buff_name}! {MONOLITH_SPEED_MULT}x speed for {MONOLITH_BUFF_DURATION:.0f}s!")
+            elif buff_type == 'damage':
+                p.monolith_damage_timer = MONOLITH_BUFF_DURATION
+                game.add_message(f"Monolith: {buff_name}! {MONOLITH_DAMAGE_MULT}x damage for {MONOLITH_BUFF_DURATION:.0f}s!")
+            elif buff_type == 'xp':
+                p.monolith_xp_timer = MONOLITH_BUFF_DURATION
+                game.add_message(f"Monolith: {buff_name}! {MONOLITH_XP_MULT}x XP for {MONOLITH_BUFF_DURATION:.0f}s!")
+            game._spawn_particles(monolith.position + Vec3(0, 3, 0), buff_color, count=20)
+            game.screen_shake = max(game.screen_shake, 0.25)
+            # Flash the monolith body with the buff color
+            monolith.body.color = buff_color
+
+    # ── Update monolith buff timers on player ──
+    if p.monolith_speed_timer > 0:
+        p.monolith_speed_timer -= time.dt
+    if p.monolith_damage_timer > 0:
+        p.monolith_damage_timer -= time.dt
+    if p.monolith_xp_timer > 0:
+        p.monolith_xp_timer -= time.dt
 
     # ── Time Warp visual effect on enemies ──
     if game.time_warp_timer > 0:

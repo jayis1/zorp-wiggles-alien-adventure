@@ -30,12 +30,12 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.6.2 — 3D!)
+## Features (v2.7.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
-- **13 collectible item types** — including **7 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, **Star Fruit** (walk on water/lava!)
-- **14 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!)
+- **14 collectible item types** — including **8 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), **XP Orb** (bonus XP scaled by distance!)
+- **15 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!)
 - **Critical Hit system** — 15% chance per shot to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
@@ -46,9 +46,11 @@ python game.py
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
 - **Star Fruit** — walk over water and lava for 6 seconds! Golden shimmer ring appears beneath you
+- **XP Orb** — grants bonus XP that scales with distance from spawn! Up to 300 XP in distant regions
 - **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel!
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items
+- **Alien Monoliths** — mysterious ancient structures in crystal and snow biomes that grant random buffs when approached! Speed Surge (1.5x speed), Power Surge (1.4x damage), or Wisdom Aura (2x XP) for 10 seconds
 - **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes, toxic spore drift in Toxic Bog
 - **Biome indicator HUD** — shows your current biome name with color-matching text
 - Mission system with collection and kill objectives (16 missions!)
@@ -61,6 +63,7 @@ python game.py
 - **Floating Islands biome** — raised platforms with purple crystals and shadow projections
 - **Alien Ruins** — stone pillars and broken walls in desert biomes
 - **Toxic Bog biome** — toxic pools, fungal stalks, and drifting spores
+- **Alien Monoliths** — tall ancient crystal-topped structures in crystal and snow biomes that activate when you approach, granting random temporary buffs with visual feedback
 - Atmospheric fog and lighting with nebula starfield sky
 - Smooth camera follow with screen shake on hits, kills, and crits
 - Enemy death animations (pop upward, shrink, flash, and dissolve)
@@ -74,7 +77,7 @@ python game.py
 - Enemy respawning and loot drops
 - Particle system for hits, kills, and pickups
 - Dash cooldown indicator on HUD
-- Active power-up timers displayed on HUD
+- Active power-up timers displayed on HUD (including monolith buff timers)
 - **Hit-stop freeze frames** on kills for satisfying impact
 - **Collectible pop animation** — items scale up and spin before disappearing
 - **Biome-aware fog** — fog color and density smoothly transition as you walk between biomes
@@ -98,6 +101,8 @@ python game.py
 - **Cosmic Leech enemy** — small, fast enemy that applies a damage-over-time drain debuff on contact (shown as purple flash on player)
 - **Drain DoT system** — Cosmic Leech's drain deals damage over time for 4 seconds; blocked by Shield
 - **Void Stalker enemy** — stealth predator that cloaks (nearly invisible) and decloaks to ambush! First hit from stealth deals 50% bonus damage
+- **Plasma Serpent enemy** — segmented snake-like creature with 4 body segments that smoothly follow the head. When killed, each segment scatters into a Swarm Mite! Screen shake and particle burst on split
+- **XP Orb collectible** — golden-blue glowing orbs that grant bonus XP scaling with distance from spawn (50–300 XP). Perfect for risk/reward exploration!
 
 ## The Self-Improving Game
 
@@ -117,8 +122,8 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Water | Blue | No | Blocks movement |
 | Lava | Red | No | Blocks movement, rising ember particles |
 | Forest | Dark Green | Yes | 3D trees, rain weather |
-| Crystal | Cyan | Yes | Crystal spires |
-| Snow | White | Yes | Icy terrain, snowfall weather |
+| Crystal | Cyan | Yes | Crystal spires, **alien monoliths** |
+| Snow | White | Yes | Icy terrain, snowfall weather, **alien monoliths** |
 | Swamp | Murky Green | Yes | Squishy ground, rain weather |
 | Mushroom | Alien Green | Yes | Colorful alien mushrooms with spore glow |
 | **Floating Islands** | Lavender | Yes | Raised platforms with purple crystals and ground shadows |
@@ -141,6 +146,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Magnet Core** | 20 pts | 2.5x pull radius + 2x pull speed for 6s | Uncommon |
 | **Time Warp** | 25 pts | Slows ALL enemies to 30% speed for 6s | Rare |
 | **Star Fruit** | 20 pts | Walk over water/lava for 6s | Uncommon |
+| **XP Orb** | 25 pts | Bonus XP (50–300) scaled by distance from spawn | Uncommon |
 
 ## Enemies
 
@@ -157,6 +163,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Spore Spitter | 80 | Slow | 12 | **Shoots back** | Fires projectiles at player |
 | **Cosmic Leech** | 30 | Fast | 4 | **Drain DoT** | Small & fast, applies damage-over-time |
 | **Void Stalker** | 55 | Fast | 15 | **Stealth Cloak** | Nearly invisible when cloaked, decloaks to ambush for 50% bonus damage |
+| **Plasma Serpent** | 120 | Medium | 20 | **Segmented + Splits** | Snake with 4 body segments; splits into Swarm Mites on death |
 | Lava Crawler | 100 | Medium | 28 | — | Hot-headed |
 | Crystal Guardian | 180 | Slow | 38 | — | Tough |
 | Plasma Drake | 350 | Fast | 45 | — | Endgame boss |
@@ -193,12 +200,25 @@ Every projectile hit has a **15% chance** to be a critical hit, dealing **2x dam
 - New traders spawn periodically if fewer than 3 are alive
 - Trader names: Zix, Glip, Orbix, Fweem
 
+## Alien Monoliths
+
+- **Mysterious ancient structures** found in crystal and snow biomes
+- Tall pillar topped with a glowing crystal, rotating ring, and pulsing ground glow
+- Approach within range to activate — grants a random buff:
+  - **Speed Surge**: 1.5x movement speed for 10 seconds (green glow)
+  - **Power Surge**: 1.4x projectile damage for 10 seconds (orange glow)
+  - **Wisdom Aura**: 2x XP gain for 10 seconds (blue glow)
+- 45-second cooldown between activations per monolith
+- Colored ring appears around Zorp when a buff is active
+- Buff timers shown on HUD alongside other power-ups
+
 ## World Features
 
 - **Alien Ruins** in desert biomes — scattered stone pillars (1–4 per ruin) and broken wall segments, giving the desert a mysterious ancient civilization feel
 - **Floating Islands** — elevated platforms hovering 3–6 units above the ground with purple crystals on top and shadow projections below
 - **Toxic Bog** — murky green terrain with bubbling toxic pools, twisted fungal stalks with glowing caps, and drifting toxic spore particles
 - **Portal Pairs** — 4 linked portal pairs for fast travel across the map
+- **Alien Monoliths** — tall ancient crystal-topped structures that grant temporary buffs when approached
 
 ## Tech Stack
 
