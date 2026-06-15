@@ -889,6 +889,9 @@ class ShockwaveRing(Entity):
         self.current_radius = 0.5
         self.lifetime = STARBURST_SHOCKWAVE_MAX_RADIUS / STARBURST_SHOCKWAVE_EXPAND_SPEED + 0.5
         self.max_lifetime = self.lifetime
+        # Bug fix: track whether this ring has already hit the player,
+        # to prevent dealing damage every frame (60+ times per ring)
+        self.hit_player = False
 
     def update_ring(self, dt):
         """Expand the ring. Returns True when expired."""
@@ -2631,7 +2634,7 @@ def game_update():
         if p._drain_tick >= 0.5:
             p._drain_tick = 0
             if p.shield_timer <= 0:  # Shield blocks drain damage
-                drain_dmg = int(COSMIC_LEECH_DRAIN_DAMAGE * 0.5)  # damage per tick (half-second)
+                drain_dmg = round(COSMIC_LEECH_DRAIN_DAMAGE * 0.5)  # Bug fix: use round() instead of int() to avoid truncation (int(1.5)=1, round(1.5)=2)
                 if drain_dmg > 0:
                     died = p.take_damage(drain_dmg)
                     game._spawn_particles(p.position, color.rgb(150, 0, 150), count=3)
@@ -2985,6 +2988,7 @@ def game_update():
                     game.add_message("Cosmic Leech is draining you!")
                     game._spawn_particles(p.position, color.rgb(200, 0, 200), count=6)
                 p.drain_timer = COSMIC_LEECH_DRAIN_DURATION
+                p._drain_tick = 0  # Bug fix: reset tick counter for new drain application
 
             # ── Void Stalker: Stealth cloak/decloak ambush behavior ──
             if enemy.is_void_stalker and enemy.alive and not enemy.dying:
@@ -3020,9 +3024,9 @@ def game_update():
                                                  int(enemy.original_color[2] * 255), 60)
                 elif enemy.cloak_state == 'decloaked':
                     # Fully visible — attack aggressively
-                    # First attack from decloak gets ambush bonus
-                    if not enemy.ambush_hit and dist_to_player < ENEMY_ATTACK_RANGE:
-                        enemy.ambush_hit = True
+                    # Ambush bonus is applied in the attack section below
+                    # (Bug fix: previously ambush_hit was set True here, before the
+                    # attack code could check not enemy.ambush_hit, so the bonus never applied)
                     # Recloak when timer expires
                     if enemy.cloak_timer <= 0:
                         enemy.cloak_state = 'cloaked'
@@ -3141,7 +3145,8 @@ def game_update():
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     # Kill damage number (bigger, yellow)
-                    game.damage_numbers.append(DamageNumber(enemy.position, proj.damage, is_kill=True))
+                    # Bug fix: use computed damage (includes crit multiplier) instead of base proj.damage
+                    game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                     # Drop loot
                     # BUG FIX: loot drops now check walkability so collectibles don't
                     # spawn in unreachable water/lava tiles.
@@ -3204,7 +3209,9 @@ def game_update():
         # The ring hits if the player is near the edge of the expanding ring
         ring_thickness = 1.5  # How thick the ring edge is for collision
         if abs(ring_dist - ring.current_radius) < ring_thickness:
-            if p.invuln_timer <= 0:
+            # Bug fix: only hit the player once per ring, not every frame
+            if not ring.hit_player and p.invuln_timer <= 0:
+                ring.hit_player = True
                 if p.shield_timer > 0:
                     game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
                     game.add_message("Shield blocked shockwave!")
