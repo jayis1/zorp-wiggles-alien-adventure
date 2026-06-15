@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.6.0"
+VERSION = "2.6.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -40,10 +40,10 @@ ENEMY_ATTACK_COOLDOWN = 1.1         # Slightly slower enemy attacks for readabil
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
-ENEMY_WANDER_SPEED_FACTOR = 0.25
+ENEMY_WANDER_SPEED_FACTOR = 0.20
 ENEMY_WANDER_INTERVAL_MIN = 2.0
 ENEMY_WANDER_INTERVAL_MAX = 5.0
-ENEMY_WANDER_DIR_JITTER = 1.5
+ENEMY_WANDER_DIR_JITTER = 1.0
 
 # ─── Spawning ─────────────────────────────────────────────────────────────────
 MAX_ACTIVE_ENEMIES = 40
@@ -61,7 +61,7 @@ SPAWN_SAFE_RADIUS = 15
 ENEMY_SPAWN_SAFE_RADIUS = 30
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-LEVEL_UP_HEAL_AMOUNT = 30              # More generous heal on level-up to reward progression
+LEVEL_UP_HEAL_AMOUNT = 35              # More generous heal on level-up to reward progression
 LEVEL_UP_HP_BONUS = 10
 LEVEL_UP_SPEED_BONUS = 0.3
 XP_SCALE_FACTOR = 1.45   # Slightly reduced from 1.5 for smoother leveling progression
@@ -88,6 +88,11 @@ PARTICLE_KILL_COUNT = 22              # Bigger kill explosion
 PARTICLE_DAMAGE_COUNT = 8             # More player-damage particles
 PARTICLE_COLLECT_COUNT = 16            # More collect sparkles
 PARTICLE_LEVELUP_COUNT = 30          # Bigger level-up burst
+
+# ─── Muzzle Flash ──────────────────────────────────────────────────────────────
+MUZZLE_FLASH_DURATION = 0.08            # How long the muzzle flash is visible
+MUZZLE_FLASH_SCALE = 0.6                 # Size of the flash sphere
+MUZZLE_FLASH_PARTICLES = 4               # Extra particles on each shot
 
 # ─── Projectile Trail ────────────────────────────────────────────────────────
 PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
@@ -123,6 +128,8 @@ DMG_NUMBER_RISE_SPEED = 3.0
 DMG_NUMBER_SCALE = 1.2
 
 # ─── Level-Up Feedback ──────────────────────────────────────────────────────
+LEVEL_UP_SCALE_BOUNCE_DURATION = 0.6    # How long the player bounces on level-up
+LEVEL_UP_SCALE_BOUNCE_FACTOR = 1.6      # Peak scale multiplier on level-up bounce
 LEVEL_UP_TEXT_SCALE = 3.5               # Larger text for level-up announcement
 LEVEL_UP_COLOR_FLASH_DURATION = 0.5     # How long the player model flashes yellow on level-up
 LEVEL_UP_SCREEN_SHAKE = 0.2             # Small screen shake on level-up for impact
@@ -173,7 +180,7 @@ DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
 SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
 SPEED_BOOST_MULTIPLIER = 1.8
 SHIELD_DURATION = 5.0                    # Longer shield — 4s was too brief to enjoy
-HEALTH_POTION_HEAL = 50                 # More healing — 40 felt underwhelming for an uncommon drop
+HEALTH_POTION_HEAL = 55                 # More healing — 50 felt underwhelming for mid-game enemies
 
 # ─── Combo System ────────────────────────────────────────────────────────────
 COMBO_TIMEOUT = 4.5        # seconds before combo resets (tightened from 5.0 for more skillful chaining)
@@ -517,6 +524,8 @@ class Player(Entity):
         # Squish/stretch animation state
         self.squish_current = 1.0  # Current Y scale (1.0 = normal)
         self.is_moving = False
+        # Level-up scale bounce timer — integrates with animate_bob for satisfying pop
+        self.level_up_scale_timer = 0.0
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
@@ -568,7 +577,12 @@ class Player(Entity):
             tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
 
     def animate_bob(self, t):
-        """Apply vertical bob and squish/stretch animation to the player."""
+        """Apply vertical bob and squish/stretch animation to the player.
+
+        Also integrates the level-up scale bounce so it doesn't conflict
+        with the normal squish/stretch cycle — the bounce multiplier is
+        applied on top of the base squish, creating a satisfying pop effect.
+        """
         self.y = 1.2 + math.sin(t * 3) * 0.15
         # Squish/stretch: stretch Y and squish XZ when moving, compress Y and bulge XZ when idle
         if self.is_moving:
@@ -576,7 +590,15 @@ class Player(Entity):
         else:
             target_squish = 1.0
         self.squish_current += (target_squish - self.squish_current) * min(1.0, PLAYER_SQUISH_SPEED * time.dt)
-        y_scale = 1.2 * self.squish_current
+        # Level-up bounce: exponential decay scale multiplier for satisfying pop
+        bounce_mult = 1.0
+        if self.level_up_scale_timer > 0:
+            self.level_up_scale_timer -= time.dt
+            progress = 1.0 - max(0, self.level_up_scale_timer) / LEVEL_UP_SCALE_BOUNCE_DURATION
+            # Elastic ease-out: starts big, overshoots, then settles to 1.0
+            bounce_mult = 1.0 + (LEVEL_UP_SCALE_BOUNCE_FACTOR - 1.0) * math.exp(-5.0 * progress) * math.cos(progress * math.pi * 1.5)
+            bounce_mult = max(1.0, bounce_mult)
+        y_scale = 1.2 * self.squish_current * bounce_mult
         xz_scale = 1.0 / self.squish_current  # Inverse for XZ to preserve volume
         self.scale = Vec3(xz_scale, y_scale, xz_scale)
 
@@ -761,7 +783,14 @@ class Enemy(Entity):
             self.hp_bar.color = color.rgb(255, int(255 * t), 0)
 
     def update_death_animation(self, dt):
-        """Animate enemy death: pop upward, shrink, flash, and dissolve. Returns True when done."""
+        """Animate enemy death: pop upward, shrink, flash between white and enemy color,
+        then dissolve with a fade. Returns True when the animation is complete.
+
+        The animation has three phases:
+        1. Pop (0–25%): enemy bounces upward dramatically
+        2. Flash & shrink (25–70%): alternates white/original color while shrinking
+        3. Dissolve (70–100%): fades to transparent with enemy's tinted color
+        """
         if not self.dying:
             return True
         self.death_timer -= dt
@@ -781,14 +810,19 @@ class Enemy(Entity):
             if int(self.death_timer * 15) % 2 == 0:
                 self.color = color.white
             else:
-                self.color = self.original_color
+                # Use a brightened version of original color for more vivid flashing
+                self.color = color.rgb(
+                    min(255, int(self.original_color[0] * 255 * 1.3) + 60),
+                    min(255, int(self.original_color[1] * 255 * 1.3) + 60),
+                    min(255, int(self.original_color[2] * 255 * 1.3) + 60),
+                )
         else:
-            # Dissolve to faded color
+            # Dissolve to faded color with a warm glow
             fade = max(0, 1.0 - (progress - 0.7) / 0.3)
             self.color = color.rgba(
-                int(self.original_color[0] * 255 * fade),
-                int(self.original_color[1] * 255 * fade),
-                int(self.original_color[2] * 255 * fade),
+                min(255, int(self.original_color[0] * 255 * fade) + int(40 * fade)),
+                min(255, int(self.original_color[1] * 255 * fade) + int(20 * fade)),
+                min(255, int(self.original_color[2] * 255 * fade) + int(10 * fade)),
                 int(255 * fade),
             )
         # Hide HP bar during death
@@ -2216,7 +2250,8 @@ class Game:
 
         Creates a single projectile in normal mode, or a 3-way spread
         when the Weapon Upgrade power-up is active. Applies base damage
-        plus a level-scaling bonus.
+        plus a level-scaling bonus. Also spawns a muzzle flash at the
+        firing position for satisfying visual feedback.
         """
         if self.player.shoot_timer > 0 or self.game_over:
             return
@@ -2230,6 +2265,12 @@ class Game:
             direction = self.player.facing
 
         base_damage = PROJECTILE_BASE_DAMAGE + self.player.level * PROJECTILE_LEVEL_DAMAGE_BONUS
+
+        # Muzzle flash: brief bright sphere at firing point
+        flash_pos = self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.2
+        flash = Entity(model='sphere', color=color.rgba(200, 255, 255, 220),
+                        scale=MUZZLE_FLASH_SCALE, position=flash_pos)
+        destroy(flash, delay=MUZZLE_FLASH_DURATION)
 
         if self.player.weapon_upgrade_timer > 0:
             # Spread shot: fire 3 projectiles in a fan pattern
@@ -2245,6 +2286,7 @@ class Game:
                 )
                 self.projectiles.append(proj)
             self._spawn_particles(self.player.position + Vec3(0, 1, 0), color.rgb(255, 150, 0), count=5)
+            self._spawn_particles(flash_pos, color.rgb(150, 255, 255), count=MUZZLE_FLASH_PARTICLES)
         else:
             # Normal single shot
             proj = Projectile(
@@ -2255,6 +2297,7 @@ class Game:
             )
             self.projectiles.append(proj)
             self._spawn_particles(proj.position, C_LASER, count=3)
+            self._spawn_particles(flash_pos, color.rgb(150, 255, 255), count=MUZZLE_FLASH_PARTICLES)
 
     def _update_hud(self):
         """Update HUD elements each frame."""
@@ -2716,9 +2759,9 @@ def game_update():
         game._spawn_collect_burst(p.position, color.yellow)
         # Brief screen shake for level-up impact
         game.screen_shake = max(game.screen_shake, LEVEL_UP_SCREEN_SHAKE)
-        # BUG FIX: removed p.scale = 1.8 / invoke(setattr) because animate_bob()
-        # continuously overrides p.scale every frame, making the level-up pulse
-        # invisible. Instead, use a brief color flash on the player model.
+        # Scale bounce on level-up — integrates with animate_bob()
+        p.level_up_scale_timer = LEVEL_UP_SCALE_BOUNCE_DURATION
+        # Yellow flash on player model
         p.color = color.yellow
         invoke(setattr, p, 'color', C_ALIEN, delay=LEVEL_UP_COLOR_FLASH_DURATION)
         game.add_message(f"Level Up! Now Lv.{p.level}!")
