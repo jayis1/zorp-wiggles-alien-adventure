@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.5.1"
+VERSION = "2.6.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -149,6 +149,7 @@ BIOME_FOG = {
     'swamp':   {'color': color.rgb(20, 30, 10),    'density': 0.016},
     'mushroom': {'color': color.rgb(25, 5, 35),    'density': 0.012},
     'floating_islands': {'color': color.rgb(25, 15, 45), 'density': 0.005},
+    'toxic_bog':  {'color': color.rgb(30, 50, 15),    'density': 0.018},
 }
 
 # ─── Biome Generation ─────────────────────────────────────────────────────────
@@ -188,6 +189,9 @@ SPREAD_ANGLE = 12  # degrees between spread shot projectiles
 WEATHER_PARTICLE_COUNT = 60
 WEATHER_SNOW_COUNT = 40
 WEATHER_EMBER_COUNT = 30
+WEATHER_SPORE_COUNT = 25              # Toxic bog spore particles
+WEATHER_FALL_SPEED_SPORE = 2          # Slow drift for toxic spores
+WEATHER_DRIFT_SPORE = 3               # Lateral drift for spores
 WEATHER_FALL_SPEED_RAIN = 25
 WEATHER_FALL_SPEED_SNOW = 5
 WEATHER_FALL_SPEED_EMBER = 3
@@ -215,8 +219,8 @@ KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite', 'Cosmic Leech']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber', 'Starburst Sentinel']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Void Bomber', 'Starburst Sentinel', 'Void Stalker']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
@@ -243,6 +247,22 @@ STARBURST_SHOCKWAVE_DAMAGE = 15
 STARBURST_SHOCKWAVE_EXPAND_SPEED = 15.0
 STARBURST_SHOCKWAVE_MAX_RADIUS = 8.0
 STARBURST_DETECT_RANGE = 30
+
+# ─── Void Stalker (New Enemy) ──────────────────────────────────────────────
+VOID_STALKER_CLOAK_ALPHA = 40         # Alpha when cloaked (nearly invisible)
+VOID_STALKER_CLOAK_SPEED = 4.0        # Seconds cloaked before decloaking
+VOID_STALKER_DECLOAK_SPEED = 2.0       # Seconds decloaked before re-cloaking
+VOID_STALKER_AMBUSH_DAMAGE_MULT = 1.5  # 50% bonus damage on ambush hit from stealth
+VOID_STALKER_DECLOAK_BURST_RANGE = 6   # Range at which stalker decloaks to attack
+
+# ─── Critical Hit System ──────────────────────────────────────────────────
+CRIT_CHANCE = 0.15                      # 15% chance per projectile hit
+CRIT_DAMAGE_MULT = 2.0                  # Critical hits deal 2x damage
+CRIT_NUMBER_COLOR = color.rgb(255, 200, 0)  # Gold for crit numbers
+
+# ─── Biome Indicator HUD ──────────────────────────────────────────────────
+BIOME_INDICATOR_POSITION = (0.72, 0.44)
+BIOME_INDICATOR_SCALE = 1.0
 
 # ─── Portal System ───────────────────────────────────────────────────────
 PORTAL_COUNT = 4            # Number of portal pairs (8 portals total)
@@ -355,6 +375,7 @@ C_PINK     = color.rgb(255, 80, 180)
 C_MUSHROOM = color.rgb(50, 180, 90)
 C_FLOATING_ISLANDS = color.rgb(180, 140, 220)
 C_STAR_FRUIT = color.rgb(255, 255, 100)
+C_TOXIC_BOG = color.rgb(60, 100, 30)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -367,9 +388,10 @@ BIOME_COLORS = {
     'swamp':   C_SWAMP,
     'mushroom': C_MUSHROOM,
     'floating_islands': C_FLOATING_ISLANDS,
+    'toxic_bog': C_TOXIC_BOG,
 }
 
-WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands'}
+WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands', 'toxic_bog'}
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 class WorldGenerator:
@@ -391,7 +413,7 @@ class WorldGenerator:
         grid = [['grass' for _ in range(size)] for _ in range(size)]
 
         # Place biome blobs
-        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands']
+        biomes = ['desert', 'water', 'lava', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands', 'toxic_bog']
         for _ in range(BIOME_BLOB_COUNT):
             bx = random.randint(0, size - 1)
             by = random.randint(0, size - 1)
@@ -586,6 +608,7 @@ class Enemy(Entity):
         'Nebula Phantom':  {'color': color.rgba(100, 150, 255, 150), 'hp': 100, 'speed': 6,  'damage': 30, 'scale': 1.3,  'model': 'sphere', 'decor': 'aura', 'detect': 40},
         'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 70, 'speed': 0, 'damage': 15, 'scale': 1.5, 'model': 'diamond', 'decor': 'shards', 'detect': 30},
         'Cosmic Leech':    {'color': color.rgb(80, 0, 80),          'hp': 35,  'speed': 6,  'damage': 5, 'scale': 0.7, 'model': 'sphere', 'decor': 'aura', 'detect': 25},
+        'Void Stalker':     {'color': color.rgb(40, 40, 60),        'hp': 60,  'speed': 7,  'damage': 18, 'scale': 1.1, 'model': 'diamond', 'decor': 'aura', 'detect': 35},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -645,6 +668,12 @@ class Enemy(Entity):
 
         # Cosmic Leech: fast enemy that applies a drain DoT on contact
         self.is_cosmic_leech = (enemy_type == 'Cosmic Leech')
+
+        # Void Stalker: stealth enemy that cloaks and ambushes
+        self.is_void_stalker = (enemy_type == 'Void Stalker')
+        self.cloak_state = 'cloaked' if self.is_void_stalker else None  # 'cloaked' or 'decloaked'
+        self.cloak_timer = random.uniform(2, VOID_STALKER_CLOAK_SPEED) if self.is_void_stalker else 0
+        self.ambush_hit = False  # Whether the first hit from stealth has been delivered
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -1194,6 +1223,7 @@ MISSION_TEMPLATES = [
     ("Time Bandit",          "Find Time Warps to slow the alien horde",    "Time Warp",      2, "collect", 300),
     ("Leech Hunter",         "Suck out the Cosmic Leeches infesting the area", "Cosmic Leech", 3, "kill", 250),
     ("Star Walker",          "Collect Star Fruits to cross treacherous terrain", "Star Fruit", 3, "collect", 200),
+    ("Stalker Hunt",          "Track and eliminate Void Stalkers before they ambush you", "Void Stalker", 2, "kill", 350),
 ]
 
 class Mission:
@@ -1478,7 +1508,7 @@ class Game:
                       'game_over_text', 'game_over_sub', 'game_over_stats',
                       'game_over_restart', 'level_up_text', 'dash_text',
                       'powerup_text', 'crosshair', 'crosshair2',
-                      'combo_text', 'weapon_text', 'effect_text'):
+                      'combo_text', 'weapon_text', 'effect_text', 'biome_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -1630,6 +1660,54 @@ class Game:
                             scale=(0.3, crystal_h, 0.3),
                         )
                         self.crystal_entities.append(crystal_top)
+
+                elif biome == 'toxic_bog' and random.random() < 0.2:
+                    # Toxic bog: bubbling toxic pools and twisted fungal stalks
+                    if random.random() < 0.5:
+                        # Toxic bubble pool — flat glowing disc on ground
+                        pool_size = random.uniform(1.0, 2.5)
+                        pool = Entity(
+                            model='quad',
+                            color=color.rgba(100, 200, 50, 90),
+                            position=(x * TILE_SCALE, 0.06, y * TILE_SCALE),
+                            scale=pool_size,
+                            rotation_x=90,
+                        )
+                        self.crystal_entities.append(pool)
+                        # Occasional tall toxic spire
+                        if random.random() < 0.3:
+                            spire_h = random.uniform(2, 5)
+                            spire = Entity(
+                                model='cube',
+                                color=color.rgb(80, 160, 40),
+                                position=(x * TILE_SCALE, spire_h / 2 + 0.5, y * TILE_SCALE),
+                                scale=(0.3, spire_h, 0.3),
+                            )
+                            self.crystal_entities.append(spire)
+                    else:
+                        # Twisted fungal stalk with glowing cap
+                        stalk_h = random.uniform(1.5, 3.5)
+                        stalk = Entity(
+                            model='cube',
+                            color=color.rgb(50, 100, 20),
+                            position=(x * TILE_SCALE, stalk_h / 2 + 0.5, y * TILE_SCALE),
+                            scale=(0.3, stalk_h, 0.3),
+                        )
+                        cap = Entity(
+                            model='sphere',
+                            color=color.rgb(120, 220, 30),
+                            position=(x * TILE_SCALE, stalk_h + 0.8, y * TILE_SCALE),
+                            scale=random.uniform(0.8, 1.5),
+                        )
+                        # Sickly glow beneath cap
+                        bog_glow = Entity(
+                            model='quad',
+                            color=color.rgba(80, 200, 20, 50),
+                            position=(x * TILE_SCALE, stalk_h + 0.3, y * TILE_SCALE),
+                            scale=random.uniform(1.0, 2.0),
+                            rotation_x=90,
+                        )
+                        self.crystal_entities.extend([stalk, cap, bog_glow])
 
                 elif biome == 'desert' and random.random() < RUINS_PILLAR_CHANCE:
                     # Alien ruins: ancient stone pillars
@@ -1872,6 +1950,10 @@ class Game:
         # Drain/float indicator
         self.effect_text = Text(text='', position=(-0.75, 0.25), scale=0.85, color=color.magenta)
 
+        # Biome indicator — shows current biome name with colored background
+        self.biome_text = Text(text='', position=BIOME_INDICATOR_POSITION, scale=BIOME_INDICATOR_SCALE,
+                               color=color.white, origin=(0.5, 0.5))
+
         # Minimap
         self.minimap_shown = True
         self.minimap_entity = None
@@ -2017,6 +2099,21 @@ class Game:
             p.weather_type = 'ember'
             self.weather_particles.append(p)
 
+        # Toxic spore particles (used in toxic_bog biome)
+        for _ in range(WEATHER_SPORE_COUNT):
+            p = Entity(
+                model='sphere',
+                color=color.rgba(120, 220, 30, 100),
+                scale=random.uniform(0.08, 0.2),
+                position=Vec3(0, -100, 0),
+                visible=False,
+            )
+            p.fall_speed = WEATHER_FALL_SPEED_SPORE + random.uniform(-0.5, 0.5)
+            p.drift = random.uniform(-WEATHER_DRIFT_SPORE, WEATHER_DRIFT_SPORE)
+            p.drift_phase = random.uniform(0, math.pi * 2)
+            p.weather_type = 'spore'
+            self.weather_particles.append(p)
+
     def _update_weather(self, dt, player_pos):
         """Update weather particles based on current biome."""
         biome = self.current_biome
@@ -2027,6 +2124,8 @@ class Game:
             active_type = 'ember'
         elif biome in ('grass', 'forest', 'swamp'):
             active_type = 'rain'
+        elif biome == 'toxic_bog':
+            active_type = 'spore'
         else:
             active_type = None
 
@@ -2068,6 +2167,21 @@ class Game:
                     wp.z += wp.drift * 0.5 * dt
                     # Fade and respawn after rising too high
                     if wp.y > player_pos.y + 20:
+                        wp.visible = False
+                elif wp.weather_type == 'spore':
+                    # Toxic spores: slow drifting green particles that float lazily
+                    if wp.y < 0:
+                        wp.x = player_pos.x + random.uniform(-30, 30)
+                        wp.z = player_pos.z + random.uniform(-30, 30)
+                        wp.y = random.uniform(0.5, 8)
+                    wp.y -= wp.fall_speed * dt
+                    wp.drift_phase += dt * 1.5
+                    wp.x += math.sin(wp.drift_phase) * wp.drift * dt
+                    wp.z += math.cos(wp.drift_phase * 0.7) * wp.drift * 0.5 * dt
+                    # Pulse glow effect
+                    alpha = int(60 + 40 * math.sin(self.t * 3 + wp.drift_phase))
+                    wp.color = color.rgba(120, 220, 30, alpha)
+                    if wp.y < 0:
                         wp.visible = False
             else:
                 wp.visible = False
@@ -2278,6 +2392,24 @@ class Game:
             else:
                 kf_text.text = ''
                 kf_text.visible = False
+
+        # ── Biome Indicator ──
+        # Display current biome name with appropriate color
+        biome_names = {
+            'grass': 'Grasslands', 'desert': 'Desert', 'water': 'Ocean',
+            'lava': 'Lava Fields', 'forest': 'Forest', 'crystal': 'Crystal Caves',
+            'snow': 'Tundra', 'swamp': 'Swamp', 'mushroom': 'Mushroom Forest',
+            'floating_islands': 'Floating Islands', 'toxic_bog': 'Toxic Bog',
+        }
+        biome_display = biome_names.get(self.current_biome, self.current_biome.title())
+        self.biome_text.text = f'~ {biome_display} ~'
+        # Color matches the biome's ground color for quick visual identification
+        biome_col = BIOME_COLORS.get(self.current_biome, C_GRASS)
+        self.biome_text.color = color.rgb(
+            min(255, int(biome_col[0] * 255) + 80),
+            min(255, int(biome_col[1] * 255) + 80),
+            min(255, int(biome_col[2] * 255) + 80),
+        )
 
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
@@ -2853,6 +2985,49 @@ def game_update():
                     game.add_message("Cosmic Leech is draining you!")
                     game._spawn_particles(p.position, color.rgb(200, 0, 200), count=6)
                 p.drain_timer = COSMIC_LEECH_DRAIN_DURATION
+
+            # ── Void Stalker: Stealth cloak/decloak ambush behavior ──
+            if enemy.is_void_stalker and enemy.alive and not enemy.dying:
+                enemy.cloak_timer -= time.dt
+                if enemy.cloak_state == 'cloaked':
+                    # Nearly invisible — lower alpha
+                    stalker_alpha = VOID_STALKER_CLOAK_ALPHA
+                    enemy.color = color.rgba(40, 40, 60, stalker_alpha)
+                    # Hide eyes while cloaked
+                    enemy.eye_l.color = color.rgba(255, 0, 0, stalker_alpha)
+                    enemy.eye_r.color = color.rgba(255, 0, 0, stalker_alpha)
+                    # Aura nearly invisible
+                    for d in enemy.decor_entities:
+                        d.color = color.rgba(int(d.color[0] * 255) if len(d.color) > 0 else 100,
+                                             int(d.color[1] * 255) if len(d.color) > 1 else 50,
+                                             int(d.color[2] * 255) if len(d.color) > 2 else 200,
+                                             stalker_alpha)
+                    # Decloak when close to player or timer expires
+                    if dist_to_player < VOID_STALKER_DECLOAK_BURST_RANGE or enemy.cloak_timer <= 0:
+                        enemy.cloak_state = 'decloaked'
+                        enemy.cloak_timer = VOID_STALKER_DECLOAK_SPEED
+                        enemy.ambush_hit = False  # First hit from stealth = ambush
+                        # Decloak burst particles
+                        game._spawn_particles(enemy.position, color.rgba(100, 0, 150, 200), count=10)
+                        game.add_message("Void Stalker decloaked!")
+                        # Restore full visibility
+                        enemy.color = enemy.original_color
+                        enemy.eye_l.color = color.red
+                        enemy.eye_r.color = color.red
+                        for d in enemy.decor_entities:
+                            d.color = color.rgba(int(enemy.original_color[0] * 255),
+                                                 int(enemy.original_color[1] * 255),
+                                                 int(enemy.original_color[2] * 255), 60)
+                elif enemy.cloak_state == 'decloaked':
+                    # Fully visible — attack aggressively
+                    # First attack from decloak gets ambush bonus
+                    if not enemy.ambush_hit and dist_to_player < ENEMY_ATTACK_RANGE:
+                        enemy.ambush_hit = True
+                    # Recloak when timer expires
+                    if enemy.cloak_timer <= 0:
+                        enemy.cloak_state = 'cloaked'
+                        enemy.cloak_timer = random.uniform(2, VOID_STALKER_CLOAK_SPEED)
+                        game._spawn_particles(enemy.position, color.rgba(40, 40, 60, 150), count=6)
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -2874,14 +3049,23 @@ def game_update():
         # attack once and then never again while staying next to the player.
         enemy.attack_cd = max(0, enemy.attack_cd - time.dt)
         if dist_to_player < ENEMY_ATTACK_RANGE and enemy.attack_cd <= 0:
+            # Void Stalker ambush: first hit from decloak deals bonus damage
+            effective_damage = enemy.damage
+            if enemy.is_void_stalker and enemy.cloak_state == 'decloaked' and not enemy.ambush_hit:
+                effective_damage = int(enemy.damage * VOID_STALKER_AMBUSH_DAMAGE_MULT)
+                enemy.ambush_hit = True
+                game.add_message("Void Stalker ambush! Ouch!")
+                game._spawn_particles(enemy.position, color.rgb(150, 0, 255), count=8)
             if p.shield_timer > 0:
                 # Shield absorbs the hit
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
                 game.add_message("Shield blocked!")
             else:
-                died = p.take_damage(enemy.damage)
+                died = p.take_damage(effective_damage)
                 game.screen_shake = SCREEN_SHAKE_DAMAGE
                 game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                if effective_damage > enemy.damage:
+                    game.damage_numbers.append(DamageNumber(p.position, effective_damage, is_kill=False))
                 if died:
                     game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
@@ -2921,13 +3105,24 @@ def game_update():
             if not enemy.alive or enemy.dying:
                 continue
             if (proj.position - enemy.position).length() < enemy.scale_x + 0.5:
+                # Critical hit system: 15% chance for 2x damage
+                is_crit = random.random() < CRIT_CHANCE
+                damage = int(proj.damage * CRIT_DAMAGE_MULT) if is_crit else proj.damage
                 # Pass projectile direction for knockback
                 hit_dir = proj.direction
-                killed = enemy.take_damage(proj.damage, hit_direction=hit_dir)
-                game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
-                game.screen_shake = max(game.screen_shake, 0.15)
-                # Floating damage number
-                game.damage_numbers.append(DamageNumber(enemy.position, proj.damage, is_kill=False))
+                killed = enemy.take_damage(damage, hit_direction=hit_dir)
+                if is_crit:
+                    # Critical hit: extra particles and bigger shake
+                    game._spawn_particles(enemy.position, color.rgb(255, 200, 0), count=PARTICLE_HIT_COUNT + 5)
+                    game.screen_shake = max(game.screen_shake, 0.3)
+                    game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
+                    # Extra flash on the enemy for crit
+                    enemy.color = color.yellow
+                    invoke(setattr, enemy, 'color', enemy.original_color, delay=0.15)
+                else:
+                    game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
+                    game.screen_shake = max(game.screen_shake, 0.15)
+                    game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)

@@ -30,12 +30,13 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.5.1 — 3D!)
+## Features (v2.6.0 — 3D!)
 
 - Full 3D open world with third-person camera
-- Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
+- Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
 - **13 collectible item types** — including **7 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, **Star Fruit** (walk on water/lava!)
-- **13 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!)
+- **14 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!)
+- **Critical Hit system** — 15% chance per shot to deal 2x damage with golden particles and screen shake!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
@@ -48,8 +49,9 @@ python game.py
 - **Combo system** — chain kills within 4 seconds for XP and score multipliers! Combo counter displayed on HUD with escalating colors
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel! Step in to teleport to your partner portal with a 3s cooldown
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items by pressing E near them
-- **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes
-- Mission system with collection and kill objectives (13 missions!)
+- **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes, **toxic spore drift in Toxic Bog biomes**
+- **Biome indicator HUD** — shows your current biome name with color-matching text
+- Mission system with collection and kill objectives (14 missions!)
 - XP and leveling system (get stronger over time!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
 - Minimap with player tracking
@@ -57,6 +59,7 @@ python game.py
 - 3D trees in forests, crystal spires in crystal biomes, **colorful alien mushrooms** in mushroom biomes
 - **Floating Islands biome** — raised platforms hovering above the ground with purple crystals and shadow projections
 - **Alien Ruins** — stone pillars and broken walls spawning in desert biomes
+- **Toxic Bog biome** — murky green terrain with bubbling toxic pools, twisted fungal stalks, and drifting toxic spores
 - Atmospheric fog and lighting with starfield sky
 - Smooth camera follow with screen shake on hits and kills
 - Enemy death animations (pop upward, shrink, flash, and dissolve)
@@ -93,6 +96,7 @@ python game.py
 - **Kill feed** — rolling top-right corner display shows recent enemy kills with fade-out animation
 - **Cosmic Leech enemy** — small, fast enemy that applies a damage-over-time drain debuff on contact (shown as purple flash on player)
 - **Drain DoT system** — Cosmic Leech's drain deals damage over time for 4 seconds; blocked by Shield
+- **Void Stalker enemy** — stealth predator that cloaks (nearly invisible) and decloaks to ambush! First hit from stealth deals 50% bonus damage
 
 ## The Self-Improving Game
 
@@ -117,6 +121,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Swamp | Murky Green | Yes | Squishy ground, rain weather |
 | Mushroom | Alien Green | Yes | Colorful alien mushrooms with spore glow |
 | **Floating Islands** | Lavender | Yes | Raised platforms with purple crystals and ground shadows |
+| **Toxic Bog** | Sickly Green | Yes | Toxic pools, fungal stalks, drifting spore particles |
 
 ## Collectibles
 
@@ -152,6 +157,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Lava Crawler | 120 | Fast | 30 | — | Hot-headed |
 | Crystal Guardian | 200 | Slow | 40 | — | Tough |
 | **Cosmic Leech** | 35 | Fast | 5 | **Drain DoT** | Small & fast, applies damage-over-time |
+| **Void Stalker** | 60 | Fast | 18 | **Stealth Cloak** | Nearly invisible when cloaked, decloaks to ambush for 50% bonus damage |
 | Plasma Drake | 400 | Very Fast | 50 | — | Endgame boss |
 
 ## Combo System
@@ -161,6 +167,14 @@ Chain kills within 4.5 seconds to build combos! Each combo tier grants:
 - **+6% score bonus** per tier (up to 10 tiers)
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
+
+## Critical Hits
+
+Every projectile hit has a **15% chance** to be a critical hit, dealing **2x damage**! Critical hits feature:
+- Golden particle burst at impact point
+- Extra screen shake for impact
+- Enemy flashes yellow briefly
+- Larger floating damage number showing the critical damage
 
 ## Portals
 
@@ -182,6 +196,7 @@ Chain kills within 4.5 seconds to build combos! Each combo tier grants:
 
 - **Alien Ruins** in desert biomes — scattered stone pillars (1–4 per ruin) and broken wall segments, giving the desert a mysterious ancient civilization feel
 - **Floating Islands** — elevated platforms hovering 3–6 units above the ground with purple crystals on top and shadow projections below
+- **Toxic Bog** — murky green terrain with bubbling toxic pools, twisted fungal stalks with glowing caps, and drifting toxic spore particles
 - **Portal Pairs** — 4 linked portal pairs for fast travel across the map
 
 ## Tech Stack
