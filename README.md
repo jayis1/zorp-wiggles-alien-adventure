@@ -30,7 +30,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.5.0 — 3D!)
+## Features (v2.5.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **10 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, **Floating Islands**
@@ -39,9 +39,9 @@ python game.py
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
-- **Shield power-up** — blocks all damage for 4 seconds
-- **Speed Boost** — 1.8x speed for 5 seconds
-- **Health Potion** — restores 30 HP instantly
+- **Shield power-up** — blocks all damage for 5 seconds
+- **Speed Boost** — 1.8x speed for 6 seconds
+- **Health Potion** — restores 50 HP instantly
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
 - **Star Fruit** — walk over water and lava for 6 seconds! Golden shimmer ring appears beneath you
@@ -92,7 +92,7 @@ python game.py
 - **Enemy alert flash** — enemies flash yellow when they first detect the player, giving you a visual warning before the chase starts
 - **Kill feed** — rolling top-right corner display shows recent enemy kills with fade-out animation
 - **Cosmic Leech enemy** — small, fast enemy that applies a damage-over-time drain debuff on contact (shown as purple flash on player)
-- **Drain DoT system** — Cosmic Leech's drain deals 3 damage/second for 4 seconds; blocked by Shield
+- **Drain DoT system** — Cosmic Leech's drain deals damage over time for 4 seconds; blocked by Shield
 
 ## The Self-Improving Game
 
@@ -128,9 +128,9 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Nebula Dust | 100 pts | Score only | Very Rare |
 | Cosmic Jelly | 200 pts | Score only | Legendary |
 | Plasma Core | 350 pts | Score only | Mythic |
-| **Health Potion** | 15 pts | Restores 30 HP | Uncommon |
-| **Speed Boost** | 15 pts | 1.8x speed for 5s | Uncommon |
-| **Shield Crystal** | 15 pts | Blocks all damage for 4s | Rare |
+| **Health Potion** | 15 pts | Restores 50 HP | Uncommon |
+| **Speed Boost** | 15 pts | 1.8x speed for 6s | Uncommon |
+| **Shield Crystal** | 15 pts | Blocks all damage for 5s | Rare |
 | **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
 | **Magnet Core** | 20 pts | 2.5x pull radius + 2x pull speed for 6s | Uncommon |
 | **Time Warp** | 25 pts | Slows ALL enemies to 30% speed for 6s | Rare |

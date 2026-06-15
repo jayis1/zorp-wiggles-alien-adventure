@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.5.0"
+VERSION = "2.5.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -26,17 +26,17 @@ PLAYER_BLINK_RATE = 20
 PLAYER_START_HP = 120
 
 # ─── Combat ───────────────────────────────────────────────────────────────────
-SHOOT_COOLDOWN = 0.12
-COLLECT_RADIUS = 2.5
-COLLECT_PULL_RADIUS = 5.0
-COLLECT_PULL_SPEED = 12.0
+SHOOT_COOLDOWN = 0.11               # Slightly snappier shooting feel
+COLLECT_RADIUS = 2.8                # More forgiving pickup radius
+COLLECT_PULL_RADIUS = 5.5           # Magnetic pull starts a bit further out
+COLLECT_PULL_SPEED = 14.0           # Items zip to you faster — more satisfying
 PROJECTILE_BASE_DAMAGE = 20
 PROJECTILE_LEVEL_DAMAGE_BONUS = 2
 PROJECTILE_SPEED = 55
 PROJECTILE_LIFETIME = 2.0
 ENEMY_DETECT_RANGE = 32
-ENEMY_ATTACK_RANGE = 2.5
-ENEMY_ATTACK_COOLDOWN = 1.0
+ENEMY_ATTACK_RANGE = 2.2            # Tighter melee range — fairer feel
+ENEMY_ATTACK_COOLDOWN = 1.1         # Slightly slower enemy attacks for readability
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ SPAWN_SAFE_RADIUS = 15
 ENEMY_SPAWN_SAFE_RADIUS = 30
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-LEVEL_UP_HEAL_AMOUNT = 25
+LEVEL_UP_HEAL_AMOUNT = 30              # More generous heal on level-up to reward progression
 LEVEL_UP_HP_BONUS = 10
 LEVEL_UP_SPEED_BONUS = 0.3
 XP_SCALE_FACTOR = 1.45   # Slightly reduced from 1.5 for smoother leveling progression
@@ -69,11 +69,11 @@ BASE_KILL_XP = 25
 KILL_XP_HP_DIVISOR = 10
 
 # ─── Visual Effects ───────────────────────────────────────────────────────────
-DEATH_ANIM_DURATION = 0.45
-SCREEN_SHAKE_DAMAGE = 0.35
-SCREEN_SHAKE_KILL = 0.6
-SCREEN_SHAKE_DECAY = 10.0
-LEVEL_UP_FLASH_DURATION = 2.0
+DEATH_ANIM_DURATION = 0.5             # Slightly longer death for better readability
+SCREEN_SHAKE_DAMAGE = 0.4             # Stronger shake on player damage — clearer feedback
+SCREEN_SHAKE_KILL = 0.75              # More impactful kill shake
+SCREEN_SHAKE_DECAY = 8.0              # Slower decay so shake lingers a touch longer
+LEVEL_UP_FLASH_DURATION = 2.5          # Longer level-up visibility so players notice it
 CAMERA_LERP_SPEED = 6.0
 CAMERA_HEIGHT = 18
 CAMERA_DISTANCE = 22
@@ -81,13 +81,13 @@ CAMERA_ANGLE = 30
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
-PARTICLE_SCALE_DECAY = 0.97
-MAX_PARTICLES = 150
-PARTICLE_HIT_COUNT = 8
-PARTICLE_KILL_COUNT = 18
-PARTICLE_DAMAGE_COUNT = 6
-PARTICLE_COLLECT_COUNT = 14
-PARTICLE_LEVELUP_COUNT = 20
+PARTICLE_SCALE_DECAY = 0.96           # Particles shrink slightly faster for less clutter
+MAX_PARTICLES = 200                    # Allow more particles for bigger bursts
+PARTICLE_HIT_COUNT = 10              # More hit particles for chunkier feedback
+PARTICLE_KILL_COUNT = 22              # Bigger kill explosion
+PARTICLE_DAMAGE_COUNT = 8             # More player-damage particles
+PARTICLE_COLLECT_COUNT = 16            # More collect sparkles
+PARTICLE_LEVELUP_COUNT = 30          # Bigger level-up burst
 
 # ─── Projectile Trail ────────────────────────────────────────────────────────
 PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
@@ -102,15 +102,15 @@ PLAYER_STRETCH_FACTOR = 1.14  # Y stretch when moving (elongated alien look)
 PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
 
 # ─── Hit-Stop ────────────────────────────────────────────────────────────────
-HIT_STOP_KILL_DURATION = 0.06  # Brief freeze on kills for impact feel
+HIT_STOP_KILL_DURATION = 0.08  # Slightly longer freeze — more dramatic kill impact
 
 # ─── Enemy Knockback ──────────────────────────────────────────────────────────
 ENEMY_KNOCKBACK_FORCE = 4.0    # How far enemies get pushed on hit
 ENEMY_KNOCKBACK_UP = 2.0       # Upward component of knockback
 
 # ─── Collectible Pop ──────────────────────────────────────────────────────────
-COLLECT_POP_DURATION = 0.18    # Seconds for the scale-up animation before destruction
-COLLECT_POP_MAX_SCALE = 2.2    # Peak scale multiplier during pop (elastic overshoot)
+COLLECT_POP_DURATION = 0.22    # Longer pop for more satisfying pickup feel
+COLLECT_POP_MAX_SCALE = 2.5    # Bigger overshoot — punchier visual feedback
 
 # ─── Player-Level Difficulty Scaling ──────────────────────────────────────────
 PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
@@ -121,6 +121,11 @@ ENEMY_DAMAGE_SCALE_PER_TIER = 0.10    # +10% enemy damage per difficulty tier ab
 DMG_NUMBER_LIFETIME = 1.0
 DMG_NUMBER_RISE_SPEED = 3.0
 DMG_NUMBER_SCALE = 1.2
+
+# ─── Level-Up Feedback ──────────────────────────────────────────────────────
+LEVEL_UP_TEXT_SCALE = 3.5               # Larger text for level-up announcement
+LEVEL_UP_COLOR_FLASH_DURATION = 0.5     # How long the player model flashes yellow on level-up
+LEVEL_UP_SCREEN_SHAKE = 0.2             # Small screen shake on level-up for impact
 
 # ─── Death Screen ────────────────────────────────────────────────────────────
 DEATH_SCREEN_STATS_COLOR = color.white
@@ -164,10 +169,10 @@ DASH_FOV_NORMAL = 75        # Normal gameplay FOV
 DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
 
 # ─── Power-Up Durations ───────────────────────────────────────────────────────
-SPEED_BOOST_DURATION = 5.0
+SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
 SPEED_BOOST_MULTIPLIER = 1.8
-SHIELD_DURATION = 4.0
-HEALTH_POTION_HEAL = 40
+SHIELD_DURATION = 5.0                    # Longer shield — 4s was too brief to enjoy
+HEALTH_POTION_HEAL = 50                 # More healing — 40 felt underwhelming for an uncommon drop
 
 # ─── Combo System ────────────────────────────────────────────────────────────
 COMBO_TIMEOUT = 4.5        # seconds before combo resets (tightened from 5.0 for more skillful chaining)
@@ -304,8 +309,8 @@ RARITY_GLOW_CONFIG = {
     'uncommon':  {'pulse_speed': 3.0, 'min_scale': 2.8, 'max_scale': 3.5, 'glow_alpha': 80},
     'rare':     {'pulse_speed': 3.5, 'min_scale': 3.0, 'max_scale': 3.8, 'glow_alpha': 100},
     'very_rare': {'pulse_speed': 4.0, 'min_scale': 3.0, 'max_scale': 4.0, 'glow_alpha': 120},
-    'legendary': {'pulse_speed': 4.5, 'min_scale': 3.2, 'max_scale': 4.2, 'glow_alpha': 140},
-    'mythic':    {'pulse_speed': 5.0, 'min_scale': 3.4, 'max_scale': 4.5, 'glow_alpha': 160},
+    'legendary': {'pulse_speed': 4.5, 'min_scale': 3.2, 'max_scale': 4.4, 'glow_alpha': 160},
+    'mythic':    {'pulse_speed': 5.0, 'min_scale': 3.4, 'max_scale': 4.8, 'glow_alpha': 200},
 }
 
 # ─── Minimap ─────────────────────────────────────────────────────────────────
@@ -568,7 +573,7 @@ class Enemy(Entity):
     """An enemy entity that chases the player when in detection range."""
 
     TYPES = {
-        'Slime Blob':      {'color': color.lime,         'hp': 25,  'speed': 3,  'damage': 8,  'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
+        'Slime Blob':      {'color': color.lime,         'hp': 30,  'speed': 3,  'damage': 10, 'scale': 1.0,  'model': 'sphere', 'decor': 'none'},
         'Space Beetle':    {'color': color.brown,         'hp': 50,  'speed': 5,  'damage': 15, 'scale': 1.2,  'model': 'cube',    'decor': 'wings'},
         'Void Wraith':     {'color': color.violet,        'hp': 80,  'speed': 4,  'damage': 25, 'scale': 1.4,  'model': 'diamond', 'decor': 'aura'},
         'Lava Crawler':    {'color': color.orange,        'hp': 120, 'speed': 6,  'damage': 30, 'scale': 1.1,  'model': 'cube',    'decor': 'spikes'},
@@ -1845,7 +1850,7 @@ class Game:
         self.game_over_restart = Text(text='', position=(0, -0.25), origin=(0, 0), scale=1.5, color=color.yellow, visible=False)
 
         # Level-up popup
-        self.level_up_text = Text(text='', position=(0, 0.2), origin=(0, 0), scale=3, color=color.yellow, visible=False)
+        self.level_up_text = Text(text='', position=(0, 0.2), origin=(0, 0), scale=LEVEL_UP_TEXT_SCALE, color=color.yellow, visible=False)
 
         # Dash cooldown indicator & power-up status
         self.dash_text = Text(text='DASH READY', position=(-0.75, 0.37), scale=0.9, color=color.cyan)
@@ -2572,11 +2577,15 @@ def game_update():
         game.level_up_text.text = f'LEVEL UP! Lv.{p.level}'
         game.level_up_text.visible = True
         game._spawn_particles(p.position, color.yellow, count=PARTICLE_LEVELUP_COUNT)
+        # Extra celebratory particles in a ring burst for satisfying feedback
+        game._spawn_collect_burst(p.position, color.yellow)
+        # Brief screen shake for level-up impact
+        game.screen_shake = max(game.screen_shake, LEVEL_UP_SCREEN_SHAKE)
         # BUG FIX: removed p.scale = 1.8 / invoke(setattr) because animate_bob()
         # continuously overrides p.scale every frame, making the level-up pulse
         # invisible. Instead, use a brief color flash on the player model.
         p.color = color.yellow
-        invoke(setattr, p, 'color', C_ALIEN, delay=0.4)
+        invoke(setattr, p, 'color', C_ALIEN, delay=LEVEL_UP_COLOR_FLASH_DURATION)
         game.add_message(f"Level Up! Now Lv.{p.level}!")
 
     if game.level_up_timer > 0:
