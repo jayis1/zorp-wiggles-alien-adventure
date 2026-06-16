@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.7.2"
+VERSION = "2.8.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -71,6 +71,7 @@ ENEMY_LOOT_DROPS = {
     'Starburst Sentinel':  (3, 5),
     'Plasma Drake':        (4, 6),   # Boss-tier: 4-6 items
     'Plasma Serpent':      (3, 5),   # Mid-hard: head splits into segments
+    'Graviton':            (2, 4),   # Mid: drops moderate loot
 }
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
@@ -269,8 +270,8 @@ KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent', 'Graviton']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
@@ -311,6 +312,29 @@ PLASMA_SERPENT_SEGMENT_SPACING = 1.8  # Distance between segments
 PLASMA_SERPENT_SCATTER_HP = 8        # HP of each scattered segment after head dies
 PLASMA_SERPENT_SCATTER_DAMAGE = 4    # Damage of scattered segments
 PLASMA_SERPENT_SCATTER_SPEED = 6    # Speed of scattered segments
+
+# ─── Graviton (New Enemy) ──────────────────────────────────────────────
+GRAVITON_PULL_RADIUS = 18            # How far the gravity pull reaches
+GRAVITON_PULL_FORCE = 8.0            # How strongly the player is pulled toward the Graviton
+GRAVITON_PULL_DURATION = 2.5         # Seconds the pull lasts per cycle
+GRAVITON_PULL_COOLDOWN_MIN = 4.0     # Min seconds between pull activations
+GRAVITON_PULL_COOLDOWN_MAX = 7.0     # Max seconds between pull activations
+GRAVITON_PULL_DAMAGE = 5            # Damage dealt per second while pulled
+GRAVITON_PULL_INDICATOR_COLOR = color.rgb(180, 0, 255)  # Purple indicator ring
+
+# ─── Fireball Scroll (New Collectible) ─────────────────────────────────
+FIREBALL_DURATION = 8.0              # Duration of fireball effect
+FIREBALL_BLAST_RADIUS = 4.0          # AOE radius on projectile impact
+FIREBALL_BLAST_DAMAGE_PERCENT = 0.5  # Fireball blast deals 50% of projectile damage to nearby enemies
+
+# ─── Regen Crystal (New Collectible) ────────────────────────────────────
+REGEN_DURATION = 10.0                # Duration of HP regeneration
+REGEN_HP_PER_SECOND = 8              # HP restored per second
+
+# ─── Boss Health Bar ───────────────────────────────────────────────────
+BOSS_HP_BAR_WIDTH = 0.5              # Width of boss HP bar on UI
+BOSS_HP_BAR_HEIGHT = 0.025           # Height of boss HP bar on UI
+BOSS_HP_BAR_Y = 0.4                  # Y position on screen (above center)
 
 # ─── XP Orb (New Collectible) ────────────────────────────────────────────
 XP_ORB_BASE_XP = 50                  # Base XP granted by an XP Orb
@@ -378,6 +402,8 @@ COLLECTIBLE_WEIGHTS = {
     'Time Warp':      5,    # Rare — slows all enemies to 30% speed
     'Star Fruit':     6,    # Uncommon — walk over water/lava
     'XP Orb':         6,    # Uncommon — grants bonus XP scaled by distance
+    'Fireball Scroll': 4,   # Rare — projectiles explode on impact
+    'Regen Crystal':  6,    # Uncommon — regenerates HP over time
 }
 
 # ─── Collectible Rarity Tiers ────────────────────────────────────────────────
@@ -396,6 +422,8 @@ RARITY_TIER = {
     'Nebula Dust':    'very_rare',
     'Star Fruit':     'uncommon',
     'XP Orb':         'uncommon',
+    'Fireball Scroll': 'rare',
+    'Regen Crystal':  'uncommon',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
 }
@@ -569,6 +597,12 @@ class Player(Entity):
         self.monolith_damage_timer = 0.0   # Damage buff from monolith
         self.monolith_xp_timer = 0.0       # XP multiplier buff from monolith
 
+        # Fireball Scroll timer — projectiles explode on impact
+        self.fireball_timer = 0.0
+
+        # Regen Crystal timer — regenerates HP over time
+        self.regen_timer = 0.0
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -593,6 +627,14 @@ class Player(Entity):
         # Shield visual (invisible by default)
         self.shield_visual = Entity(model='sphere', color=color.rgba(100, 200, 255, 60),
                                     scale=1.6, parent=self, visible=False)
+
+        # Fireball aura visual (invisible by default)
+        self.fireball_visual = Entity(model='sphere', color=color.rgba(255, 80, 20, 50),
+                                     scale=1.8, parent=self, visible=False)
+
+        # Regen glow visual (invisible by default)
+        self.regen_visual = Entity(model='sphere', color=color.rgba(50, 255, 120, 50),
+                                   scale=1.5, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
         self.ground_shadow = Entity(
@@ -713,7 +755,8 @@ class Enemy(Entity):
         'Starburst Sentinel': {'color': color.rgb(255, 200, 50), 'hp': 60,  'speed': 0, 'damage': 12, 'scale': 1.5,  'model': 'diamond', 'decor': 'shards', 'detect': 28},
         'Cosmic Leech':    {'color': color.rgb(80, 0, 80),          'hp': 30,  'speed': 5.5,'damage': 4,  'scale': 0.7,  'model': 'sphere', 'decor': 'aura', 'detect': 22},
         'Void Stalker':     {'color': color.rgb(40, 40, 60),        'hp': 55,  'speed': 6.5,'damage': 15, 'scale': 1.1,  'model': 'diamond', 'decor': 'aura', 'detect': 32},
-        'Plasma Serpent':   {'color': color.rgb(0, 255, 200),       'hp': 120, 'speed': 3.5,'damage': 20, 'scale': 1.0,  'model': 'sphere', 'decor': 'aura', 'detect': 34},
+        'Plasma Serpent':   {'color': color.rgb(0, 255, 200),       'hp': 120,  'speed': 3.5,'damage': 20, 'scale': 1.0,  'model': 'sphere', 'decor': 'aura', 'detect': 34},
+        'Graviton':         {'color': color.rgb(180, 0, 255),       'hp': 75,   'speed': 2.8,'damage': 10, 'scale': 1.5,  'model': 'sphere', 'decor': 'aura', 'detect': 30},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -803,6 +846,21 @@ class Enemy(Entity):
                 seg_eye_l = Entity(model='sphere', color=color.cyan, scale=0.15, parent=seg, position=(-0.15, 0.15, -0.3))
                 seg_eye_r = Entity(model='sphere', color=color.cyan, scale=0.15, parent=seg, position=(0.15, 0.15, -0.3))
                 self.segment_entities.append(seg)
+
+        # Graviton: floating enemy that periodically pulls the player toward it
+        self.is_graviton = (enemy_type == 'Graviton')
+        self.graviton_pull_active = False
+        self.graviton_pull_timer = 0.0
+        self.graviton_cooldown_timer = random.uniform(GRAVITON_PULL_COOLDOWN_MIN, GRAVITON_PULL_COOLDOWN_MAX)
+        # Visual indicator ring for gravity pull (hidden by default)
+        if self.is_graviton:
+            self.pull_ring = Entity(
+                model='quad',
+                color=color.rgba(180, 0, 255, 0),
+                scale=GRAVITON_PULL_RADIUS,
+                position=(self.x, 0.1, self.z),
+                rotation_x=90,
+            )
 
         # Eyes for all enemies
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
@@ -971,6 +1029,8 @@ class Collectible(Entity):
         'Time Warp':      {'color': color.rgb(150, 220, 255),'value': 25,  'model': 'diamond'},
         'Star Fruit':     {'color': color.rgb(255, 255, 100), 'value': 20,  'model': 'diamond'},
         'XP Orb':         {'color': color.rgb(100, 200, 255), 'value': 25,  'model': 'sphere'},
+        'Fireball Scroll': {'color': color.rgb(255, 80, 20),  'value': 25,  'model': 'diamond'},
+        'Regen Crystal':  {'color': color.rgb(50, 255, 120),  'value': 20,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -1261,7 +1321,7 @@ class Trader(Entity):
     5 Space Gloop into a random rare item.
     """
 
-    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit']
+    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit', 'Fireball Scroll', 'Regen Crystal']
 
     def __init__(self, position, name=None):
         if name is None:
@@ -1552,6 +1612,9 @@ MISSION_TEMPLATES = [
     ("Leech Hunter",         "Suck out the Cosmic Leeches infesting the area", "Cosmic Leech", 3, "kill", 250),
     ("Star Walker",          "Collect Star Fruits to cross treacherous terrain", "Star Fruit", 3, "collect", 200),
     ("Stalker Hunt",          "Track and eliminate Void Stalkers before they ambush you", "Void Stalker", 2, "kill", 350),
+    ("Gravity Well",          "Destroy Gravitons that pull you into danger", "Graviton", 2, "kill", 400),
+    ("Scroll Scorch",         "Collect Fireball Scrolls to blast groups of enemies", "Fireball Scroll", 2, "collect", 300),
+    ("Regen Rush",            "Find Regen Crystals to survive longer in combat", "Regen Crystal", 2, "collect", 200),
 ]
 
 class Mission:
@@ -1775,6 +1838,10 @@ class Game:
                         destroy(child)
                 destroy(seg)
             enemy.segment_entities.clear()
+        # Clean up Graviton pull ring if present
+        if hasattr(enemy, 'pull_ring') and enemy.pull_ring is not None:
+            destroy(enemy.pull_ring)
+            enemy.pull_ring = None
         destroy(enemy.eye_l)
         destroy(enemy.eye_r)
         destroy(enemy.hp_bar_bg)
@@ -1914,7 +1981,8 @@ class Game:
                       'game_over_text', 'game_over_sub', 'game_over_stats',
                       'game_over_restart', 'level_up_text', 'dash_text',
                       'powerup_text', 'crosshair', 'crosshair2',
-                      'combo_text', 'weapon_text', 'effect_text', 'biome_text'):
+                      'combo_text', 'weapon_text', 'effect_text', 'biome_text',
+                      'boss_hp_bar_bg', 'boss_hp_bar', 'boss_name_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -2441,6 +2509,16 @@ class Game:
         self.biome_text = Text(text='', position=BIOME_INDICATOR_POSITION, scale=BIOME_INDICATOR_SCALE,
                                color=color.white, origin=(0.5, 0.5))
 
+        # Boss health bar — appears when a boss-tier enemy (Plasma Drake) is nearby
+        self.boss_hp_bar_bg = Entity(parent=camera.ui, model='quad', color=color.dark_gray,
+                                     scale=(BOSS_HP_BAR_WIDTH, BOSS_HP_BAR_HEIGHT),
+                                     position=(0, BOSS_HP_BAR_Y), origin=(0, 0), visible=False)
+        self.boss_hp_bar = Entity(parent=camera.ui, model='quad', color=color.red,
+                                  scale=(BOSS_HP_BAR_WIDTH, BOSS_HP_BAR_HEIGHT),
+                                  position=(0, BOSS_HP_BAR_Y), origin=(0, 0), visible=False)
+        self.boss_name_text = Text(text='', position=(0, BOSS_HP_BAR_Y + 0.03), scale=1.0,
+                                   color=color.yellow, origin=(0, 0), visible=False)
+
         # Minimap
         self.minimap_shown = True
         self.minimap_entity = None
@@ -2832,6 +2910,10 @@ class Game:
             pu_lines.append(f'POWER SURGE: {p.monolith_damage_timer:.1f}s')
         if p.monolith_xp_timer > 0:
             pu_lines.append(f'WISDOM AURA: {p.monolith_xp_timer:.1f}s')
+        if p.fireball_timer > 0:
+            pu_lines.append(f'FIREBALL: {p.fireball_timer:.1f}s')
+        if p.regen_timer > 0:
+            pu_lines.append(f'REGEN: {p.regen_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
@@ -2874,11 +2956,19 @@ class Game:
             effect_lines.append(f'DRAIN: {p.drain_timer:.1f}s')
         if p.float_timer > 0:
             effect_lines.append(f'FLOAT: {p.float_timer:.1f}s')
+        if p.fireball_timer > 0:
+            effect_lines.append(f'FIREBALL: {p.fireball_timer:.1f}s')
+        if p.regen_timer > 0:
+            effect_lines.append(f'REGEN: {p.regen_timer:.1f}s')
         self.effect_text.text = '  |  '.join(effect_lines)
         if p.drain_timer > 0:
             self.effect_text.color = color.rgb(200, 0, 200)
         elif p.float_timer > 0:
             self.effect_text.color = color.yellow
+        elif p.fireball_timer > 0:
+            self.effect_text.color = color.rgb(255, 80, 20)
+        elif p.regen_timer > 0:
+            self.effect_text.color = color.rgb(50, 255, 120)
         else:
             self.effect_text.color = color.gray
 
@@ -2914,6 +3004,35 @@ class Game:
             min(255, int(biome_col[1] * 255) + 80),
             min(255, int(biome_col[2] * 255) + 80),
         )
+
+        # ── Boss Health Bar ──
+        # Show a prominent health bar at the top of the screen when a boss-tier enemy is nearby
+        boss = None
+        boss_range = 40  # Only show boss bar when within this range
+        for enemy in self.enemies:
+            if enemy.alive and not enemy.dying and enemy.name == 'Plasma Drake':
+                dist = math.sqrt((enemy.x - p.x) ** 2 + (enemy.z - p.z) ** 2)
+                if dist < boss_range:
+                    boss = enemy
+                    break
+        if boss:
+            boss_ratio = max(0, boss.hp / boss.max_hp) if boss.max_hp > 0 else 0
+            self.boss_hp_bar_bg.visible = True
+            self.boss_hp_bar.visible = True
+            self.boss_name_text.visible = True
+            self.boss_name_text.text = f'☠ {boss.name}'
+            self.boss_hp_bar.scale_x = BOSS_HP_BAR_WIDTH * boss_ratio
+            # Boss bar color: red → orange → yellow as health drops
+            if boss_ratio > 0.5:
+                bt = (boss_ratio - 0.5) * 2
+                self.boss_hp_bar.color = color.rgb(255, int(200 * (1 - bt)), 0)
+            else:
+                bt = boss_ratio * 2
+                self.boss_hp_bar.color = color.rgb(255, int(100 * bt), 0)
+        else:
+            self.boss_hp_bar_bg.visible = False
+            self.boss_hp_bar.visible = False
+            self.boss_name_text.visible = False
 
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
@@ -3103,6 +3222,18 @@ def game_update():
         # Pulsing shield effect
         p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
 
+    # Fireball aura visual update
+    p.fireball_visual.visible = p.fireball_timer > 0
+    if p.fireball_timer > 0:
+        # Pulsing fire aura
+        p.fireball_visual.scale = 1.8 + math.sin(game.t * 6) * 0.15
+
+    # Regen glow visual update
+    p.regen_visual.visible = p.regen_timer > 0
+    if p.regen_timer > 0:
+        # Pulsing green glow
+        p.regen_visual.scale = 1.5 + math.sin(game.t * 4) * 0.1
+
     # Float visual update — show golden shimmer when floating
     if p.float_timer > 0:
         if not hasattr(p, 'float_ring') or p.float_ring is None:
@@ -3160,6 +3291,29 @@ def game_update():
     # Star Fruit float timer
     if p.float_timer > 0:
         p.float_timer -= time.dt
+
+    # Fireball Scroll timer
+    if p.fireball_timer > 0:
+        p.fireball_timer -= time.dt
+
+    # Regen Crystal timer — regenerate HP over time
+    if p.regen_timer > 0:
+        p.regen_timer -= time.dt
+        if not hasattr(p, '_regen_tick'):
+            p._regen_tick = 0
+        p._regen_tick += time.dt
+        if p._regen_tick >= 1.0:
+            p._regen_tick = 0
+            heal_amount = min(REGEN_HP_PER_SECOND, p.max_hp - p.hp)
+            if heal_amount > 0:
+                p.hp += heal_amount
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(50, 255, 120), count=4)
+                game.damage_numbers.append(DamageNumber(p.position, heal_amount, is_kill=False, is_crit=False))
+                # Green text for healing
+                for dn in game.damage_numbers:
+                    if dn.position == p.position and dn.text == str(heal_amount):
+                        dn.text_entity.color = color.green
+                        break
 
     # Cosmic Leech drain DoT — deals damage over time
     if p.drain_timer > 0:
@@ -3575,6 +3729,71 @@ def game_update():
                         seg.y = 1 + math.sin(game.t * 2.5 + i * 0.8) * 0.15
                 # Sinuous movement: add a lateral sway to the serpent's chase
                 sway = math.sin(game.t * 4 + id(enemy) % 100) * 0.3
+
+            # ── Graviton: Periodically activates gravity pull toward itself ──
+            # PERFORMANCE: skip complex pull AI for distant gravitons
+            if enemy.is_graviton and enemy.alive and not enemy.dying and dist_to_player < AI_CULL_RANGE:
+                if enemy.graviton_pull_active:
+                    # Pull phase: drag player toward graviton
+                    enemy.graviton_pull_timer -= time.dt
+                    pull_dir = (enemy.position - p.position)
+                    pull_dir.y = 0
+                    pull_dist = pull_dir.length()
+                    if pull_dist > 0.5 and pull_dist < GRAVITON_PULL_RADIUS:
+                        pull_force = GRAVITON_PULL_FORCE * (1.0 - pull_dist / GRAVITON_PULL_RADIUS)
+                        p.x += pull_dir.normalized().x * pull_force * time.dt
+                        p.z += pull_dir.normalized().z * pull_force * time.dt
+                        # Clamp player position
+                        p.x = max(1, min(p.x, (WORLD_SIZE - 1) * TILE_SCALE))
+                        p.z = max(1, min(p.z, (WORLD_SIZE - 1) * TILE_SCALE))
+                        # Deal continuous damage while pulling
+                        if not hasattr(enemy, '_grav_dmg_tick'):
+                            enemy._grav_dmg_tick = 0
+                        enemy._grav_dmg_tick += time.dt
+                        if enemy._grav_dmg_tick >= 1.0:
+                            enemy._grav_dmg_tick = 0
+                            if p.shield_timer <= 0:
+                                died = p.take_damage(GRAVITON_PULL_DAMAGE)
+                                game._spawn_particles(p.position, color.rgb(180, 0, 255), count=4)
+                                game.damage_numbers.append(DamageNumber(p.position, GRAVITON_PULL_DAMAGE, is_kill=False))
+                                if died:
+                                    game._show_death_screen(p)
+                    # Pulsing purple ring visual effect
+                    ring_alpha = int(60 + 40 * math.sin(game.t * 8))
+                    enemy.pull_ring.color = color.rgba(180, 0, 255, ring_alpha)
+                    enemy.pull_ring.scale = GRAVITON_PULL_RADIUS * (0.8 + 0.2 * math.sin(game.t * 5))
+                    # Pulsing enemy glow
+                    enemy.color = color.rgb(
+                        min(255, int(180 + 75 * math.sin(game.t * 10))),
+                        0,
+                        min(255, int(255))
+                    )
+                    if enemy.graviton_pull_timer <= 0:
+                        enemy.graviton_pull_active = False
+                        enemy.graviton_cooldown_timer = random.uniform(GRAVITON_PULL_COOLDOWN_MIN, GRAVITON_PULL_COOLDOWN_MAX)
+                        enemy.pull_ring.color = color.rgba(180, 0, 255, 0)
+                        enemy.color = enemy.original_color
+                else:
+                    # Cooldown phase: count down until next pull
+                    enemy.graviton_cooldown_timer -= time.dt
+                    # Show a dim warning indicator when close to pulling
+                    if enemy.graviton_cooldown_timer < 1.5 and dist_to_player < GRAVITON_PULL_RADIUS:
+                        warning_alpha = int(15 + 15 * math.sin(game.t * 6))
+                        enemy.pull_ring.color = color.rgba(180, 0, 255, warning_alpha)
+                        enemy.pull_ring.scale = GRAVITON_PULL_RADIUS
+                    else:
+                        enemy.pull_ring.color = color.rgba(180, 0, 255, 0)
+                    if enemy.graviton_cooldown_timer <= 0:
+                        enemy.graviton_pull_active = True
+                        enemy.graviton_pull_timer = GRAVITON_PULL_DURATION
+                        game.add_message("Graviton gravity pull!")
+                        game._spawn_particles(enemy.position, color.rgb(180, 0, 255), count=10)
+                        game.screen_shake = max(game.screen_shake, 0.3)
+                # Update ring position to follow graviton
+                enemy.pull_ring.x = enemy.x
+                enemy.pull_ring.z = enemy.z
+                # Float higher than normal enemies
+                enemy.y = 2 + math.sin(game.t * 2 + id(enemy) % 100) * 0.3
         else:
             # Wander
             enemy.wander_timer -= time.dt
@@ -3688,8 +3907,41 @@ def game_update():
                     game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
                     game.screen_shake = max(game.screen_shake, 0.15)
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
-                    # White ripple for normal hits
+                # White ripple for normal hits
                     game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 255, 220, 160)))
+                # Fireball Scroll AOE: if active, projectile impacts explode and hit nearby enemies
+                if p.fireball_timer > 0:
+                    blast_damage = int(damage * FIREBALL_BLAST_DAMAGE_PERCENT)
+                    for nearby_enemy in game.enemies:
+                        if nearby_enemy is enemy or not nearby_enemy.alive or nearby_enemy.dying:
+                            continue
+                        blast_dist = (nearby_enemy.position - enemy.position).length()
+                        if blast_dist < FIREBALL_BLAST_RADIUS:
+                            # Damage falls off with distance
+                            falloff = 1.0 - (blast_dist / FIREBALL_BLAST_RADIUS)
+                            aoe_dmg = max(1, int(blast_damage * falloff))
+                            nearby_killed = nearby_enemy.take_damage(aoe_dmg)
+                            game._spawn_particles(nearby_enemy.position, color.rgb(255, 120, 20), count=6)
+                            game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=False))
+                            if nearby_killed:
+                                p.add_kill(nearby_enemy.name)
+                                game.combo_count += 1
+                                game.combo_timer = COMBO_TIMEOUT
+                                game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                                game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
+                                loot_range = ENEMY_LOOT_DROPS.get(nearby_enemy.name, (2, 4))
+                                for _ in range(random.randint(loot_range[0], loot_range[1])):
+                                    lx = nearby_enemy.x + random.uniform(-2, 2)
+                                    lz = nearby_enemy.z + random.uniform(-2, 2)
+                                    lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
+                                    lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
+                                    if game._is_walkable(lx, lz):
+                                        c = Collectible(position=Vec3(lx, 1, lz))
+                                        game.collectibles.append(c)
+                    # Explosion visual at impact point
+                    game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=20)
+                    game.screen_shake = max(game.screen_shake, 0.3)
+                    game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 100, 0, 200)))
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
@@ -3922,6 +4174,16 @@ def game_update():
                 game._spawn_particles(col.position, color.rgb(100, 200, 255), count=18)
                 game.damage_numbers.append(DamageNumber(p.position, xp_gain, is_kill=False))
                 game.screen_shake = max(game.screen_shake, 0.15)
+            elif col.name == 'Fireball Scroll':
+                p.fireball_timer = FIREBALL_DURATION
+                game.add_message(f"Fireball Scroll! Explosive shots for {FIREBALL_DURATION:.0f}s!")
+                game._spawn_particles(col.position, color.rgb(255, 80, 20), count=16)
+                game.screen_shake = max(game.screen_shake, 0.2)
+            elif col.name == 'Regen Crystal':
+                p.regen_timer = REGEN_DURATION
+                game.add_message(f"Regen Crystal! +{REGEN_HP_PER_SECOND} HP/s for {REGEN_DURATION:.0f}s!")
+                game._spawn_particles(col.position, color.rgb(50, 255, 120), count=16)
+                game.screen_shake = max(game.screen_shake, 0.15)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -3929,7 +4191,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal'):
                 p.score += col.value
                 p.gain_xp(col.value // 10)
             # Start pop animation instead of immediate destroy
