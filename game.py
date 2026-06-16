@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.8.0"
+VERSION = "2.8.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -115,6 +115,7 @@ PARTICLE_KILL_COUNT = 22              # Bigger kill explosion
 PARTICLE_DAMAGE_COUNT = 8             # More player-damage particles
 PARTICLE_COLLECT_COUNT = 16            # More collect sparkles
 PARTICLE_LEVELUP_COUNT = 30          # Bigger level-up burst
+PARTICLE_COLOR_VARIATION = 0.20      # ±20% random hue shift on each particle for natural, non-uniform bursts
 
 # ─── Muzzle Flash ──────────────────────────────────────────────────────────────
 MUZZLE_FLASH_DURATION = 0.08            # How long the muzzle flash is visible
@@ -158,6 +159,11 @@ ENEMY_DAMAGE_SCALE_PER_TIER = 0.10    # +10% enemy damage per difficulty tier ab
 DMG_NUMBER_LIFETIME = 1.0
 DMG_NUMBER_RISE_SPEED = 3.0
 DMG_NUMBER_SCALE = 1.2
+
+# ─── Low-HP Danger Overlay ──────────────────────────────────────────────────
+LOW_HP_VIGNETTE_THRESHOLD = 0.30   # HP ratio below which the danger vignette appears
+LOW_HP_VIGNETTE_MAX_ALPHA = 90     # Peak alpha of red vignette at 0 HP
+LOW_HP_HEARTBEAT_SPEED = 8.0      # How fast the vignette pulses (mimics heartbeat)
 
 # ─── Level-Up Feedback ──────────────────────────────────────────────────────
 LEVEL_UP_SCALE_BOUNCE_DURATION = 0.6    # How long the player bounces on level-up
@@ -450,11 +456,19 @@ MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
 # ─── Performance: Visual Culling ──────────────────────────────────────────────
 VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
 AI_CULL_RANGE = 50       # Skip complex special AI (phase shift, spit, orbit, etc.) beyond this distance
+PROJECTILE_COLLISION_PRECHECK_SQ = 2500  # Squared distance: skip full collision math for enemies >50 units from projectile
 
 # ─── Collectible Glow Pulse ──────────────────────────────────────────────────
 GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
 GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
 GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
+
+# ─── Enemy Attack / Contact Constants ──────────────────────────────────────────
+SHIELD_BLOCK_PARTICLE_COUNT = 10  # Particle burst count when shield absorbs a hit
+ENEMY_PROJECTILE_HIT_RADIUS = 1.5  # How close an enemy projectile must be to hit the player
+COLLECTIBLE_RESPAWN_RANGE_MIN = 20  # Min distance from player for collectible respawns
+COLLECTIBLE_RESPAWN_RANGE_MAX = 50  # Max distance from player for collectible respawns
+MIN_SPAWN_INTERVAL = 3.0            # Minimum enemy spawn interval (seconds)
 
 # ─── Sky Nebula ──────────────────────────────────────────────────────────────
 NEBULA_CLOUD_COUNT = 12
@@ -1828,6 +1842,16 @@ class Game:
         self.crosshair2 = Entity(parent=camera.ui, model='quad', color=color.rgba(255, 255, 255, 128),
                                  scale=(0.04, 0.003), position=(0, 0))
 
+        # Low-HP danger vignette — full-screen red overlay that pulses when health is critical
+        self.danger_vignette = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(200, 0, 0, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=1,  # Render behind other UI
+        )
+
     @staticmethod
     def _destroy_enemy_entities(enemy):
         """Clean up all sub-entities owned by an enemy (decor, eyes, HP bar, shadow, segments).
@@ -1993,7 +2017,8 @@ class Game:
                       'game_over_restart', 'level_up_text', 'dash_text',
                       'powerup_text', 'crosshair', 'crosshair2',
                       'combo_text', 'weapon_text', 'effect_text', 'biome_text',
-                      'boss_hp_bar_bg', 'boss_hp_bar', 'boss_name_text'):
+                      'boss_hp_bar_bg', 'boss_hp_bar', 'boss_name_text',
+                      'danger_vignette'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -2769,24 +2794,42 @@ class Game:
                 wp.visible = False
 
     def _spawn_particles(self, pos, col, count=8):
-        """Spawn burst particles at a position. Respects MAX_PARTICLES limit."""
+        """Spawn burst particles at a position. Respects MAX_PARTICLES limit.
+
+        Each particle gets a slight random color variation from the base color
+        for a more natural, non-uniform look rather than identical spheres.
+        """
         count = min(count, MAX_PARTICLES - len(self.particles))
         if count <= 0:
             return
         for _ in range(count):
             vel = Vec3(random.uniform(-3, 3), random.uniform(1, 5), random.uniform(-3, 3))
-            p = Entity(model='sphere', color=col, scale=random.uniform(0.1, 0.3),
+            # Color variation: shift each RGB channel by ±PARTICLE_COLOR_VARIATION for natural look
+            r_var = max(0, min(255, int(col[0] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(col[1] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(col[2] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            varied_col = color.rgb(r_var, g_var, b_var)
+            p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.1, 0.3),
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.5, 1.5)))
 
     def _spawn_collect_burst(self, pos, col):
-        """Spawn a ring burst effect when collecting an item."""
+        """Spawn a ring burst effect when collecting an item.
+
+        Each particle gets a slight random color variation for a more
+        vibrant, natural-looking burst rather than identical orbs.
+        """
         count = min(PARTICLE_COLLECT_COUNT, MAX_PARTICLES - len(self.particles))
         for i in range(count):
             angle = (i / count) * math.pi * 2
             spread = random.uniform(1.5, 3.5)
             vel = Vec3(math.cos(angle) * spread, random.uniform(2, 5), math.sin(angle) * spread)
-            p = Entity(model='sphere', color=col, scale=random.uniform(0.15, 0.35),
+            # Color variation for a richer, more natural burst
+            r_var = max(0, min(255, int(col[0] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(col[1] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(col[2] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            varied_col = color.rgb(r_var, g_var, b_var)
+            p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.15, 0.35),
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
@@ -2865,6 +2908,17 @@ class Game:
         else:
             self.hp_bar_bg.color = color.dark_gray
         self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
+
+        # Low-HP danger vignette — red pulsing overlay at screen edges when health is low
+        if hp_ratio < LOW_HP_VIGNETTE_THRESHOLD:
+            # Urgency scales with how low HP is: 0 HP = max alpha, threshold HP = 0 alpha
+            danger_ratio = 1.0 - (hp_ratio / LOW_HP_VIGNETTE_THRESHOLD)
+            # Heartbeat-style pulsing: fast rhythmic throb for urgency
+            heartbeat = 0.5 + 0.5 * math.sin(self.t * LOW_HP_HEARTBEAT_SPEED)
+            vignette_alpha = int(LOW_HP_VIGNETTE_MAX_ALPHA * danger_ratio * heartbeat)
+            self.danger_vignette.color = color.rgba(200, 0, 0, vignette_alpha)
+        else:
+            self.danger_vignette.color = color.rgba(200, 0, 0, 0)
 
         # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
@@ -3593,7 +3647,7 @@ def game_update():
                         # Damage player if in range
                         if dist_to_player < VOID_BOMBER_EXPLOSION_RADIUS:
                             if p.shield_timer > 0:
-                                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
                                 game.add_message("Shield absorbed explosion!")
                             else:
                                 died = p.take_damage(VOID_BOMBER_EXPLOSION_DAMAGE)
@@ -3857,7 +3911,7 @@ def game_update():
                 game._spawn_particles(enemy.position, color.rgb(150, 0, 255), count=8)
             if p.shield_timer > 0:
                 # Shield absorbs the hit
-                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
                 game.add_message("Shield blocked!")
             else:
                 died = p.take_damage(effective_damage)
@@ -3919,8 +3973,15 @@ def game_update():
             game.projectile_trails.append(trail)
 
         # Check collision with enemies
+        # PERFORMANCE: pre-check squared distance to skip expensive sqrt for far enemies
+        proj_x, proj_z = proj.x, proj.z
         for enemy in game.enemies:
             if not enemy.alive or enemy.dying:
+                continue
+            # Cheap squared-distance pre-check before the costly length() call
+            dx = proj_x - enemy.x
+            dz = proj_z - enemy.z
+            if dx * dx + dz * dz > PROJECTILE_COLLISION_PRECHECK_SQ:
                 continue
             if (proj.position - enemy.position).length() < enemy.scale_x + 0.5:
                 # Critical hit system: 15% chance for 2x damage
@@ -4063,10 +4124,10 @@ def game_update():
             continue
         # Check collision with player
         dist = (eproj.position - p.position).length()
-        if dist < 1.5:
+        if dist < ENEMY_PROJECTILE_HIT_RADIUS:
             if p.shield_timer > 0:
                 # Shield blocks enemy projectile
-                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
                 game.add_message("Shield blocked!")
             else:
                 died = p.take_damage(eproj.damage)
@@ -4099,7 +4160,7 @@ def game_update():
             if not ring.hit_player and p.invuln_timer <= 0:
                 ring.hit_player = True
                 if p.shield_timer > 0:
-                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=10)
+                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
                     game.add_message("Shield blocked shockwave!")
                 else:
                     died = p.take_damage(ring.damage)
@@ -4311,7 +4372,7 @@ def game_update():
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
     # Dynamic spawn interval: gets faster as player levels up (min 3s)
-    spawn_interval = max(3, ENEMY_SPAWN_INTERVAL - (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL * ENEMY_SPAWN_INTERVAL_LEVEL_DECAY)
+    spawn_interval = max(MIN_SPAWN_INTERVAL, ENEMY_SPAWN_INTERVAL - (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL * ENEMY_SPAWN_INTERVAL_LEVEL_DECAY)
     if game.spawn_timer >= spawn_interval:
         game.spawn_timer = 0
         alive_count = len([e for e in game.enemies if e.alive or e.dying])
@@ -4335,7 +4396,7 @@ def game_update():
     # Respawn collectibles
     if len(game.collectibles) < MIN_COLLECTIBLES and random.random() < COLLECTIBLE_RESPAWN_CHANCE:
         angle = random.uniform(0, math.pi * 2)
-        dist = random.uniform(20, 50)
+        dist = random.uniform(COLLECTIBLE_RESPAWN_RANGE_MIN, COLLECTIBLE_RESPAWN_RANGE_MAX)
         cx = p.x + math.cos(angle) * dist
         cz = p.z + math.sin(angle) * dist
         cx = max(2, min(cx, (WORLD_SIZE - 2) * TILE_SCALE))

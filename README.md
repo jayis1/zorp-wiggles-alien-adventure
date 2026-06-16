@@ -30,7 +30,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.8.0 — 3D!)
+## Features (v2.8.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -111,6 +111,10 @@ python game.py
 - **Horizon glow band** — atmospheric colored gradient quads at the horizon line adding depth and alien sky ambiance
 - **AI culling for distant enemies** — complex special AI behaviors (teleporting, spitting, orbiting, cloaking) are skipped for enemies beyond 50 units, improving performance with many active enemies
 - **Refactored enemy cleanup** — duplicated enemy sub-entity destruction code consolidated into a single `_destroy_enemy_entities()` helper method for cleaner, more maintainable code
+- **Low-HP danger vignette** — a pulsing red screen overlay appears when health drops below 30%, with heartbeat-style rhythm that intensifies as HP drops lower — clearer danger feedback than the HP bar alone
+- **Particle color variation** — each burst particle gets a ±20% random color shift for natural, non-uniform effects instead of identical-looking spheres
+- **Projectile collision pre-check** — squared-distance pre-check skips expensive sqrt calculations for far-away enemies, improving combat performance with many active enemies
+- **Named constants** — magic numbers for shield particles, enemy projectile hit radius, collectible respawn range, and spawn interval extracted into named constants for readability
 
 ## The Self-Improving Game
 
