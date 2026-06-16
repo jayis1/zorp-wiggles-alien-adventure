@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.7.0"
+VERSION = "2.7.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -96,6 +96,11 @@ CAMERA_HEIGHT = 18
 CAMERA_DISTANCE = 22
 CAMERA_ANGLE = 30
 
+# ─── Enemy Hit Feedback ───────────────────────────────────────────────────────
+ENEMY_HIT_FLASH_DURATION = 0.12        # Slightly longer flash for clearer read (was 0.1)
+ENEMY_HIT_SCALE_PUNCH = 1.25          # Brief scale multiplier on hit for impactful feedback
+ENEMY_HIT_SCALE_RECOVERY = 12.0        # How fast scale returns to normal after hit punch
+
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
 PARTICLE_SCALE_DECAY = 0.96           # Particles shrink slightly faster for less clutter
@@ -134,6 +139,11 @@ ENEMY_KNOCKBACK_UP = 2.0       # Upward component of knockback
 COLLECT_POP_DURATION = 0.18    # Tighter pop for snappier feedback
 COLLECT_POP_MAX_SCALE = 2.8    # Bigger overshoot — more dramatic punch
 
+# ─── Collectible Magnetic Pull Visual ────────────────────────────────────────
+COLLECT_PULL_SCALE_MIN = 0.6   # Minimum scale at pull edge (normal)
+COLLECT_PULL_SCALE_MAX = 1.4   # Maximum scale when very close (snapping toward player)
+COLLECT_PULL_GLOW_INTENSITY = 1.5  # Glow brightness multiplier during pull
+
 # ─── Player-Level Difficulty Scaling ──────────────────────────────────────────
 PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
 ENEMY_HP_SCALE_PER_TIER = 0.15        # +15% enemy HP per difficulty tier above base
@@ -160,6 +170,17 @@ STAR_COUNT = 80
 STAR_HEIGHT_MIN = 80
 STAR_HEIGHT_MAX = 150
 STAR_SPREAD = 200
+# Star color palette: warm/cool tints for richer alien sky variety
+STAR_COLORS = [
+    color.rgba(255, 255, 255, 255),   # white
+    color.rgba(255, 240, 220, 255),   # warm cream
+    color.rgba(220, 230, 255, 255),   # cool blue-white
+    color.rgba(255, 200, 180, 255),   # soft orange
+    color.rgba(180, 220, 255, 255),   # icy blue
+    color.rgba(255, 220, 255, 255),   # faint pink
+    color.rgba(255, 255, 200, 255),   # pale yellow
+    color.rgba(200, 255, 220, 255),   # mint green
+]
 
 # ─── Biome Fog ────────────────────────────────────────────────────────────────
 BIOME_FOG = {
@@ -175,6 +196,7 @@ BIOME_FOG = {
     'floating_islands': {'color': color.rgb(25, 15, 45), 'density': 0.005},
     'toxic_bog':  {'color': color.rgb(30, 50, 15),    'density': 0.018},
 }
+FOG_TRANSITION_SPEED = 4.0   # Lerp speed for fog color/density transitions (lower = smoother biome blending)
 
 # ─── Biome Generation ─────────────────────────────────────────────────────────
 BIOME_BLOB_COUNT = 50
@@ -708,6 +730,7 @@ class Enemy(Entity):
         self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
         self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
+        self.hit_scale_punch = 0.0   # Timer for scale punch animation on hit
         self.decor_entities = []
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
         self.alerted = False                  # Whether enemy has detected the player (for alert flash)
@@ -822,9 +845,10 @@ class Enemy(Entity):
             hit_direction: Optional direction vector for knockback (from projectile source).
         """
         self.hp -= amount
-        self.hit_flash = 0.1
+        self.hit_flash = ENEMY_HIT_FLASH_DURATION
+        self.hit_scale_punch = 1.0  # Trigger scale punch animation
         self.color = color.white
-        invoke(setattr, self, 'color', self.original_color, delay=0.1)
+        invoke(setattr, self, 'color', self.original_color, delay=ENEMY_HIT_FLASH_DURATION)
         # Apply knockback if a direction is provided
         if hit_direction and hit_direction.length() > 0.01:
             kb_dir = hit_direction.normalized()
@@ -1558,7 +1582,7 @@ class Game:
         # Sky
         Sky(color=color.rgb(25, 0, 60))
 
-        # Stars in the sky
+        # Stars in the sky — varied colors for a richer alien sky
         self.stars = []
         for _ in range(STAR_COUNT):
             angle_h = random.uniform(0, math.pi * 2)
@@ -1571,9 +1595,12 @@ class Game:
             star_size = random.uniform(1, 3)
             twinkle_speed = random.uniform(2.0, 6.0)
             twinkle_offset = random.uniform(0, math.pi * 2)
+            # Pick a star color from the varied palette for richer sky visuals
+            star_base_color = random.choice(STAR_COLORS)
             star = Entity(
                 model='quad',
-                color=color.rgba(255, 255, 255, int(255 * brightness)),
+                color=color.rgba(int(star_base_color[0] * 255), int(star_base_color[1] * 255),
+                                 int(star_base_color[2] * 255), int(255 * brightness)),
                 scale=star_size,
                 position=(sx, sy, sz),
                 billboard=True,
@@ -1581,6 +1608,7 @@ class Game:
             star.base_brightness = brightness
             star.twinkle_speed = twinkle_speed
             star.twinkle_offset = twinkle_offset
+            star.base_color = star_base_color  # Store for twinkling updates
             self.stars.append(star)
 
         # Nebula clouds — large translucent colored quads for atmospheric depth
@@ -2888,7 +2916,8 @@ def game_update():
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
             alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
-            star.color = color.rgba(255, 255, 255, alpha)
+            bc = star.base_color if hasattr(star, 'base_color') else color.rgba(255, 255, 255, 255)
+            star.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), alpha)
         game._update_hud()
         return
 
@@ -3495,6 +3524,17 @@ def game_update():
                 enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
             else:
                 enemy.y = 1  # Static position when culled
+
+        # Hit scale punch: brief size increase on hit for satisfying impact feedback
+        if enemy.hit_scale_punch > 0:
+            enemy.hit_scale_punch -= time.dt * ENEMY_HIT_SCALE_RECOVERY
+            if enemy.hit_scale_punch < 0:
+                enemy.hit_scale_punch = 0
+            # Scale eases from punch back to normal
+            punch_t = max(0, enemy.hit_scale_punch)
+            scale_mult = 1.0 + (ENEMY_HIT_SCALE_PUNCH - 1.0) * punch_t
+            enemy.scale = enemy.original_scale * scale_mult
+
         # Update ground shadow position to follow enemy (world-space, on ground plane)
         # PERFORMANCE: only update shadows/HP bars for nearby enemies
         if dist_to_player < VISUAL_CULL_RANGE:
@@ -3705,6 +3745,8 @@ def game_update():
             continue
 
         col.animate(game.t)
+        # Reset scale to default if not being pulled (pull sets scale dynamically)
+        col.scale = 0.6
         dist = (col.position - p.position).length()
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction
@@ -3719,6 +3761,14 @@ def game_update():
             col.position += pull_dir * pull_speed * pull_strength * time.dt
             # Spin faster as pulled — proportional to closeness
             col.rotation_y += 200 * closeness * time.dt
+            # Visual feedback: items scale up as they approach the player for satisfying snap
+            closeness_scale = COLLECT_PULL_SCALE_MIN + (COLLECT_PULL_SCALE_MAX - COLLECT_PULL_SCALE_MIN) * closeness
+            col.scale = closeness_scale
+            # Glow brightens during pull for extra visual punch
+            glow_brightness = min(1.0, closeness * COLLECT_PULL_GLOW_INTENSITY)
+            glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
+            glow_alpha = min(255, int(glow_cfg['glow_alpha'] * (1.0 + glow_brightness)))
+            col.glow.color = color.rgba(col.item_color.r, col.item_color.g, col.item_color.b, glow_alpha)
         if dist < COLLECT_RADIUS:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
@@ -3812,7 +3862,8 @@ def game_update():
     for star in game.stars:
         twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
         alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
-        star.color = color.rgba(255, 255, 255, alpha)
+        bc = star.base_color if hasattr(star, 'base_color') else color.rgba(255, 255, 255, 255)
+        star.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), alpha)
 
     # ── Nebula Cloud Drift ──
     for cloud in game.nebula_clouds:
@@ -3826,12 +3877,12 @@ def game_update():
     fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
     target_fog_color = fog_info['color']
     target_fog_density = fog_info['density']
-    # Lerp fog toward target biome's settings (fast transition for snappier atmosphere changes)
-    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * 5)
-    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * 5)
-    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * 5)
+    # Lerp fog toward target biome's settings for smooth atmosphere transitions
+    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * FOG_TRANSITION_SPEED)
+    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * FOG_TRANSITION_SPEED)
+    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * FOG_TRANSITION_SPEED)
     scene.fog_color = color.rgb(int(r), int(g), int(b))
-    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * 5)
+    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * FOG_TRANSITION_SPEED)
 
     # ── Weather Effects ──
     game._update_weather(time.dt, p.position)
