@@ -2118,11 +2118,10 @@ class Game:
     def _build_terrain(self):
         """Build the 3D terrain from the world grid with height variation per biome.
         
-        OPTIMIZED: Instead of 6400 individual Entity tiles with colliders, we group
-        tiles by biome, create them as children of a per-biome parent, then combine()
-        the parent into a single mesh. This reduces draw calls from 6400 to ~11 and
-        removes thousands of unnecessary colliders. A single invisible ground plane
-        provides the collider for mouse.world_point ray hits.
+        OPTIMIZED: Removed 6400 individual box colliders — walkability is checked
+        via world_grid array, not physics. A single invisible ground plane provides
+        the collider for mouse.world_point ray hits. This saves massive startup time
+        and per-frame overhead.
         """
         # Height and scale_y settings per biome for terrain variation
         biome_height = {
@@ -2141,71 +2140,41 @@ class Game:
             'mushroom': 1.1,
             'floating_islands': 1.2,
         }
-
-        # Group tiles by biome for combine() optimization
-        biome_groups = {}  # biome_name -> list of (x, y, z, scale_y)
         for wy in range(WORLD_SIZE):
             for wx in range(WORLD_SIZE):
                 biome = self.world_grid[wy][wx]
+                c = BIOME_COLORS.get(biome, C_GRASS)
                 tile_y = biome_height.get(biome, 0)
                 tile_sy = biome_scale_y.get(biome, 1)
-                if biome not in biome_groups:
-                    biome_groups[biome] = []
-                biome_groups[biome].append((wx, tile_y, wy, tile_sy))
-
-        # Show loading progress
-        loading_text = Text(text='Loading terrain...', origin=(0, 0), scale=2,
-                            color=color.white, background=True, z=-10)
-        loading_text.create_background(padding=(0.3, 0.1), radius=0, color=color.rgba(0, 0, 0, 200))
-
-        # Create combined meshes per biome
-        total_groups = len(biome_groups)
-        for idx, (biome, tiles) in enumerate(biome_groups.items()):
-            c = BIOME_COLORS.get(biome, C_GRASS)
-            parent = Entity(color=c)
-            for (wx, tile_y, wy, tile_sy) in tiles:
-                Entity(
+                tile = Entity(
                     model='cube',
                     color=c,
-                    parent=parent,
                     position=(wx * TILE_SCALE, tile_y, wy * TILE_SCALE),
                     scale=(TILE_SCALE, tile_sy, TILE_SCALE),
                 )
-            parent.combine()
-            self.terrain_entities.append(parent)
+                self.terrain_entities.append(tile)
 
-            # Water surface overlay — semi-transparent blue tint for depth feel
-            if biome == 'water':
-                water_parent = Entity()
-                for (wx, tile_y, wy, tile_sy) in tiles:
-                    Entity(
+                # Water surface overlay — semi-transparent blue tint for depth feel
+                if biome == 'water':
+                    water_overlay = Entity(
                         model='quad',
                         color=color.rgba(30, 80, 220, 80),
-                        parent=water_parent,
                         position=(wx * TILE_SCALE, -0.05, wy * TILE_SCALE),
                         scale=TILE_SCALE,
                         rotation_x=90,
                     )
-                water_parent.combine()
-                self.crystal_entities.append(water_parent)
+                    self.crystal_entities.append(water_overlay)
 
-            # Lava glow overlay — orange glow disc above lava tiles
-            if biome == 'lava':
-                lava_parent = Entity()
-                for (wx, tile_y, wy, tile_sy) in tiles:
-                    Entity(
+                # Lava glow overlay — orange glow disc above lava tiles
+                if biome == 'lava':
+                    lava_glow = Entity(
                         model='quad',
                         color=color.rgba(255, 120, 30, 60),
-                        parent=lava_parent,
                         position=(wx * TILE_SCALE, 0.06, wy * TILE_SCALE),
                         scale=TILE_SCALE * 0.9,
                         rotation_x=90,
                     )
-                lava_parent.combine()
-                self.crystal_entities.append(lava_parent)
-
-            # Update loading progress
-            loading_text.text = f'Loading terrain... {idx + 1}/{total_groups}'
+                    self.crystal_entities.append(lava_glow)
 
         # Single invisible ground plane collider for mouse.world_point ray hits
         # This replaces 6400 individual box colliders with ONE collider
@@ -2219,8 +2188,6 @@ class Game:
             visible=False,
         )
         self.terrain_entities.append(ground_collider)
-
-        destroy(loading_text)
 
         # Decorations — separate pass for clarity; not combined since they vary per-tile
         for wy in range(WORLD_SIZE):
