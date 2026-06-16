@@ -24,6 +24,8 @@ python game.py
 | **Mouse** | Aim at ground |
 | **Left Click** | Shoot tentacle laser |
 | **Space** | Dash (dodge in movement direction) |
+| **Q** | Pulse Wave (push enemies away!) |
+| **F** | Toggle achievements panel |
 | **E** | Trade with Wandering Trader |
 | **M** | Toggle minimap |
 | **TAB** | Toggle missions panel |
@@ -31,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.8.1 — 3D!)
+## Features (v2.9.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -116,6 +118,10 @@ python game.py
 - **Particle color variation** — each burst particle gets a ±20% random color shift for natural, non-uniform effects instead of identical-looking spheres
 - **Projectile collision pre-check** — squared-distance pre-check skips expensive sqrt calculations for far-away enemies, improving combat performance with many active enemies
 - **Named constants** — magic numbers for shield particles, enemy projectile hit radius, collectible respawn range, and spawn interval extracted into named constants for readability
+- **Pulse Wave ability (Q key)** — press Q to emit an expanding teal shockwave that pushes enemies away and deals minor damage! 8-second cooldown. Great for crowd control and creating breathing room when surrounded
+- **Achievement system (18 achievements)** — track milestones like First Blood, Warrior, Dragon Slayer, Survivor, and more! Popup notification on unlock with golden particles. Press F to view the full achievements panel
+- **Spawn Healing Zone** — a gentle green healing aura surrounds the spawn point, regenerating 5 HP/sec when you're inside it. Pulsing ring visual indicator on the ground. A safe haven to retreat to when low on health
+- **Level-scaled collection radius** — both pickup radius and magnetic pull radius grow slightly with each level, rewarding progression with smoother collection
 
 ## The Self-Improving Game
 
@@ -215,6 +221,50 @@ Every projectile hit has a **15% chance** to be a critical hit, dealing **2x dam
 - Possible trade rewards: Meteor Shard, Quantum Fuzz, Shield Crystal, Weapon Upgrade, Nebula Dust, Magnet Core, Time Warp, Star Fruit, Fireball Scroll, Regen Crystal
 - New traders spawn periodically if fewer than 3 are alive
 - Trader names: Zix, Glip, Orbix, Fweem
+
+## Pulse Wave Ability
+
+- Press **Q** to emit an expanding teal shockwave from Zorp's position
+- The wave **pushes enemies away** with strong knockback and deals 8 damage
+- **8-second cooldown** — shown on HUD as "PULSE READY [Q]" or countdown timer
+- Great for **crowd control** — use when surrounded to create breathing room
+- Visual: expanding teal ring that fades as it spreads outward
+- Kills from pulse wave count toward combos and drop loot!
+
+## Spawn Healing Zone
+
+- A **gentle green healing aura** surrounds the world's center (spawn point)
+- Regenerates **5 HP per second** while inside the zone
+- Pulsing green ring on the ground marks the healing area
+- HUD indicator shows "♥ HEALING ZONE" when inside
+- Perfect safe haven to retreat to when low on health
+
+## Achievements
+
+Press **F** to view the achievements panel. 18 milestones to unlock:
+
+| Achievement | Requirement | Icon |
+|-------------|-------------|------|
+| First Blood | Defeat 1 enemy | ☠ |
+| Hunter | Defeat 10 enemies | ⚔ |
+| Warrior | Defeat 50 enemies | 🗡 |
+| Warlord | Defeat 100 enemies | 🔥 |
+| Gatherer | Collect 50 items | 💎 |
+| Hoarder | Collect 200 items | 💰 |
+| Evolver | Reach level 5 | ⬆ |
+| Ascended | Reach level 10 | ✦ |
+| Chain Killer | Reach a 5x combo | ⚡ |
+| Unstoppable | Reach a 10x combo | 💥 |
+| Dragon Slayer | Defeat a Plasma Drake | 🐉 |
+| Survivor | Survive 5 minutes | 🛡 |
+| Veteran | Survive 10 minutes | ⏳ |
+| Rich Alien | Reach 1000 score | 🌟 |
+| Galactic Tycoon | Reach 5000 score | 👑 |
+| Mission Runner | Complete 5 missions | 📋 |
+| Shockwave | Use Pulse Wave | 🌀 |
+| Trader | Complete a trade | 🤝 |
+
+Golden popup notification appears when an achievement unlocks!
 
 ## Alien Monoliths
 

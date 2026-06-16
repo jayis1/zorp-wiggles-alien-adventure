@@ -1843,10 +1843,12 @@ class Game:
         self._spawn_monoliths()
         self._assign_missions(count=3)
 
-        # Lighting — warm alien sun with higher ambient for vivid colors
-        self.sun = DirectionalLight(color=color.rgba(255, 220, 180, 255))
-        self.sun.look_at(Vec3(1, -1, 1))
-        AmbientLight(color=color.rgba(140, 130, 120, 255))
+        # Lighting — NOTE: Ursina entities use unlit_with_fog_shader by default,
+        # so DirectionalLight/AmbientLight have no effect on terrain/entity colors.
+        # Keeping a DirectionalLight for any lit entities that may be added later.
+        # self.sun = DirectionalLight(color=color.rgba(255, 220, 180, 255))
+        # self.sun.look_at(Vec3(1, -1, 1))
+        # AmbientLight(color=color.rgba(140, 130, 120, 255))
 
         # Gradient sky dome — 8 large billboard quads in a ring for a smooth sky gradient
         # OPTIMIZED: 8 quads instead of 96 (12 layers x 8 angles) — same visual, far fewer entities
@@ -1968,9 +1970,12 @@ class Game:
             horizon_glow.base_color = glow_color
             self.horizon_glows.append(horizon_glow)
 
-        # Fog for atmosphere — matches grass biome default on start
-        scene.fog_color = color.rgb(30, 10, 60)
-        scene.fog_density = 0.007
+        # Fog DISABLED — Ursina's unlit_with_fog_shader expects fog_color as
+        # normalized 0-1 vec4, but color.rgb() returns 0-255 values. This mismatch
+        # causes fog_color.rgb to be 30x+ too bright in GLSL, washing everything
+        # white. Re-enable fog only with properly normalized color values.
+        scene.fog_color = color.clear  # alpha=0 means zero fog effect
+        scene.fog_density = 0
 
         # Weather particles (rain, snow, embers)
         self._init_weather()
@@ -2078,6 +2083,16 @@ class Game:
                 destroy(ring)
         self.shockwave_rings.clear()
 
+        # Destroy pulse wave rings
+        for pwr in self.pulse_wave_rings:
+            if pwr and hasattr(pwr, 'enabled') and pwr.enabled:
+                destroy(pwr)
+        self.pulse_wave_rings.clear()
+
+        # Destroy spawn healing zone ring
+        if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
+            destroy(self.spawn_heal_ring)
+
         # Destroy hit ripples
         for ripple in self.hit_ripples:
             if ripple and hasattr(ripple, 'enabled') and ripple.enabled:
@@ -2164,7 +2179,10 @@ class Game:
                       'powerup_text', 'crosshair', 'crosshair2',
                       'combo_text', 'weapon_text', 'effect_text', 'biome_text',
                       'boss_hp_bar_bg', 'boss_hp_bar', 'boss_name_text',
-                      'danger_vignette'):
+                      'danger_vignette',
+                      'achievement_popup_text', 'achievement_popup_sub',
+                      'achievement_panel_text',
+                      'pulse_wave_text', 'spawn_heal_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -3338,6 +3356,44 @@ class Game:
             self.boss_hp_bar.visible = False
             self.boss_name_text.visible = False
 
+        # ── Pulse Wave Cooldown Indicator ──
+        if self.pulse_wave_cooldown > 0:
+            self.pulse_wave_text.text = f'PULSE: {self.pulse_wave_cooldown:.1f}s'
+            self.pulse_wave_text.color = color.gray
+        else:
+            self.pulse_wave_text.text = 'PULSE READY [Q]'
+            self.pulse_wave_text.color = color.rgb(0, 255, 200)
+
+        # ── Spawn Healing Zone Indicator ──
+        spawn_cx = WORLD_SIZE // 2 * TILE_SCALE
+        spawn_cz = WORLD_SIZE // 2 * TILE_SCALE
+        hud_dist_spawn = math.sqrt((p.x - spawn_cx) ** 2 + (p.z - spawn_cz) ** 2)
+        if hud_dist_spawn < SPAWN_HEAL_RADIUS:
+            self.spawn_heal_text.text = '♥ HEALING ZONE'
+            self.spawn_heal_text.color = color.rgb(100, 255, 100)
+        else:
+            self.spawn_heal_text.text = ''
+
+        # ── Achievement Popup Display ──
+        # Show the most recent achievement popup for ACHIEVEMENT_POPUP_DURATION seconds
+        if self.achievement_popups:
+            unlock_time, ach = self.achievement_popups[-1]
+            age = self.t - unlock_time
+            if age < ACHIEVEMENT_POPUP_DURATION:
+                alpha = min(255, int(255 * max(0, 1.0 - age / ACHIEVEMENT_POPUP_DURATION)))
+                self.achievement_popup_text.text = f'{ach.icon} ACHIEVEMENT UNLOCKED!'
+                self.achievement_popup_text.color = color.rgba(255, 220, 50, alpha)
+                self.achievement_popup_text.visible = True
+                self.achievement_popup_sub.text = f'{ach.name} — {ach.desc}'
+                self.achievement_popup_sub.color = color.rgba(255, 200, 50, max(0, alpha - 30))
+                self.achievement_popup_sub.visible = True
+            else:
+                self.achievement_popup_text.visible = False
+                self.achievement_popup_sub.visible = False
+        else:
+            self.achievement_popup_text.visible = False
+            self.achievement_popup_sub.visible = False
+
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
         p = self.player
@@ -3465,6 +3521,11 @@ def game_update():
             if ripple.update_ripple(time.dt):
                 destroy(ripple)
                 game.hit_ripples.remove(ripple)
+        # Update pulse wave rings during freeze (visual only)
+        for pwr in game.pulse_wave_rings[:]:
+            if pwr.update_ring(time.dt):
+                destroy(pwr)
+                game.pulse_wave_rings.remove(pwr)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -4603,19 +4664,20 @@ def game_update():
         if hasattr(hg, 'base_color'):
             hg.color = color.rgba(int(base[0]), int(base[1]), int(base[2]), pulse_alpha)
 
-    # ── Biome-Aware Fog ──
-    current_biome = game._get_biome_at(p.x, p.z)
-    if current_biome != game.current_biome:
-        game.current_biome = current_biome
-    fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
-    target_fog_color = fog_info['color']
-    target_fog_density = fog_info['density']
-    # Lerp fog toward target biome's settings for smooth atmosphere transitions
-    r = lerp(scene.fog_color[0], target_fog_color[0], time.dt * FOG_TRANSITION_SPEED)
-    g = lerp(scene.fog_color[1], target_fog_color[1], time.dt * FOG_TRANSITION_SPEED)
-    b = lerp(scene.fog_color[2], target_fog_color[2], time.dt * FOG_TRANSITION_SPEED)
-    scene.fog_color = color.rgb(int(r), int(g), int(b))
-    scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * FOG_TRANSITION_SPEED)
+    # ── Biome-Aware Fog (DISABLED) ──
+    # Ursina's fog shader expects 0-1 normalized colors but color.rgb() returns
+    # 0-255 values. This causes white-out. Disabled until properly fixed.
+    # current_biome = game._get_biome_at(p.x, p.z)
+    # if current_biome != game.current_biome:
+    #     game.current_biome = current_biome
+    # fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
+    # target_fog_color = fog_info['color']
+    # target_fog_density = fog_info['density']
+    # r = lerp(scene.fog_color[0], target_fog_color[0], time.dt * FOG_TRANSITION_SPEED)
+    # g = lerp(scene.fog_color[1], target_fog_color[1], time.dt * FOG_TRANSITION_SPEED)
+    # b = lerp(scene.fog_color[2], target_fog_color[2], time.dt * FOG_TRANSITION_SPEED)
+    # scene.fog_color = color.rgb(int(r), int(g), int(b))
+    # scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * FOG_TRANSITION_SPEED)
 
     # ── Weather Effects ──
     game._update_weather(time.dt, p.position)
@@ -4808,6 +4870,28 @@ def game_update():
                         int(enemy.original_color[3]) if len(enemy.original_color) > 3 else 255
                     )
                     enemy.color = tinted
+
+    # ── Spawn Healing Zone ──
+    spawn_center_x = WORLD_SIZE // 2 * TILE_SCALE
+    spawn_center_z = WORLD_SIZE // 2 * TILE_SCALE
+    dist_from_spawn = math.sqrt((p.x - spawn_center_x) ** 2 + (p.z - spawn_center_z) ** 2)
+    if dist_from_spawn < SPAWN_HEAL_RADIUS and p.hp < p.max_hp:
+        game._spawn_heal_tick += time.dt
+        if game._spawn_heal_tick >= 1.0:
+            game._spawn_heal_tick = 0
+            heal_amt = min(SPAWN_HEAL_HP_PER_SECOND, p.max_hp - p.hp)
+            if heal_amt > 0:
+                p.hp += heal_amt
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 100), count=3)
+
+    # ── Spawn Heal Zone Ring Pulse ──
+    if hasattr(game, 'spawn_heal_ring') and game.spawn_heal_ring:
+        pulse = 0.5 + 0.5 * math.sin(game.t * 2)
+        heal_alpha = int(SPAWN_HEAL_INDICATOR_ALPHA * (0.6 + 0.4 * pulse))
+        game.spawn_heal_ring.color = color.rgba(100, 255, 100, heal_alpha)
+
+    # ── Achievement Check ──
+    game._check_achievements()
 
     # ── Missions ──
     game._update_missions()
