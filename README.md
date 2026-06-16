@@ -19,8 +19,9 @@ python game.py
 ### Controls
 | Key | Action |
 |-----|--------|
-| **WASD / Arrow Keys** | Move Zorp |
-| **Mouse** | Aim / Look direction |
+| **WASD / Arrow Keys** | Move Zorp (camera-relative) |
+| **Right Click + Mouse** | Orbit camera / Look around |
+| **Mouse** | Aim at ground |
 | **Left Click** | Shoot tentacle laser |
 | **Space** | Dash (dodge in movement direction) |
 | **E** | Trade with Wandering Trader |

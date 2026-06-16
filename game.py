@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.8.1"
+VERSION = "2.9.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -96,6 +96,12 @@ CAMERA_LERP_SPEED = 6.0
 CAMERA_HEIGHT = 18
 CAMERA_DISTANCE = 22
 CAMERA_ANGLE = 30
+CAMERA_YAW_SPEED = 200      # Degrees per second of mouse movement for orbit
+CAMERA_PITCH_SPEED = 150    # Degrees per second of mouse movement for pitch
+CAMERA_PITCH_MIN = 10       # Lowest pitch (looking far ahead)
+CAMERA_PITCH_MAX = 80       # Highest pitch (looking nearly straight down)
+CAMERA_YAW_SMOOTH = 10.0    # Lerp speed for yaw smoothing
+CAMERA_PITCH_SMOOTH = 10.0  # Lerp speed for pitch smoothing
 
 # ─── Enemy Hit Feedback ───────────────────────────────────────────────────────
 ENEMY_HIT_FLASH_DURATION = 0.12        # Slightly longer flash for clearer read (was 0.1)
@@ -502,6 +508,30 @@ C_MUSHROOM = color.rgb(200, 40, 120)
 C_FLOATING_ISLANDS = color.rgb(160, 120, 220)
 C_STAR_FRUIT = color.rgb(255, 255, 100)
 C_TOXIC_BOG = color.rgb(80, 120, 20)
+
+# ─── Pulse Wave Ability (Q key) ──────────────────────────────────────────
+PULSE_WAVE_COOLDOWN = 8.0            # Cooldown between pulse wave uses
+PULSE_WAVE_RADIUS = 10.0             # How far the shockwave reaches
+PULSE_WAVE_EXPAND_SPEED = 25.0       # How fast the ring expands outward
+PULSE_WAVE_PUSH_FORCE = 18.0        # How strongly enemies are pushed away
+PULSE_WAVE_DAMAGE = 8               # Small damage dealt by the wave
+PULSE_WAVE_RING_LIFETIME = 0.5      # How long the visual ring lasts
+PULSE_WAVE_RING_START_SCALE = 0.5   # Starting scale of the ring visual
+PULSE_WAVE_RING_MAX_SCALE = 10.0    # Final scale of the ring visual
+PULSE_WAVE_RING_COLOR = color.rgb(0, 255, 200)  # Teal ring color
+
+# ─── Level-Scaled Collection Radius ────────────────────────────────────────
+COLLECT_RADIUS_PER_LEVEL = 0.06     # Extra collection radius per player level
+COLLECT_PULL_RADIUS_PER_LEVEL = 0.1 # Extra pull radius per player level
+
+# ─── Spawn Healing Zone ────────────────────────────────────────────────────
+SPAWN_HEAL_RADIUS = 25.0            # Radius of the healing zone around spawn
+SPAWN_HEAL_HP_PER_SECOND = 5        # HP restored per second while in zone
+SPAWN_HEAL_INDICATOR_ALPHA = 40     # Alpha of the healing zone ring
+
+# ─── Achievement System ────────────────────────────────────────────────────
+ACHIEVEMENT_POPUP_DURATION = 4.0    # How long achievement popup stays visible
+ACHIEVEMENT_PANEL_MAX_SHOWN = 8     # Max achievements shown in panel
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -1095,7 +1125,78 @@ class Collectible(Entity):
         self.glow.scale = pulse
 
 
-# ─── Shockwave Ring ──────────────────────────────────────────────────────────
+# ─── Pulse Wave Ring ─────────────────────────────────────────────────────
+class PulseWaveRing(Entity):
+    """An expanding teal shockwave ring emitted by the player's Pulse Wave ability.
+
+    The ring expands outward, pushing enemies away and dealing minor damage.
+    It fades as it expands, then disappears when it reaches max radius.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='quad',
+            color=color.rgba(0, 255, 200, 200),
+            scale=PULSE_WAVE_RING_START_SCALE,
+            position=position + Vec3(0, 0.15, 0),
+            rotation_x=90,
+        )
+        self.lifetime = PULSE_WAVE_RING_LIFETIME
+        self.max_lifetime = PULSE_WAVE_RING_LIFETIME
+        self.current_radius = PULSE_WAVE_RING_START_SCALE
+        self.hit_enemies = set()  # Track which enemies were already hit
+
+    def update_ring(self, dt):
+        """Expand the ring. Returns True when expired."""
+        self.current_radius += PULSE_WAVE_EXPAND_SPEED * dt
+        self.scale = self.current_radius
+        self.lifetime -= dt
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        alpha = max(0, int(200 * (1.0 - progress)))
+        self.color = color.rgba(0, 255, 200, alpha)
+        return self.lifetime <= 0 or self.current_radius >= PULSE_WAVE_RING_MAX_SCALE
+
+
+# ─── Achievement ──────────────────────────────────────────────────────────
+class Achievement:
+    """A milestone that unlocks when the player reaches a specific goal.
+
+    Achievements are checked each frame and display a popup notification
+    when unlocked. They persist for the game session and are shown in
+    the achievement panel (press F to view).
+    """
+
+    DEFINITIONS = [
+        {'id': 'first_blood',    'name': 'First Blood',       'desc': 'Defeat your first enemy',               'icon': '☠'},
+        {'id': 'kill_10',        'name': 'Hunter',            'desc': 'Defeat 10 enemies',                      'icon': '⚔'},
+        {'id': 'kill_50',        'name': 'Warrior',           'desc': 'Defeat 50 enemies',                      'icon': '🗡'},
+        {'id': 'kill_100',       'name': 'Warlord',           'desc': 'Defeat 100 enemies',                     'icon': '🔥'},
+        {'id': 'collect_50',     'name': 'Gatherer',          'desc': 'Collect 50 items',                        'icon': '💎'},
+        {'id': 'collect_200',    'name': 'Hoarder',           'desc': 'Collect 200 items',                       'icon': '💰'},
+        {'id': 'level_5',        'name': 'Evolver',           'desc': 'Reach level 5',                           'icon': '⬆'},
+        {'id': 'level_10',       'name': 'Ascended',          'desc': 'Reach level 10',                          'icon': '✦'},
+        {'id': 'combo_5',        'name': 'Chain Killer',       'desc': 'Reach a 5x combo',                       'icon': '⚡'},
+        {'id': 'combo_10',       'name': 'Unstoppable',       'desc': 'Reach a 10x combo',                      'icon': '💥'},
+        {'id': 'boss_kill',      'name': 'Dragon Slayer',     'desc': 'Defeat a Plasma Drake',                   'icon': '🐉'},
+        {'id': 'survive_300',    'name': 'Survivor',          'desc': 'Survive for 5 minutes',                   'icon': '🛡'},
+        {'id': 'survive_600',    'name': 'Veteran',           'desc': 'Survive for 10 minutes',                  'icon': '⏳'},
+        {'id': 'score_1000',     'name': 'Rich Alien',        'desc': 'Reach 1000 score',                        'icon': '🌟'},
+        {'id': 'score_5000',     'name': 'Galactic Tycoon',   'desc': 'Reach 5000 score',                        'icon': '👑'},
+        {'id': 'mission_5',      'name': 'Mission Runner',    'desc': 'Complete 5 missions',                     'icon': '📋'},
+        {'id': 'pulse_wave',     'name': 'Shockwave',         'desc': 'Use Pulse Wave for the first time',        'icon': '🌀'},
+        {'id': 'trade',          'name': 'Trader',            'desc': 'Complete a trade with a wandering trader', 'icon': '🤝'},
+    ]
+
+    def __init__(self, defn):
+        self.id = defn['id']
+        self.name = defn['name']
+        self.desc = defn['desc']
+        self.icon = defn['icon']
+        self.unlocked = False
+        self.unlock_time = 0
+
+
+# ─── Shockwave Ring ────────────────────────────────────────────────────────
 class ShockwaveRing(Entity):
     """An expanding ring projectile fired by the Starburst Sentinel.
 
@@ -1724,11 +1825,15 @@ class Game:
         spawn = Vec3(WORLD_SIZE // 2 * TILE_SCALE, 2, WORLD_SIZE // 2 * TILE_SCALE)
         self.player = Player(position=spawn)
 
-        # Camera rig: third-person camera
+        # Camera rig: orbit camera with mouse look
+        self.cam_yaw = 0.0       # Current yaw angle (degrees)
+        self.cam_pitch = CAMERA_ANGLE  # Current pitch angle (degrees)
+        self.cam_target_yaw = 0.0    # Target yaw for smooth lerp
+        self.cam_target_pitch = CAMERA_ANGLE  # Target pitch for smooth lerp
         self.cam_pivot = Entity(position=spawn)
         camera.parent = self.cam_pivot
-        camera.position = (0, CAMERA_HEIGHT, -CAMERA_DISTANCE)
-        camera.rotation = (CAMERA_ANGLE, 0, 0)
+        # Position camera based on initial yaw
+        self._update_camera_orbit()
         camera.fov = DASH_FOV_NORMAL
 
         # Populate world
@@ -2373,6 +2478,36 @@ class Game:
             return self.world_grid[tz][tx] in WALKABLE
         return False  # Out of bounds is not walkable
 
+    def _update_camera_orbit(self):
+        """Position the camera around the pivot based on current yaw and pitch.
+        
+        Uses spherical coordinates to place the camera behind and above the
+        player, with yaw controlling horizontal orbit and pitch controlling
+        the vertical angle. The camera always looks at the pivot point.
+        """
+        yaw_rad = math.radians(self.cam_yaw)
+        pitch_rad = math.radians(self.cam_pitch)
+        # Spherical coords: camera offset from pivot
+        cam_x = math.sin(yaw_rad) * math.cos(pitch_rad) * CAMERA_DISTANCE
+        cam_y = math.sin(pitch_rad) * CAMERA_DISTANCE
+        cam_z = math.cos(yaw_rad) * math.cos(pitch_rad) * CAMERA_DISTANCE
+        camera.position = (cam_x, cam_y + 2, cam_z)
+        camera.rotation = (self.cam_pitch, -self.cam_yaw + 180, 0)
+
+    def _get_camera_forward(self):
+        """Return the camera's forward direction on the XZ plane (flattened).
+        
+        Used to make WASD movement relative to where the camera is looking,
+        so W always moves 'forward' from the player's perspective.
+        """
+        yaw_rad = math.radians(self.cam_yaw)
+        return Vec3(math.sin(yaw_rad), 0, math.cos(yaw_rad)).normalized()
+
+    def _get_camera_right(self):
+        """Return the camera's right direction on the XZ plane."""
+        yaw_rad = math.radians(self.cam_yaw + 90)
+        return Vec3(math.sin(yaw_rad), 0, math.cos(yaw_rad)).normalized()
+
     def _get_biome_at(self, world_x: float, world_z: float) -> str:
         """Return the biome name at a world position.
 
@@ -2626,7 +2761,7 @@ class Game:
         self.mission_panel_shown = False
         self.mission_text = Text(text='', position=(-0.15, 0.35), scale=1.0, color=color.cyan, visible=False)
         self.controls_text = Text(
-            text='WASD:Move | Click:Shoot | Space:Dash | E:Trade | M:Minimap | Tab:Missions | P:Pause | Float over water with Star Fruit!',
+            text='WASD:Move | RClick:Look | Click:Shoot | Space:Dash | E:Trade | M:Minimap | Tab:Missions | P:Pause',
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
@@ -3339,16 +3474,29 @@ def game_update():
         game._update_hud()
         return
 
-    # ── Player Movement ──
+    # ── Camera Mouse Look ──
+    # Right mouse button: orbit camera around player
+    if held_keys['right mouse']:
+        game.cam_target_yaw += mouse.velocity[0] * CAMERA_YAW_SPEED
+        game.cam_target_pitch -= mouse.velocity[1] * CAMERA_PITCH_SPEED
+        game.cam_target_pitch = max(CAMERA_PITCH_MIN, min(CAMERA_PITCH_MAX, game.cam_target_pitch))
+    # Smooth camera rotation
+    game.cam_yaw = lerp(game.cam_yaw, game.cam_target_yaw, time.dt * CAMERA_YAW_SMOOTH)
+    game.cam_pitch = lerp(game.cam_pitch, game.cam_target_pitch, time.dt * CAMERA_PITCH_SMOOTH)
+    game._update_camera_orbit()
+
+    # ── Player Movement (camera-relative) ──
+    cam_fwd = game._get_camera_forward()
+    cam_right = game._get_camera_right()
     move_dir = Vec3(0, 0, 0)
     if held_keys['w'] or held_keys['up arrow']:
-        move_dir += Vec3(0, 0, 1)
+        move_dir += cam_fwd
     if held_keys['s'] or held_keys['down arrow']:
-        move_dir += Vec3(0, 0, -1)
+        move_dir -= cam_fwd
     if held_keys['a'] or held_keys['left arrow']:
-        move_dir += Vec3(-1, 0, 0)
+        move_dir -= cam_right
     if held_keys['d'] or held_keys['right arrow']:
-        move_dir += Vec3(1, 0, 0)
+        move_dir += cam_right
 
     # Effective speed (apply speed boost power-up)
     effective_speed = p.speed
