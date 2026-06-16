@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.9.0"
+VERSION = "2.9.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -23,6 +23,7 @@ TILE_SCALE = 4
 PLAYER_SPEED = 12
 PLAYER_INVULN_DURATION = 0.5
 PLAYER_BLINK_RATE = 20
+PLAYER_START_XP = 80               # Smoother early-game: first level-up comes sooner (was 100)
 PLAYER_START_HP = 120
 
 # ─── Combat ───────────────────────────────────────────────────────────────────
@@ -461,6 +462,7 @@ MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
 
 # ─── Performance: Visual Culling ──────────────────────────────────────────────
 VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
+COLLECTIBLE_CULL_RANGE = 60  # Skip animate/pull for collectibles beyond this distance
 AI_CULL_RANGE = 50       # Skip complex special AI (phase shift, spit, orbit, etc.) beyond this distance
 PROJECTILE_COLLISION_PRECHECK_SQ = 2500  # Squared distance: skip full collision math for enemies >50 units from projectile
 
@@ -614,7 +616,7 @@ class Player(Entity):
         self.score = 0
         self.level = 1
         self.xp = 0
-        self.xp_to_next = 100
+        self.xp_to_next = PLAYER_START_XP
         self.shoot_timer = 0
         self.invuln_timer = 0
         self.inventory = {}
@@ -754,6 +756,20 @@ class Player(Entity):
             wave = math.sin(t * 5 + i * 1.5) * 0.3
             tent.rotation_x = wave * 40
             tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
+
+    def update_pupils(self):
+        """Make pupils track the mouse/facing direction for personality and feedback.
+
+        Pupils shift slightly in the direction Zorp is facing, giving a lively
+        'looking where you aim' feel that connects the player to the character.
+        """
+        # Map facing direction to a small pupil offset (max 0.12 units)
+        fx, fz = self.facing.x, self.facing.z
+        mag = max(0.001, math.sqrt(fx * fx + fz * fz))
+        ox = (fx / mag) * 0.12
+        oz = (fz / mag) * 0.12
+        self.pupil_l.position = Vec3(-0.3, 0.4, -0.6) + Vec3(ox * 0.5, 0, oz * 0.5)
+        self.pupil_r.position = Vec3(0.3, 0.4, -0.6) + Vec3(ox * 0.5, 0, oz * 0.5)
 
     def animate_bob(self, t):
         """Apply vertical bob and squish/stretch animation to the player.
@@ -1814,6 +1830,30 @@ class Game:
 
         # Kill feed: list of (timestamp, text) entries
         self.kill_feed = []
+
+        # Pulse Wave ability (Q key)
+        self.pulse_wave_cooldown = 0.0
+        self.pulse_wave_rings = []
+
+        # Achievement system
+        self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
+        self.achievement_popups = []  # list of (unlock_time, achievement) for display
+        self.achievement_popup_entities = []  # Text entities for popup display
+        self.achievement_panel_shown = False
+        self.total_kills = 0
+        self.total_items_collected = 0
+        self.traded_once = False
+
+        # Spawn healing zone visual indicator
+        spawn_center = Vec3(WORLD_SIZE // 2 * TILE_SCALE, 0, WORLD_SIZE // 2 * TILE_SCALE)
+        self.spawn_heal_ring = Entity(
+            model='quad',
+            color=color.rgba(100, 255, 100, SPAWN_HEAL_INDICATOR_ALPHA),
+            scale=SPAWN_HEAL_RADIUS * 2,
+            position=spawn_center + Vec3(0, 0.05, 0),
+            rotation_x=90,
+        )
+        self._spawn_heal_tick = 0.0
 
         # Weather particles
         self.weather_particles = []
@@ -3256,7 +3296,9 @@ class Game:
                     self.combo_text.color = color.rgba(255, 50, 50, int(255 * alpha))
                 scale_bonus = 1.0 + min(self.combo_count * 0.15, 1.5)
                 self.combo_text.scale = 2.0 * scale_bonus
-                self.combo_text.text = f'COMBO x{self.combo_count}'
+                # Show XP bonus percentage so players understand the combo reward
+                xp_pct = int((min(self.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER * 100)
+                self.combo_text.text = f'COMBO x{self.combo_count}  (+{xp_pct}% XP)'
             else:
                 self.combo_text.visible = False
         else:
@@ -3429,6 +3471,53 @@ class Game:
         # After pruning, all missions in the list are active (not turned_in)
         if len(self.missions) < 3:
             self._assign_missions(count=1)
+
+    def _check_achievements(self):
+        """Check all achievement conditions and unlock any that are met."""
+        p = self.player
+        checks = {
+            'first_blood':    self.total_kills >= 1,
+            'kill_10':        self.total_kills >= 10,
+            'kill_50':        self.total_kills >= 50,
+            'kill_100':       self.total_kills >= 100,
+            'collect_50':     self.total_items_collected >= 50,
+            'collect_200':    self.total_items_collected >= 200,
+            'level_5':        p.level >= 5,
+            'level_10':       p.level >= 10,
+            'combo_5':        self.combo_count >= 5,
+            'combo_10':       self.combo_count >= 10,
+            'boss_kill':      p.kills.get('Plasma Drake', 0) >= 1,
+            'survive_300':    self.t >= 300,
+            'survive_600':    self.t >= 600,
+            'score_1000':     p.score >= 1000,
+            'score_5000':     p.score >= 5000,
+            'mission_5':      p.completed_missions >= 5,
+            'pulse_wave':     any(a.id == 'pulse_wave' and a.unlocked for a in self.achievements) or self.pulse_wave_cooldown > 0 or bool(self.pulse_wave_rings),
+            'trade':          self.traded_once,
+        }
+        for ach in self.achievements:
+            if not ach.unlocked and checks.get(ach.id, False):
+                ach.unlocked = True
+                ach.unlock_time = self.t
+                self.achievement_popups.append((self.t, ach))
+                self.add_message(f"Achievement Unlocked: {ach.icon} {ach.name}!")
+                self._spawn_particles(p.position + Vec3(0, 2, 0), color.yellow, count=15)
+                self.screen_shake = max(self.screen_shake, 0.2)
+
+    def _activate_pulse_wave(self):
+        """Fire a pulse wave from the player's position.
+
+        Creates an expanding ring that pushes enemies away and deals minor damage.
+        """
+        if self.pulse_wave_cooldown > 0:
+            return
+        p = self.player
+        self.pulse_wave_cooldown = PULSE_WAVE_COOLDOWN
+        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z))
+        self.pulse_wave_rings.append(ring)
+        self._spawn_particles(p.position + Vec3(0, 0.5, 0), PULSE_WAVE_RING_COLOR, count=10)
+        self.add_message("PULSE WAVE!")
+        self.screen_shake = max(self.screen_shake, 0.15)
 
 
 def game_update():
@@ -3752,6 +3841,7 @@ def game_update():
     # Bob animation
     p.animate_bob(game.t)
     p.update_tentacles(game.t)
+    p.update_pupils()
 
     # Update player ground shadow to track position
     if hasattr(p, 'ground_shadow') and p.ground_shadow:
@@ -3976,6 +4066,7 @@ def game_update():
                                 other_killed = other_enemy.take_damage(VOID_BOMBER_EXPLOSION_DAMAGE // 2)
                                 if other_killed:
                                     p.add_kill(other_enemy.name)
+                                    game.total_kills += 1
                                     xp_gain = BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR
                                     p.gain_xp(xp_gain)
                                     p.score += other_enemy.max_hp
@@ -4339,6 +4430,7 @@ def game_update():
                             game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=False))
                             if nearby_killed:
                                 p.add_kill(nearby_enemy.name)
+                                game.total_kills += 1
                                 game.combo_count += 1
                                 game.combo_timer = COMBO_TIMEOUT
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
@@ -4361,6 +4453,7 @@ def game_update():
                     game.projectiles.remove(proj)
                 if killed:
                     p.add_kill(enemy.name)
+                    game.total_kills += 1
                     # Combo system: increment combo and apply bonus
                     game.combo_count += 1
                     game.combo_timer = COMBO_TIMEOUT
@@ -4524,27 +4617,33 @@ def game_update():
         # Reset scale to default if not being pulled (pull sets scale dynamically)
         col.scale = 0.6
         dist = (col.position - p.position).length()
+        # PERFORMANCE: skip expensive pull/glow updates for distant collectibles
+        near_player = dist < COLLECTIBLE_CULL_RANGE or col.popping
+        
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction
-        pull_radius = COLLECT_PULL_RADIUS * (MAGNET_PULL_RADIUS_MULT if p.magnet_timer > 0 else 1.0)
-        pull_speed = COLLECT_PULL_SPEED * (MAGNET_PULL_SPEED_MULT if p.magnet_timer > 0 else 1.0)
-        if dist < pull_radius and dist > 0.1:
-            pull_dir = (p.position - col.position).normalized()
-            # Acceleration curve: pull gets dramatically stronger as item approaches
-            # This creates a satisfying "snap" feel rather than a linear pull
-            closeness = 1.0 - (dist / pull_radius)  # 0 at edge, ~1 near center
-            pull_strength = closeness ** 0.6  # Exponential ramp — gentle start, snappy finish
-            col.position += pull_dir * pull_speed * pull_strength * time.dt
-            # Spin faster as pulled — proportional to closeness
-            col.rotation_y += 200 * closeness * time.dt
-            # Visual feedback: items scale up as they approach the player for satisfying snap
-            closeness_scale = COLLECT_PULL_SCALE_MIN + (COLLECT_PULL_SCALE_MAX - COLLECT_PULL_SCALE_MIN) * closeness
-            col.scale = closeness_scale
-            # Glow brightens during pull for extra visual punch
-            glow_brightness = min(1.0, closeness * COLLECT_PULL_GLOW_INTENSITY)
-            glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
-            glow_alpha = min(255, int(glow_cfg['glow_alpha'] * (1.0 + glow_brightness)))
-            col.glow.color = color.rgba(col.item_color.r, col.item_color.g, col.item_color.b, glow_alpha)
+        # Level-scaled pull radius: grows with player level
+        if near_player:
+            level_pull_bonus = (p.level - 1) * COLLECT_PULL_RADIUS_PER_LEVEL
+            pull_radius = (COLLECT_PULL_RADIUS + level_pull_bonus) * (MAGNET_PULL_RADIUS_MULT if p.magnet_timer > 0 else 1.0)
+            pull_speed = COLLECT_PULL_SPEED * (MAGNET_PULL_SPEED_MULT if p.magnet_timer > 0 else 1.0)
+            if dist < pull_radius and dist > 0.1:
+                pull_dir = (p.position - col.position).normalized()
+                # Acceleration curve: pull gets dramatically stronger as item approaches
+                # This creates a satisfying "snap" feel rather than a linear pull
+                closeness = 1.0 - (dist / pull_radius)  # 0 at edge, ~1 near center
+                pull_strength = closeness ** 0.6  # Exponential ramp — gentle start, snappy finish
+                col.position += pull_dir * pull_speed * pull_strength * time.dt
+                # Spin faster as pulled — proportional to closeness
+                col.rotation_y += 200 * closeness * time.dt
+                # Visual feedback: items scale up as they approach the player for satisfying snap
+                closeness_scale = COLLECT_PULL_SCALE_MIN + (COLLECT_PULL_SCALE_MAX - COLLECT_PULL_SCALE_MIN) * closeness
+                col.scale = closeness_scale
+                # Glow brightens during pull for extra visual punch
+                glow_brightness = min(1.0, closeness * COLLECT_PULL_GLOW_INTENSITY)
+                glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
+                glow_alpha = min(255, int(glow_cfg['glow_alpha'] * (1.0 + glow_brightness)))
+                col.glow.color = color.rgba(col.item_color.r, col.item_color.g, col.item_color.b, glow_alpha)
         if dist < COLLECT_RADIUS:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
@@ -4601,16 +4700,17 @@ def game_update():
             else:
                 p.add_item(col.name)
                 p.score += col.value
-                p.gain_xp(col.value // 10)
+                p.gain_xp(max(1, col.value // 10))
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
             if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal'):
                 p.score += col.value
-                p.gain_xp(col.value // 10)
+                p.gain_xp(max(1, col.value // 10))
             # Start pop animation instead of immediate destroy
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
+            game.total_items_collected += 1
             # Brief screen flash on pickup for satisfying feedback
             game.screen_shake = max(game.screen_shake, 0.08)
 
@@ -4801,10 +4901,38 @@ def game_update():
                     game.collectibles.append(c)
                     game.add_message(f"Traded {TRADER_TRADE_COST} Space Gloop for {reward_item}!")
                     game._spawn_particles(p.position, color.yellow, count=12)
+                    game.traded_once = True
                 else:
                     game.add_message(f"Need {TRADER_TRADE_COST} Space Gloop to trade!")
     elif not held_keys['e']:
         game._e_held = False
+
+    # ── Pulse Wave (Q key) ──
+    if held_keys['q'] and not getattr(game, '_q_held', False):
+        game._q_held = True
+        game._activate_pulse_wave()
+    elif not held_keys['q']:
+        game._q_held = False
+
+    # ── Achievement Panel Toggle (F key) ──
+    if held_keys['f'] and not getattr(game, '_f_held', False):
+        game._f_held = True
+        game.achievement_panel_shown = not game.achievement_panel_shown
+        game.achievement_panel_text.visible = game.achievement_panel_shown
+        if game.achievement_panel_shown:
+            lines = ["== ACHIEVEMENTS =="]
+            unlocked_count = 0
+            for ach in game.achievements:
+                if ach.unlocked:
+                    status = f"{ach.icon} [DONE]"
+                    unlocked_count += 1
+                else:
+                    status = "  [    ]"
+                lines.append(f"{status} {ach.name} - {ach.desc}")
+            lines.append(f"\n{unlocked_count}/{len(game.achievements)} unlocked")
+            game.achievement_panel_text.text = '\n'.join(lines)
+    elif not held_keys['f']:
+        game._f_held = False
 
     # ── Trader respawn timer ──
     game.trader_spawn_timer -= time.dt

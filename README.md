@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.9.0 — 3D!)
+## Features (v2.9.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -295,3 +295,11 @@ Golden popup notification appears when an achievement unlocks!
 ## License
 
 MIT — Zorp is free to wiggle wherever it wants.
+
+## Changelog
+
+### v2.9.1 — Polish & Performance
+- **Game Balance**: Reduced first level-up threshold from 100 to 80 XP for smoother early-game progression; collectible XP now has a floor of 1 (no more 0 XP drops from cheap items)
+- **Visual Polish**: Zorp's eye pupils now track the mouse/facing direction, giving the character personality and better aim feedback
+- **Performance**: Collectible update loop skips magnetic pull/glow calculations for items >60 units from the player, reducing per-frame overhead with 120+ collectibles
+- **Game Feel**: Combo HUD now displays the XP bonus percentage (e.g., "COMBO x3 (+30% XP)"), making the reward system transparent and satisfying
