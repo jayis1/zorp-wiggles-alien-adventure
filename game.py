@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.7.1"
+VERSION = "2.7.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -100,6 +100,10 @@ CAMERA_ANGLE = 30
 ENEMY_HIT_FLASH_DURATION = 0.12        # Slightly longer flash for clearer read (was 0.1)
 ENEMY_HIT_SCALE_PUNCH = 1.25          # Brief scale multiplier on hit for impactful feedback
 ENEMY_HIT_SCALE_RECOVERY = 12.0        # How fast scale returns to normal after hit punch
+ENEMY_HIT_RIPPLE_DURATION = 0.5       # How long the expanding impact ring lasts on hit
+ENEMY_HIT_RIPPLE_EXPAND_SPEED = 8.0   # How fast the impact ring expands
+ENEMY_HIT_RIPPLE_MAX_SCALE = 3.0      # Maximum scale the impact ring reaches
+ENEMY_HIT_RIPPLE_START_SCALE = 0.3    # Starting scale of the impact ring
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -417,6 +421,7 @@ MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
 
 # ─── Performance: Visual Culling ──────────────────────────────────────────────
 VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
+AI_CULL_RANGE = 50       # Skip complex special AI (phase shift, spit, orbit, etc.) beyond this distance
 
 # ─── Collectible Glow Pulse ──────────────────────────────────────────────────
 GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
@@ -428,6 +433,13 @@ NEBULA_CLOUD_COUNT = 12
 NEBULA_SPREAD = 250
 NEBULA_HEIGHT_MIN = 100
 NEBULA_HEIGHT_MAX = 180
+
+# ─── Horizon Glow ──────────────────────────────────────────────────────────────
+HORIZON_GLOW_COUNT = 8               # Number of gradient quads forming the horizon glow band
+HORIZON_GLOW_SPREAD = 300             # Horizontal spread of glow quads
+HORIZON_GLOW_HEIGHT_MIN = 5           # Bottom of glow band (near horizon)
+HORIZON_GLOW_HEIGHT_MAX = 40          # Top of glow band (fades into sky)
+HORIZON_GLOW_ALPHA_BASE = 35          # Base alpha for glow quads
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 C_GRASS    = color.rgb(34, 139, 34)
@@ -1348,6 +1360,58 @@ class ProjectileTrail(Entity):
         return False
 
 
+class HitRipple(Entity):
+    """An expanding ring effect spawned at enemy hit location for satisfying impact feedback.
+
+    The ring starts small and bright, then expands outward and fades, giving
+    the player a clear visual cue that their shot landed.
+    """
+
+    def __init__(self, position, col=None):
+        """Initialize a hit ripple at the given world position.
+
+        Args:
+            position: 3D world position where the hit occurred.
+            col: Optional color for the ripple (defaults to white/yellow).
+        """
+        if col is None:
+            col = color.rgba(255, 255, 200, 180)
+        super().__init__(
+            model='quad',
+            color=col,
+            scale=ENEMY_HIT_RIPPLE_START_SCALE,
+            position=position + Vec3(0, 0.15, 0),
+            rotation_x=90,
+        )
+        self.lifetime = ENEMY_HIT_RIPPLE_DURATION
+        self.max_lifetime = ENEMY_HIT_RIPPLE_DURATION
+        self.base_color = col
+
+    def update_ripple(self, dt):
+        """Advance the ripple animation. Returns True when expired.
+
+        Args:
+            dt: Delta time in seconds.
+
+        Returns:
+            True if the ripple has expired and should be destroyed.
+        """
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale toward max scale
+        current_scale = ENEMY_HIT_RIPPLE_START_SCALE + (ENEMY_HIT_RIPPLE_MAX_SCALE - ENEMY_HIT_RIPPLE_START_SCALE) * progress
+        self.scale = current_scale
+        # Fade alpha out over lifetime
+        alpha = max(0, int(180 * (1.0 - progress)))
+        r = int(self.base_color[0] * 255) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 0 else 255
+        g = int(self.base_color[1] * 255) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 1 else 255
+        b = int(self.base_color[2] * 255) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 2 else 200
+        self.color = color.rgba(r, g, b, alpha)
+        return False
+
+
 class Projectile(Entity):
     """A laser projectile fired by the player."""
 
@@ -1522,6 +1586,7 @@ class Game:
         self.particles = []
         self.damage_numbers = []
         self.shockwave_rings = []  # Starburst Sentinel shockwave rings
+        self.hit_ripples = []      # Expanding impact ring effects on enemy hits
         self.portals = []          # Portal pairs for fast travel
         self.traders = []          # Wandering Trader NPCs
         self.monoliths = []        # Alien Monoliths — world structures granting buffs
@@ -1642,6 +1707,37 @@ class Game:
             cloud.drift_phase = random.uniform(0, math.pi * 2)
             self.nebula_clouds.append(cloud)
 
+        # Horizon glow band — translucent gradient quads at low altitude for atmospheric depth
+        self.horizon_glows = []
+        horizon_palette = [
+            color.rgb(80, 30, 120),    # purple
+            color.rgb(40, 60, 140),    # blue
+            color.rgb(140, 40, 60),    # red
+            color.rgb(40, 120, 80),    # teal
+            color.rgb(120, 70, 30),    # amber
+            color.rgb(60, 30, 120),    # indigo
+            color.rgb(50, 90, 130),    # slate blue
+            color.rgb(110, 40, 80),    # rose
+        ]
+        for i in range(HORIZON_GLOW_COUNT):
+            angle_h = random.uniform(0, math.pi * 2)
+            gx = math.cos(angle_h) * HORIZON_GLOW_SPREAD
+            gz = math.sin(angle_h) * HORIZON_GLOW_SPREAD
+            gy = random.uniform(HORIZON_GLOW_HEIGHT_MIN, HORIZON_GLOW_HEIGHT_MAX)
+            glow_size = random.uniform(60, 120)
+            glow_color = horizon_palette[i % len(horizon_palette)]
+            glow_alpha = HORIZON_GLOW_ALPHA_BASE + random.randint(-10, 10)
+            horizon_glow = Entity(
+                model='quad',
+                color=color.rgba(int(glow_color[0] * 255), int(glow_color[1] * 255),
+                                 int(glow_color[2] * 255), glow_alpha),
+                scale=glow_size,
+                position=(gx, gy, gz),
+                billboard=True,
+            )
+            horizon_glow.base_color = glow_color
+            self.horizon_glows.append(horizon_glow)
+
         # Fog for atmosphere
         scene.fog_color = color.rgb(25, 0, 60)
         scene.fog_density = 0.007
@@ -1658,6 +1754,34 @@ class Game:
         self.crosshair2 = Entity(parent=camera.ui, model='quad', color=color.rgba(255, 255, 255, 128),
                                  scale=(0.04, 0.003), position=(0, 0))
 
+    @staticmethod
+    def _destroy_enemy_entities(enemy):
+        """Clean up all sub-entities owned by an enemy (decor, eyes, HP bar, shadow, segments).
+
+        Consolidates the duplicated cleanup code that appeared in three places:
+        _cleanup(), the death animation handler, and the not-alive handler.
+        Call this before destroying the enemy entity itself.
+
+        Args:
+            enemy: The Enemy entity whose sub-entities should be destroyed.
+        """
+        for d in enemy.decor_entities:
+            destroy(d)
+        # Clean up Plasma Serpent segments if present
+        if hasattr(enemy, 'segment_entities') and enemy.segment_entities:
+            for seg in enemy.segment_entities:
+                for child in seg.children:
+                    if hasattr(child, 'enabled') and child.enabled:
+                        destroy(child)
+                destroy(seg)
+            enemy.segment_entities.clear()
+        destroy(enemy.eye_l)
+        destroy(enemy.eye_r)
+        destroy(enemy.hp_bar_bg)
+        destroy(enemy.hp_bar)
+        if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
+            destroy(enemy.ground_shadow)
+
     def _cleanup(self):
         """Clean up all game entities for a restart. Destroys terrain, enemies,
         collectibles, projectiles, particles, HUD, and player — but NOT camera,
@@ -1665,22 +1789,7 @@ class Game:
         # Destroy enemies and their sub-entities
         for e in self.enemies:
             if e and e.enabled:
-                for d in e.decor_entities:
-                    destroy(d)
-                # Clean up Plasma Serpent segments if present
-                if hasattr(e, 'segment_entities') and e.segment_entities:
-                    for seg in e.segment_entities:
-                        for child in seg.children:
-                            if hasattr(child, 'enabled') and child.enabled:
-                                destroy(child)
-                        destroy(seg)
-                    e.segment_entities.clear()
-                destroy(e.eye_l)
-                destroy(e.eye_r)
-                destroy(e.hp_bar_bg)
-                destroy(e.hp_bar)
-                if hasattr(e, 'ground_shadow') and e.ground_shadow:
-                    destroy(e.ground_shadow)
+                self._destroy_enemy_entities(e)
                 destroy(e)
         self.enemies.clear()
 
@@ -1724,6 +1833,12 @@ class Game:
             if ring and hasattr(ring, 'enabled') and ring.enabled:
                 destroy(ring)
         self.shockwave_rings.clear()
+
+        # Destroy hit ripples
+        for ripple in self.hit_ripples:
+            if ripple and hasattr(ripple, 'enabled') and ripple.enabled:
+                destroy(ripple)
+        self.hit_ripples.clear()
 
         # Destroy portals
         for portal in self.portals:
@@ -1774,6 +1889,12 @@ class Game:
             if c and c.enabled:
                 destroy(c)
         self.nebula_clouds.clear()
+
+        # Destroy horizon glows
+        for hg in self.horizon_glows:
+            if hg and hg.enabled:
+                destroy(hg)
+        self.horizon_glows.clear()
 
         # Destroy player and sub-entities (player's children: tentacles, eyes, pupils, shield_visual)
         if self.player and self.player.enabled:
@@ -2912,6 +3033,11 @@ def game_update():
             if trail.update_trail(time.dt):
                 destroy(trail)
                 game.projectile_trails.remove(trail)
+        # Update hit ripples during freeze (visual only)
+        for ripple in game.hit_ripples[:]:
+            if ripple.update_ripple(time.dt):
+                destroy(ripple)
+                game.hit_ripples.remove(ripple)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -3159,23 +3285,8 @@ def game_update():
         if enemy.dying:
             if enemy.update_death_animation(time.dt):
                 # Death animation complete, remove enemy
-                for d in enemy.decor_entities:
-                    destroy(d)
-                # Clean up Plasma Serpent segments if present
-                if hasattr(enemy, 'segment_entities') and enemy.segment_entities:
-                    for seg in enemy.segment_entities:
-                        for child in seg.children:
-                            if hasattr(child, 'enabled') and child.enabled:
-                                destroy(child)
-                        destroy(seg)
-                    enemy.segment_entities.clear()
+                game._destroy_enemy_entities(enemy)
                 destroy(enemy)
-                destroy(enemy.eye_l)
-                destroy(enemy.eye_r)
-                destroy(enemy.hp_bar_bg)
-                destroy(enemy.hp_bar)
-                if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
-                    destroy(enemy.ground_shadow)
                 game.enemies.remove(enemy)
             else:
                 # Update ground shadow position during death animation
@@ -3187,23 +3298,8 @@ def game_update():
             continue
 
         if not enemy.alive:
-            for d in enemy.decor_entities:
-                destroy(d)
-            # Clean up Plasma Serpent segments if present
-            if hasattr(enemy, 'segment_entities') and enemy.segment_entities:
-                for seg in enemy.segment_entities:
-                    for child in seg.children:
-                        if hasattr(child, 'enabled') and child.enabled:
-                            destroy(child)
-                    destroy(seg)
-                enemy.segment_entities.clear()
+            game._destroy_enemy_entities(enemy)
             destroy(enemy)
-            destroy(enemy.eye_l)
-            destroy(enemy.eye_r)
-            destroy(enemy.hp_bar_bg)
-            destroy(enemy.hp_bar)
-            if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
-                destroy(enemy.ground_shadow)
             game.enemies.remove(enemy)
             continue
 
@@ -3258,7 +3354,8 @@ def game_update():
             enemy.look_at_2d(p.position)
 
             # ── Phase Shifter: Teleport near player periodically ──
-            if enemy.is_phase_shifter:
+            # PERFORMANCE: skip complex special AI for distant enemies
+            if enemy.is_phase_shifter and dist_to_player < AI_CULL_RANGE:
                 enemy.phase_timer -= time.dt
                 if enemy.phase_timer <= 0:
                     # Teleport to a random position near the player
@@ -3277,7 +3374,7 @@ def game_update():
                     enemy.phase_timer = random.uniform(4, 8)
 
             # ── Spore Spitter: Shoot projectiles at player ──
-            if enemy.is_spore_spitter:
+            if enemy.is_spore_spitter and dist_to_player < AI_CULL_RANGE:
                 enemy.spit_timer -= time.dt
                 if enemy.spit_timer <= 0 and dist_to_player < 25:
                     spit_dir = (p.position - enemy.position).normalized()
@@ -3348,7 +3445,8 @@ def game_update():
                         enemy.death_timer = DEATH_ANIM_DURATION
 
             # ── Nebula Phantom: Flying orbit + dive attack ──
-            if enemy.is_nebula_phantom and enemy.alive:
+            # PERFORMANCE: skip complex orbit/dive AI for distant phantoms
+            if enemy.is_nebula_phantom and enemy.alive and dist_to_player < AI_CULL_RANGE:
                 if enemy.orbit_state == 'orbit':
                     # Circle around the player
                     enemy.orbit_angle += NEBULA_PHANTOM_ORBIT_SPEED * time.dt
@@ -3418,7 +3516,8 @@ def game_update():
                 p._drain_tick = 0  # Bug fix: reset tick counter for new drain application
 
             # ── Void Stalker: Stealth cloak/decloak ambush behavior ──
-            if enemy.is_void_stalker and enemy.alive and not enemy.dying:
+            # PERFORMANCE: skip complex cloak AI for distant stalkers
+            if enemy.is_void_stalker and enemy.alive and not enemy.dying and dist_to_player < AI_CULL_RANGE:
                 enemy.cloak_timer -= time.dt
                 if enemy.cloak_state == 'cloaked':
                     # Nearly invisible — lower alpha
@@ -3461,7 +3560,8 @@ def game_update():
                         game._spawn_particles(enemy.position, color.rgba(40, 40, 60, 150), count=6)
 
             # ── Plasma Serpent: Segmented snake that follows the head smoothly ──
-            if enemy.is_plasma_serpent and enemy.alive and not enemy.dying:
+            # PERFORMANCE: skip complex segment tracking for distant serpents
+            if enemy.is_plasma_serpent and enemy.alive and not enemy.dying and dist_to_player < AI_CULL_RANGE:
                 # Update position history: shift and push head position
                 if len(enemy.segment_positions) > 0:
                     enemy.segment_positions.pop(0)
@@ -3582,10 +3682,14 @@ def game_update():
                     # Extra flash on the enemy for crit — yellow lingers slightly longer
                     enemy.color = color.yellow
                     invoke(setattr, enemy, 'color', enemy.original_color, delay=0.15)
+                    # Golden ripple for critical hits
+                    game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 220, 80, 200)))
                 else:
                     game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
                     game.screen_shake = max(game.screen_shake, 0.15)
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
+                    # White ripple for normal hits
+                    game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 255, 220, 160)))
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
@@ -3711,6 +3815,12 @@ def game_update():
                     game.damage_numbers.append(DamageNumber(p.position, ring.damage, is_kill=False))
                     if died:
                         game._show_death_screen(p)
+
+    # ── Update Hit Ripples ──
+    for ripple in game.hit_ripples[:]:
+        if ripple.update_ripple(time.dt):
+            destroy(ripple)
+            game.hit_ripples.remove(ripple)
 
     # ── Update Collectibles ──
     for col in game.collectibles[:]:
@@ -3869,6 +3979,14 @@ def game_update():
     for cloud in game.nebula_clouds:
         cloud.x += math.sin(game.t * cloud.drift_speed + cloud.drift_phase) * 0.3 * time.dt
         cloud.z += math.cos(game.t * cloud.drift_speed * 0.7 + cloud.drift_phase) * 0.2 * time.dt
+
+    # ── Horizon Glow Subtle Animation ──
+    # Horizon glows pulse slightly in brightness for a living atmosphere
+    for i, hg in enumerate(game.horizon_glows):
+        pulse_alpha = HORIZON_GLOW_ALPHA_BASE + int(8 * math.sin(game.t * 1.5 + i * 0.7))
+        base = hg.base_color if hasattr(hg, 'base_color') else color.rgba(80, 30, 120, 35)
+        if hasattr(hg, 'base_color'):
+            hg.color = color.rgba(int(base[0] * 255), int(base[1] * 255), int(base[2] * 255), pulse_alpha)
 
     # ── Biome-Aware Fog ──
     current_biome = game._get_biome_at(p.x, p.z)

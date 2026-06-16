@@ -30,7 +30,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.7.1 — 3D!)
+## Features (v2.7.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -103,6 +103,10 @@ python game.py
 - **Void Stalker enemy** — stealth predator that cloaks (nearly invisible) and decloaks to ambush! First hit from stealth deals 50% bonus damage
 - **Plasma Serpent enemy** — segmented snake-like creature with 4 body segments that smoothly follow the head. When killed, each segment scatters into a Swarm Mite! Screen shake and particle burst on split
 - **XP Orb collectible** — golden-blue glowing orbs that grant bonus XP scaling with distance from spawn (50–300 XP). Perfect for risk/reward exploration!
+- **Hit ripple effect** — expanding ring at enemy hit location for satisfying impact feedback; golden ripple for critical hits, white for normal hits
+- **Horizon glow band** — atmospheric colored gradient quads at the horizon line adding depth and alien sky ambiance
+- **AI culling for distant enemies** — complex special AI behaviors (teleporting, spitting, orbiting, cloaking) are skipped for enemies beyond 50 units, improving performance with many active enemies
+- **Refactored enemy cleanup** — duplicated enemy sub-entity destruction code consolidated into a single `_destroy_enemy_entities()` helper method for cleaner, more maintainable code
 
 ## The Self-Improving Game
 
