@@ -992,17 +992,17 @@ class Enemy(Entity):
             else:
                 # Use a brightened version of original color for more vivid flashing
                 self.color = color.rgb(
-                    min(255, int(self.original_color[0] * 255 * 1.3) + 60),
-                    min(255, int(self.original_color[1] * 255 * 1.3) + 60),
-                    min(255, int(self.original_color[2] * 255 * 1.3) + 60),
+                    min(255, int(self.original_color[0] * 1.3) + 60),
+                    min(255, int(self.original_color[1] * 1.3) + 60),
+                    min(255, int(self.original_color[2] * 1.3) + 60),
                 )
         else:
             # Dissolve to faded color with a warm glow
             fade = max(0, 1.0 - (progress - 0.7) / 0.3)
             self.color = color.rgba(
-                min(255, int(self.original_color[0] * 255 * fade) + int(40 * fade)),
-                min(255, int(self.original_color[1] * 255 * fade) + int(20 * fade)),
-                min(255, int(self.original_color[2] * 255 * fade) + int(10 * fade)),
+                min(255, int(self.original_color[0] * fade) + int(40 * fade)),
+                min(255, int(self.original_color[1] * fade) + int(20 * fade)),
+                min(255, int(self.original_color[2] * fade) + int(10 * fade)),
                 int(255 * fade),
             )
         # Hide HP bar during death
@@ -1311,8 +1311,8 @@ class AlienMonolith:
                 bc = self.BUFF_COLORS.get(self.active_buff, color.rgb(150, 100, 255))
                 glow_a = int(100 + 50 * math.sin(t * 4))
                 self.cap.color = bc
-                self.ring.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), glow_a)
-                self.ground_glow.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), 40)
+                self.ring.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), glow_a)
+                self.ground_glow.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), 40)
             else:
                 bright_a = int(80 + 40 * math.sin(t * 3))
                 self.cap.color = color.rgb(180, 140, 255)
@@ -1435,7 +1435,7 @@ class ProjectileTrail(Entity):
         self.scale = current_scale
         # Fade alpha out over lifetime
         alpha = max(0, int(200 * (1.0 - progress)))
-        r, g, b = int(self.color[0] * 255), int(self.color[1] * 255), int(self.color[2] * 255)
+        r, g, b = int(self.color[0]), int(self.color[1]), int(self.color[2])
         self.color = color.rgba(r, g, b, alpha)
         return False
 
@@ -1485,9 +1485,9 @@ class HitRipple(Entity):
         self.scale = current_scale
         # Fade alpha out over lifetime
         alpha = max(0, int(180 * (1.0 - progress)))
-        r = int(self.base_color[0] * 255) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 0 else 255
-        g = int(self.base_color[1] * 255) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 1 else 255
-        b = int(self.base_color[2] * 255) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 2 else 200
+        r = int(self.base_color[0]) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 0 else 255
+        g = int(self.base_color[1]) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 1 else 255
+        b = int(self.base_color[2]) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 2 else 200
         self.color = color.rgba(r, g, b, alpha)
         return False
 
@@ -1598,7 +1598,7 @@ class DamageNumber:
         self.text_ent.position = (screen_pos[0], screen_pos[1])
         # Fade out — defensive: clamp alpha to prevent negative values
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
-        r, g, b = int(self.text_ent.color[0] * 255), int(self.text_ent.color[1] * 255), int(self.text_ent.color[2] * 255)
+        r, g, b = int(self.text_ent.color[0]), int(self.text_ent.color[1]), int(self.text_ent.color[2])
         if self.is_kill:
             self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
         elif self.is_crit:
@@ -1752,8 +1752,8 @@ class Game:
             star_base_color = random.choice(STAR_COLORS)
             star = Entity(
                 model='quad',
-                color=color.rgba(int(star_base_color[0] * 255), int(star_base_color[1] * 255),
-                                 int(star_base_color[2] * 255), int(255 * brightness)),
+                color=color.rgba(int(star_base_color[0]), int(star_base_color[1]),
+                                 int(star_base_color[2]), int(255 * brightness)),
                 scale=star_size,
                 position=(sx, sy, sz),
                 billboard=True,
@@ -1785,8 +1785,8 @@ class Game:
             nebula_color = nebula_palette[i % len(nebula_palette)]
             cloud = Entity(
                 model='quad',
-                color=color.rgba(int(nebula_color[0] * 255), int(nebula_color[1] * 255),
-                                 int(nebula_color[2] * 255), 25),
+                color=color.rgba(int(nebula_color[0]), int(nebula_color[1]),
+                                 int(nebula_color[2]), 25),
                 scale=nebula_size,
                 position=(nx, ny, nz),
                 billboard=True,
@@ -1817,8 +1817,8 @@ class Game:
             glow_alpha = HORIZON_GLOW_ALPHA_BASE + random.randint(-10, 10)
             horizon_glow = Entity(
                 model='quad',
-                color=color.rgba(int(glow_color[0] * 255), int(glow_color[1] * 255),
-                                 int(glow_color[2] * 255), glow_alpha),
+                color=color.rgba(int(glow_color[0]), int(glow_color[1]),
+                                 int(glow_color[2]), glow_alpha),
                 scale=glow_size,
                 position=(gx, gy, gz),
                 billboard=True,
@@ -2583,7 +2583,7 @@ class Game:
             for gx in range(WORLD_SIZE):
                 biome = self.world_grid[gz][gx]
                 c = BIOME_COLORS.get(biome, C_GRASS)
-                pixels.append((int(c[0] * 255), int(c[1] * 255), int(c[2] * 255)))
+                pixels.append((min(255, int(c[0])), min(255, int(c[1])), min(255, int(c[2]))))
 
         # Downsample to minimap resolution
         scale_factor = WORLD_SIZE / size
@@ -2805,9 +2805,9 @@ class Game:
         for _ in range(count):
             vel = Vec3(random.uniform(-3, 3), random.uniform(1, 5), random.uniform(-3, 3))
             # Color variation: shift each RGB channel by ±PARTICLE_COLOR_VARIATION for natural look
-            r_var = max(0, min(255, int(col[0] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            g_var = max(0, min(255, int(col[1] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            b_var = max(0, min(255, int(col[2] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            r_var = max(0, min(255, int(col[0] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(col[1] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(col[2] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
             varied_col = color.rgb(r_var, g_var, b_var)
             p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.1, 0.3),
                        position=pos)
@@ -2825,9 +2825,9 @@ class Game:
             spread = random.uniform(1.5, 3.5)
             vel = Vec3(math.cos(angle) * spread, random.uniform(2, 5), math.sin(angle) * spread)
             # Color variation for a richer, more natural burst
-            r_var = max(0, min(255, int(col[0] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            g_var = max(0, min(255, int(col[1] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            b_var = max(0, min(255, int(col[2] * 255 * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            r_var = max(0, min(255, int(col[0] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(col[1] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(col[2] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
             varied_col = color.rgb(r_var, g_var, b_var)
             p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.15, 0.35),
                        position=pos)
@@ -3071,9 +3071,9 @@ class Game:
         # Color matches the biome's ground color for quick visual identification
         biome_col = BIOME_COLORS.get(self.current_biome, C_GRASS)
         self.biome_text.color = color.rgb(
-            min(255, int(biome_col[0] * 255) + 80),
-            min(255, int(biome_col[1] * 255) + 80),
-            min(255, int(biome_col[2] * 255) + 80),
+            min(255, int(biome_col[0]) + 80),
+            min(255, int(biome_col[1]) + 80),
+            min(255, int(biome_col[2]) + 80),
         )
 
         # ── Boss Health Bar ──
@@ -3237,7 +3237,7 @@ def game_update():
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
             alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
             bc = star.base_color if hasattr(star, 'base_color') else color.rgba(255, 255, 255, 255)
-            star.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), alpha)
+            star.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), alpha)
         game._update_hud()
         return
 
@@ -3757,9 +3757,9 @@ def game_update():
                     enemy.eye_r.color = color.rgba(255, 0, 0, stalker_alpha)
                     # Aura nearly invisible
                     for d in enemy.decor_entities:
-                        d.color = color.rgba(int(d.color[0] * 255) if len(d.color) > 0 else 100,
-                                             int(d.color[1] * 255) if len(d.color) > 1 else 50,
-                                             int(d.color[2] * 255) if len(d.color) > 2 else 200,
+                        d.color = color.rgba(int(d.color[0]) if len(d.color) > 0 else 100,
+                                             int(d.color[1]) if len(d.color) > 1 else 50,
+                                             int(d.color[2]) if len(d.color) > 2 else 200,
                                              stalker_alpha)
                     # Decloak when close to player or timer expires
                     if dist_to_player < VOID_STALKER_DECLOAK_BURST_RANGE or enemy.cloak_timer <= 0:
@@ -3774,9 +3774,9 @@ def game_update():
                         enemy.eye_l.color = color.red
                         enemy.eye_r.color = color.red
                         for d in enemy.decor_entities:
-                            d.color = color.rgba(int(enemy.original_color[0] * 255),
-                                                 int(enemy.original_color[1] * 255),
-                                                 int(enemy.original_color[2] * 255), 60)
+                            d.color = color.rgba(int(enemy.original_color[0]),
+                                                 int(enemy.original_color[1]),
+                                                 int(enemy.original_color[2]), 60)
                 elif enemy.cloak_state == 'decloaked':
                     # Fully visible — attack aggressively
                     # Ambush bonus is applied in the attack section below
@@ -4337,7 +4337,7 @@ def game_update():
         twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
         alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
         bc = star.base_color if hasattr(star, 'base_color') else color.rgba(255, 255, 255, 255)
-        star.color = color.rgba(int(bc[0] * 255), int(bc[1] * 255), int(bc[2] * 255), alpha)
+        star.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), alpha)
 
     # ── Nebula Cloud Drift ──
     for cloud in game.nebula_clouds:
@@ -4350,7 +4350,7 @@ def game_update():
         pulse_alpha = HORIZON_GLOW_ALPHA_BASE + int(8 * math.sin(game.t * 1.5 + i * 0.7))
         base = hg.base_color if hasattr(hg, 'base_color') else color.rgba(80, 30, 120, 35)
         if hasattr(hg, 'base_color'):
-            hg.color = color.rgba(int(base[0] * 255), int(base[1] * 255), int(base[2] * 255), pulse_alpha)
+            hg.color = color.rgba(int(base[0]), int(base[1]), int(base[2]), pulse_alpha)
 
     # ── Biome-Aware Fog ──
     current_biome = game._get_biome_at(p.x, p.z)
@@ -4360,9 +4360,9 @@ def game_update():
     target_fog_color = fog_info['color']
     target_fog_density = fog_info['density']
     # Lerp fog toward target biome's settings for smooth atmosphere transitions
-    r = lerp(scene.fog_color[0] * 255, target_fog_color[0] * 255, time.dt * FOG_TRANSITION_SPEED)
-    g = lerp(scene.fog_color[1] * 255, target_fog_color[1] * 255, time.dt * FOG_TRANSITION_SPEED)
-    b = lerp(scene.fog_color[2] * 255, target_fog_color[2] * 255, time.dt * FOG_TRANSITION_SPEED)
+    r = lerp(scene.fog_color[0], target_fog_color[0], time.dt * FOG_TRANSITION_SPEED)
+    g = lerp(scene.fog_color[1], target_fog_color[1], time.dt * FOG_TRANSITION_SPEED)
+    b = lerp(scene.fog_color[2], target_fog_color[2], time.dt * FOG_TRANSITION_SPEED)
     scene.fog_color = color.rgb(int(r), int(g), int(b))
     scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * FOG_TRANSITION_SPEED)
 
@@ -4554,7 +4554,7 @@ def game_update():
                         int(enemy.original_color[0] * 128),
                         int(enemy.original_color[1] * 128 + 127),
                         int(min(255, enemy.original_color[2] * 128 + 200)),
-                        int(enemy.original_color[3] * 255) if len(enemy.original_color) > 3 else 255
+                        int(enemy.original_color[3]) if len(enemy.original_color) > 3 else 255
                     )
                     enemy.color = tinted
 
