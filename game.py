@@ -1148,6 +1148,9 @@ class Portal:
             rotation_x=90,
         )
         # Pillar markers
+        # Bug fix: initialize self.pillars before the loop instead of using
+        # hasattr inside, which is fragile and inconsistent style.
+        self.pillars = []
         for angle_deg in [0, 90, 180, 270]:
             rad = math.radians(angle_deg)
             pillar = Entity(
@@ -1156,12 +1159,7 @@ class Portal:
                 scale=(0.25, 3.0, 0.25),
                 position=position + Vec3(math.cos(rad) * 1.8, 1.5, math.sin(rad) * 1.8),
             )
-            # Store pillar for cleanup
-            if not hasattr(self, 'pillars'):
-                self.pillars = []
             self.pillars.append(pillar)
-        if not hasattr(self, 'pillars'):
-            self.pillars = []
 
     def animate(self, t):
         """Animate portal rings and glow."""
@@ -1261,6 +1259,9 @@ class AlienMonolith:
         )
 
         # Side rune panels — decorative markings
+        # Bug fix: store rune entities in a list so they can be properly destroyed
+        # in destroy_all(), preventing entity leaks and scene graph pollution.
+        self.runes = []
         for angle_deg in [0, 90, 180, 270]:
             rad = math.radians(angle_deg)
             rune = Entity(
@@ -1270,6 +1271,7 @@ class AlienMonolith:
                 scale=(0.6, 2.5),
                 rotation_y=angle_deg,
             )
+            self.runes.append(rune)
 
     def animate(self, t):
         """Animate monolith: pulse glow, rotate ring, update cooldown."""
@@ -1310,6 +1312,10 @@ class AlienMonolith:
         destroy(self.cap)
         destroy(self.ring)
         destroy(self.ground_glow)
+        # Bug fix: also destroy rune entities that were previously leaked
+        for rune in self.runes:
+            destroy(rune)
+        self.runes.clear()
 
 
 # ─── Wandering Trader (NPC) ──────────────────────────────────────────────────
@@ -1628,6 +1634,11 @@ class Mission:
         self.target_count = target_count
         self.progress = 0
         self.completed = False
+        # Bug fix: track baseline kills/collects at mission creation so progress
+        # measures delta (kills since mission assigned), not lifetime total.
+        # Without this, kill missions are instantly completable if the player
+        # already killed enough of that enemy before the mission was assigned.
+        self.baseline = 0
         self.turned_in = False
 
 
@@ -2364,6 +2375,12 @@ class Game:
         random.shuffle(templates)
         for template in templates[:count]:
             m = Mission(template[0], template[1], template[2], template[5], template[4], template[3])
+            # Bug fix: capture baseline kills/collects at assignment time so progress
+            # is computed as delta from this point, not lifetime total.
+            if m.mission_type == 'kill':
+                m.baseline = p.kills.get(m.target, 0)
+            elif m.mission_type == 'collect':
+                m.baseline = p.inventory.get(m.target, 0)
             self.missions.append(m)
             self.add_message(f"New Mission: {m.title}")
 
@@ -2425,7 +2442,7 @@ class Game:
         spawn_center = WORLD_SIZE // 2 * TILE_SCALE
         for gx in range(WORLD_SIZE):
             for gz in range(WORLD_SIZE):
-                biome = self.biome_map[gx][gz]
+                biome = self.world_grid[gz][gx]  # Bug fix: was self.biome_map[gx][gz] — attribute doesn't exist, and indices were swapped (grid is [row][col] = [gz][gx])
                 # Crystal biomes have higher monolith spawn rate
                 if biome == 'crystal' and random.random() < MONOLITH_SPAWN_CHANCE_CRYSTAL:
                     wx = gx * TILE_SCALE
@@ -3043,9 +3060,11 @@ class Game:
             if m.turned_in:
                 continue
             if m.mission_type == 'collect':
-                m.progress = p.inventory.get(m.target, 0)
+                # Bug fix: subtract baseline so progress is delta since mission assigned
+                m.progress = max(0, p.inventory.get(m.target, 0) - m.baseline)
             elif m.mission_type == 'kill':
-                m.progress = p.kills.get(m.target, 0)
+                # Bug fix: subtract baseline so progress is delta since mission assigned
+                m.progress = max(0, p.kills.get(m.target, 0) - m.baseline)
             if m.progress >= m.target_count and not m.completed:
                 m.completed = True
                 self.add_message(f"Mission Complete: {m.title}!")
@@ -3090,15 +3109,17 @@ def game_update():
             return
         return
 
+    # Bug fix: use getattr(game, '_p_held', False) instead of not hasattr —
+    # hasattr returns True once the attr exists, so the key could never fire again.
     if game.paused:
-        if held_keys['p'] and not hasattr(game, '_p_held'):
+        if held_keys['p'] and not getattr(game, '_p_held', False):
             game.paused = False
             game._p_held = True
         elif not held_keys['p']:
             game._p_held = False
         return
     else:
-        if held_keys['p'] and not hasattr(game, '_p_held'):
+        if held_keys['p'] and not getattr(game, '_p_held', False):
             game.paused = True
             game._p_held = True
             return
@@ -3309,11 +3330,11 @@ def game_update():
                 p.hp += heal_amount
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(50, 255, 120), count=4)
                 game.damage_numbers.append(DamageNumber(p.position, heal_amount, is_kill=False, is_crit=False))
-                # Green text for healing
-                for dn in game.damage_numbers:
-                    if dn.position == p.position and dn.text == str(heal_amount):
-                        dn.text_entity.color = color.green
-                        break
+                # Green text for healing — Bug fix: DamageNumber uses self.world_pos and
+                # self.text_ent, not self.position and self.text_entity. Also, float Vec3
+                # equality comparison is unreliable, so color the damage number directly.
+                heal_dn = game.damage_numbers[-1]
+                heal_dn.text_ent.color = color.green
 
     # Cosmic Leech drain DoT — deals damage over time
     if p.drain_timer > 0:
@@ -3741,11 +3762,23 @@ def game_update():
                     pull_dist = pull_dir.length()
                     if pull_dist > 0.5 and pull_dist < GRAVITON_PULL_RADIUS:
                         pull_force = GRAVITON_PULL_FORCE * (1.0 - pull_dist / GRAVITON_PULL_RADIUS)
-                        p.x += pull_dir.normalized().x * pull_force * time.dt
-                        p.z += pull_dir.normalized().z * pull_force * time.dt
+                        # Bug fix: compute proposed new position and check walkability
+                        # before applying, so the pull can't drag the player into
+                        # water or lava tiles.
+                        new_x = p.x + pull_dir.normalized().x * pull_force * time.dt
+                        new_z = p.z + pull_dir.normalized().z * pull_force * time.dt
                         # Clamp player position
-                        p.x = max(1, min(p.x, (WORLD_SIZE - 1) * TILE_SCALE))
-                        p.z = max(1, min(p.z, (WORLD_SIZE - 1) * TILE_SCALE))
+                        new_x = max(1, min(new_x, (WORLD_SIZE - 1) * TILE_SCALE))
+                        new_z = max(1, min(new_z, (WORLD_SIZE - 1) * TILE_SCALE))
+                        if game._is_walkable(new_x, new_z):
+                            p.x = new_x
+                            p.z = new_z
+                        elif game._is_walkable(new_x, p.z):
+                            # Allow pull along X axis only
+                            p.x = new_x
+                        elif game._is_walkable(p.x, new_z):
+                            # Allow pull along Z axis only
+                            p.z = new_z
                         # Deal continuous damage while pulling
                         if not hasattr(enemy, '_grav_dmg_tick'):
                             enemy._grav_dmg_tick = 0
@@ -3843,6 +3876,14 @@ def game_update():
                 enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
             else:
                 enemy.y = 1  # Static position when culled
+
+        # Bug fix: decrement hit_flash timer so the Time Warp blue tint can apply
+        # after the hit flash ends. Without this, hit_flash stays > 0 forever once set,
+        # preventing the Time Warp visual tint from ever showing on hit enemies.
+        if enemy.hit_flash > 0:
+            enemy.hit_flash -= time.dt
+            if enemy.hit_flash < 0:
+                enemy.hit_flash = 0
 
         # Hit scale punch: brief size increase on hit for satisfying impact feedback
         if enemy.hit_scale_punch > 0:
@@ -4312,9 +4353,11 @@ def game_update():
             # Teleport player to partner portal location
             target = portal.partner_position
             # Find the partner portal to set its cooldown too
+            # Bug fix: match partner by portal_id instead of position comparison.
+            # Position-based matching is fragile (Vec3 precision, <1 tolerance can
+            # match wrong portal if two pairs happen to be close).
             for other_portal in game.portals:
-                if (abs(other_portal.position.x - target.x) < 1 and
-                    abs(other_portal.position.z - target.z) < 1):
+                if other_portal is not portal and other_portal.portal_id == portal.portal_id:
                     other_portal.cooldown = PORTAL_COOLDOWN
                     break
             portal.cooldown = PORTAL_COOLDOWN
@@ -4367,7 +4410,8 @@ def game_update():
             trader.trade_prompt_shown = False
 
     # ── Handle trader trade (E key) ──
-    if held_keys['e'] and not hasattr(game, '_e_held'):
+    # Bug fix: use getattr instead of not hasattr — same issue as _p_held
+    if held_keys['e'] and not getattr(game, '_e_held', False):
         game._e_held = True
         for trader in game.traders:
             if trader.trade_prompt_shown and trader.enabled:
@@ -4457,7 +4501,8 @@ def game_update():
     game._update_missions()
 
     # ── Toggle minimap ──
-    if held_keys['m'] and not hasattr(game, '_m_held'):
+    # Bug fix: use getattr instead of not hasattr — same debounce issue
+    if held_keys['m'] and not getattr(game, '_m_held', False):
         game.minimap_shown = not game.minimap_shown
         game.minimap_entity.visible = game.minimap_shown
         game.minimap_player_dot.visible = game.minimap_shown
@@ -4478,7 +4523,8 @@ def game_update():
         game._update_minimap_colors()
 
     # ── Toggle mission panel ──
-    if held_keys['tab'] and not hasattr(game, '_tab_held'):
+    # Bug fix: use getattr instead of not hasattr — same debounce issue
+    if held_keys['tab'] and not getattr(game, '_tab_held', False):
         game.mission_panel_shown = not game.mission_panel_shown
         game.mission_text.visible = game.mission_panel_shown
         game._tab_held = True
