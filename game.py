@@ -1743,29 +1743,30 @@ class Game:
         self.sun.look_at(Vec3(1, -1, 1))
         AmbientLight(color=color.rgba(140, 130, 120, 255))
 
-        # Gradient sky dome — stacked quads from deep purple (top) to alien pink (horizon)
+        # Gradient sky dome — 8 large billboard quads in a ring for a smooth sky gradient
+        # OPTIMIZED: 8 quads instead of 96 (12 layers x 8 angles) — same visual, far fewer entities
         self.sky_quads = []
-        sky_layers = 12
         sky_top_color = (20, 0, 60)       # deep purple at zenith
         sky_horizon_color = (120, 40, 80)  # alien pink at horizon
         sky_height_min = 60
         sky_height_max = 250
         sky_radius = 300
-        for i in range(sky_layers):
-            t = i / (sky_layers - 1)  # 0 = top, 1 = horizon
+        # 3 layers: top, middle, bottom — each with 8 quads in a ring = 24 total
+        sky_layers = [(0.0, sky_height_max + 20, sky_radius * 0.5),
+                      (0.5, (sky_height_max + sky_height_min) / 2, sky_radius * 0.75),
+                      (1.0, sky_height_min, sky_radius)]
+        for t, y_pos, radius in sky_layers:
             r = int(sky_top_color[0] + (sky_horizon_color[0] - sky_top_color[0]) * t)
             g = int(sky_top_color[1] + (sky_horizon_color[1] - sky_top_color[1]) * t)
             b = int(sky_top_color[2] + (sky_horizon_color[2] - sky_top_color[2]) * t)
-            y_pos = sky_height_max - t * (sky_height_max - sky_height_min)
-            layer_size = sky_radius * (0.5 + 0.5 * t)
             for angle_deg in range(0, 360, 45):
                 rad = math.radians(angle_deg)
-                qx = math.cos(rad) * layer_size
-                qz = math.sin(rad) * layer_size
+                qx = math.cos(rad) * radius
+                qz = math.sin(rad) * radius
                 sky_quad = Entity(
                     model='quad',
                     color=color.rgb(r, g, b),
-                    scale=(sky_radius * 0.6, sky_radius * 0.4),
+                    scale=(sky_radius * 0.6, sky_radius * 0.5),
                     position=(qx, y_pos, qz),
                     billboard=True,
                 )
@@ -2115,7 +2116,14 @@ class Game:
             self.sky_quads.clear()
 
     def _build_terrain(self):
-        """Build the 3D terrain from the world grid with height variation per biome."""
+        """Build the 3D terrain from the world grid with height variation per biome.
+        
+        OPTIMIZED: Instead of 6400 individual Entity tiles with colliders, we group
+        tiles by biome, create them as children of a per-biome parent, then combine()
+        the parent into a single mesh. This reduces draw calls from 6400 to ~11 and
+        removes thousands of unnecessary colliders. A single invisible ground plane
+        provides the collider for mouse.world_point ray hits.
+        """
         # Height and scale_y settings per biome for terrain variation
         biome_height = {
             'water': -0.3,
@@ -2133,55 +2141,103 @@ class Game:
             'mushroom': 1.1,
             'floating_islands': 1.2,
         }
-        for y in range(WORLD_SIZE):
-            for x in range(WORLD_SIZE):
-                biome = self.world_grid[y][x]
-                c = BIOME_COLORS.get(biome, C_GRASS)
+
+        # Group tiles by biome for combine() optimization
+        biome_groups = {}  # biome_name -> list of (x, y, z, scale_y)
+        for wy in range(WORLD_SIZE):
+            for wx in range(WORLD_SIZE):
+                biome = self.world_grid[wy][wx]
                 tile_y = biome_height.get(biome, 0)
                 tile_sy = biome_scale_y.get(biome, 1)
-                tile = Entity(
+                if biome not in biome_groups:
+                    biome_groups[biome] = []
+                biome_groups[biome].append((wx, tile_y, wy, tile_sy))
+
+        # Show loading progress
+        loading_text = Text(text='Loading terrain...', origin=(0, 0), scale=2,
+                            color=color.white, background=True, z=-10)
+        loading_text.create_background(padding=(0.3, 0.1), radius=0, color=color.rgba(0, 0, 0, 200))
+
+        # Create combined meshes per biome
+        total_groups = len(biome_groups)
+        for idx, (biome, tiles) in enumerate(biome_groups.items()):
+            c = BIOME_COLORS.get(biome, C_GRASS)
+            parent = Entity(color=c)
+            for (wx, tile_y, wy, tile_sy) in tiles:
+                Entity(
                     model='cube',
                     color=c,
-                    position=(x * TILE_SCALE, tile_y, y * TILE_SCALE),
+                    parent=parent,
+                    position=(wx * TILE_SCALE, tile_y, wy * TILE_SCALE),
                     scale=(TILE_SCALE, tile_sy, TILE_SCALE),
-                    collider='box',
                 )
-                self.terrain_entities.append(tile)
+            parent.combine()
+            self.terrain_entities.append(parent)
 
-                # Water surface overlay — semi-transparent blue tint for depth feel
-                if biome == 'water':
-                    water_overlay = Entity(
+            # Water surface overlay — semi-transparent blue tint for depth feel
+            if biome == 'water':
+                water_parent = Entity()
+                for (wx, tile_y, wy, tile_sy) in tiles:
+                    Entity(
                         model='quad',
                         color=color.rgba(30, 80, 220, 80),
-                        position=(x * TILE_SCALE, -0.05, y * TILE_SCALE),
+                        parent=water_parent,
+                        position=(wx * TILE_SCALE, -0.05, wy * TILE_SCALE),
                         scale=TILE_SCALE,
                         rotation_x=90,
                     )
-                    self.crystal_entities.append(water_overlay)
+                water_parent.combine()
+                self.crystal_entities.append(water_parent)
 
-                # Lava glow overlay — orange glow disc above lava tiles
-                if biome == 'lava':
-                    lava_glow = Entity(
+            # Lava glow overlay — orange glow disc above lava tiles
+            if biome == 'lava':
+                lava_parent = Entity()
+                for (wx, tile_y, wy, tile_sy) in tiles:
+                    Entity(
                         model='quad',
                         color=color.rgba(255, 120, 30, 60),
-                        position=(x * TILE_SCALE, 0.06, y * TILE_SCALE),
+                        parent=lava_parent,
+                        position=(wx * TILE_SCALE, 0.06, wy * TILE_SCALE),
                         scale=TILE_SCALE * 0.9,
                         rotation_x=90,
                     )
-                    self.crystal_entities.append(lava_glow)
+                lava_parent.combine()
+                self.crystal_entities.append(lava_parent)
 
-                # Decorations
+            # Update loading progress
+            loading_text.text = f'Loading terrain... {idx + 1}/{total_groups}'
+
+        # Single invisible ground plane collider for mouse.world_point ray hits
+        # This replaces 6400 individual box colliders with ONE collider
+        world_extent = WORLD_SIZE * TILE_SCALE
+        ground_collider = Entity(
+            model='cube',
+            color=color.rgba(0, 0, 0, 0),  # fully invisible
+            position=(world_extent / 2 - TILE_SCALE / 2, -0.5, world_extent / 2 - TILE_SCALE / 2),
+            scale=(world_extent + TILE_SCALE, 0.1, world_extent + TILE_SCALE),
+            collider='box',
+            visible=False,
+        )
+        self.terrain_entities.append(ground_collider)
+
+        destroy(loading_text)
+
+        # Decorations — separate pass for clarity; not combined since they vary per-tile
+        for wy in range(WORLD_SIZE):
+            for wx in range(WORLD_SIZE):
+                biome = self.world_grid[wy][wx]
+
                 if biome == 'forest' and random.random() < 0.3:
                     tree = Entity(
                         model='cube',
                         color=color.rgb(60, 35, 15),
-                        position=(x * TILE_SCALE, 3, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, 3, wy * TILE_SCALE),
                         scale=(0.6, 6, 0.6),
                     )
                     canopy = Entity(
                         model='sphere',
                         color=color.rgb(0, 80, 30),
-                        position=(x * TILE_SCALE, 7, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, 7, wy * TILE_SCALE),
                         scale=3,
                     )
                     self.tree_entities.extend([tree, canopy])
@@ -2191,7 +2247,7 @@ class Game:
                     crystal = Entity(
                         model='cube',
                         color=color.rgb(0, 240, 255),
-                        position=(x * TILE_SCALE, height / 2 + 0.6, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, height / 2 + 0.6, wy * TILE_SCALE),
                         scale=(0.5, height, 0.5),
                     )
                     self.crystal_entities.append(crystal)
@@ -2202,7 +2258,7 @@ class Game:
                     stem = Entity(
                         model='cube',
                         color=color.rgb(180, 170, 160),
-                        position=(x * TILE_SCALE, stem_h / 2 + 0.5, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, stem_h / 2 + 0.5, wy * TILE_SCALE),
                         scale=(0.4, stem_h, 0.4),
                     )
                     cap_r = random.uniform(1.0, 2.5)
@@ -2215,14 +2271,14 @@ class Game:
                     cap = Entity(
                         model='sphere',
                         color=random.choice(cap_color_choices),
-                        position=(x * TILE_SCALE, stem_h + 1.0, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, stem_h + 1.0, wy * TILE_SCALE),
                         scale=cap_r,
                     )
                     # Spore glow ring under cap
                     glow = Entity(
                         model='quad',
                         color=color.rgba(255, 100, 255, 50),
-                        position=(x * TILE_SCALE, stem_h + 0.5, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, stem_h + 0.5, wy * TILE_SCALE),
                         scale=cap_r * 1.5,
                         rotation_x=90,
                     )
@@ -2236,14 +2292,14 @@ class Game:
                     island = Entity(
                         model='cube',
                         color=color.rgb(160, 120, 200),
-                        position=(x * TILE_SCALE, island_h, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, island_h, wy * TILE_SCALE),
                         scale=(island_size, 0.5, island_size),
                     )
                     # Shadow beneath
                     shadow = Entity(
                         model='quad',
                         color=color.rgba(0, 0, 0, 40),
-                        position=(x * TILE_SCALE, 0.05, y * TILE_SCALE),
+                        position=(wx * TILE_SCALE, 0.05, wy * TILE_SCALE),
                         scale=island_size * 1.5,
                         rotation_x=90,
                     )
@@ -2254,7 +2310,7 @@ class Game:
                         crystal_top = Entity(
                             model='cube',
                             color=color.rgb(180, 140, 255),
-                            position=(x * TILE_SCALE, island_h + crystal_h / 2 + 0.25, y * TILE_SCALE),
+                            position=(wx * TILE_SCALE, island_h + crystal_h / 2 + 0.25, wy * TILE_SCALE),
                             scale=(0.3, crystal_h, 0.3),
                         )
                         self.crystal_entities.append(crystal_top)
@@ -2267,7 +2323,7 @@ class Game:
                         pool = Entity(
                             model='quad',
                             color=color.rgba(100, 200, 50, 90),
-                            position=(x * TILE_SCALE, 0.06, y * TILE_SCALE),
+                            position=(wx * TILE_SCALE, 0.06, wy * TILE_SCALE),
                             scale=pool_size,
                             rotation_x=90,
                         )
@@ -2278,7 +2334,7 @@ class Game:
                             spire = Entity(
                                 model='cube',
                                 color=color.rgb(80, 160, 40),
-                                position=(x * TILE_SCALE, spire_h / 2 + 0.5, y * TILE_SCALE),
+                                position=(wx * TILE_SCALE, spire_h / 2 + 0.5, wy * TILE_SCALE),
                                 scale=(0.3, spire_h, 0.3),
                             )
                             self.crystal_entities.append(spire)
@@ -2288,20 +2344,20 @@ class Game:
                         stalk = Entity(
                             model='cube',
                             color=color.rgb(50, 100, 20),
-                            position=(x * TILE_SCALE, stalk_h / 2 + 0.5, y * TILE_SCALE),
+                            position=(wx * TILE_SCALE, stalk_h / 2 + 0.5, wy * TILE_SCALE),
                             scale=(0.3, stalk_h, 0.3),
                         )
                         cap = Entity(
                             model='sphere',
                             color=color.rgb(120, 220, 30),
-                            position=(x * TILE_SCALE, stalk_h + 0.8, y * TILE_SCALE),
+                            position=(wx * TILE_SCALE, stalk_h + 0.8, wy * TILE_SCALE),
                             scale=random.uniform(0.8, 1.5),
                         )
                         # Sickly glow beneath cap
                         bog_glow = Entity(
                             model='quad',
                             color=color.rgba(80, 200, 20, 50),
-                            position=(x * TILE_SCALE, stalk_h + 0.3, y * TILE_SCALE),
+                            position=(wx * TILE_SCALE, stalk_h + 0.3, wy * TILE_SCALE),
                             scale=random.uniform(1.0, 2.0),
                             rotation_x=90,
                         )
@@ -2317,7 +2373,7 @@ class Game:
                         pillar = Entity(
                             model='cube',
                             color=color.rgb(160, 140, 100),
-                            position=(x * TILE_SCALE + offset_x, pillar_h / 2 + 0.5, y * TILE_SCALE + offset_z),
+                            position=(wx * TILE_SCALE + offset_x, pillar_h / 2 + 0.5, wy * TILE_SCALE + offset_z),
                             scale=(0.4, pillar_h, 0.4),
                         )
                         self.crystal_entities.append(pillar)
@@ -2328,7 +2384,7 @@ class Game:
                         wall = Entity(
                             model='cube',
                             color=color.rgb(140, 120, 80),
-                            position=(x * TILE_SCALE, wall_h / 2 + 0.5, y * TILE_SCALE),
+                            position=(wx * TILE_SCALE, wall_h / 2 + 0.5, wy * TILE_SCALE),
                             scale=(wall_w, wall_h, 0.3),
                         )
                         self.crystal_entities.append(wall)
