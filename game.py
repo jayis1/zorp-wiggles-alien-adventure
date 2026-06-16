@@ -2403,9 +2403,9 @@ class Game:
             # Bug fix: capture baseline kills/collects at assignment time so progress
             # is computed as delta from this point, not lifetime total.
             if m.mission_type == 'kill':
-                m.baseline = p.kills.get(m.target, 0)
+                m.baseline = self.player.kills.get(m.target, 0)
             elif m.mission_type == 'collect':
-                m.baseline = p.inventory.get(m.target, 0)
+                m.baseline = self.player.inventory.get(m.target, 0)
             self.missions.append(m)
             self.add_message(f"New Mission: {m.title}")
 
