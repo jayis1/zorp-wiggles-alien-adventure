@@ -195,17 +195,17 @@ STAR_COLORS = [
 
 # ─── Biome Fog ────────────────────────────────────────────────────────────────
 BIOME_FOG = {
-    'grass':   {'color': color.rgb(20, 0, 50),    'density': 0.006},
-    'desert':  {'color': color.rgb(80, 55, 25),    'density': 0.014},
-    'water':   {'color': color.rgb(5, 20, 70),     'density': 0.010},
-    'lava':    {'color': color.rgb(80, 15, 5),     'density': 0.016},
-    'forest':  {'color': color.rgb(5, 25, 5),      'density': 0.012},
-    'crystal': {'color': color.rgb(10, 25, 55),    'density': 0.007},
-    'snow':    {'color': color.rgb(50, 55, 70),    'density': 0.005},
-    'swamp':   {'color': color.rgb(20, 30, 10),    'density': 0.016},
-    'mushroom': {'color': color.rgb(25, 5, 35),    'density': 0.012},
-    'floating_islands': {'color': color.rgb(25, 15, 45), 'density': 0.005},
-    'toxic_bog':  {'color': color.rgb(30, 50, 15),    'density': 0.018},
+    'grass':   {'color': color.rgb(30, 10, 60),    'density': 0.006},
+    'desert':  {'color': color.rgb(100, 70, 30),   'density': 0.014},
+    'water':   {'color': color.rgb(10, 20, 80),     'density': 0.010},
+    'lava':    {'color': color.rgb(100, 20, 5),    'density': 0.016},
+    'forest':  {'color': color.rgb(10, 40, 15),    'density': 0.012},
+    'crystal': {'color': color.rgb(15, 40, 60),    'density': 0.007},
+    'snow':    {'color': color.rgb(60, 60, 80),    'density': 0.005},
+    'swamp':   {'color': color.rgb(30, 50, 15),    'density': 0.016},
+    'mushroom': {'color': color.rgb(50, 10, 60),   'density': 0.012},
+    'floating_islands': {'color': color.rgb(40, 25, 60), 'density': 0.005},
+    'toxic_bog':  {'color': color.rgb(50, 60, 15),   'density': 0.018},
 }
 FOG_TRANSITION_SPEED = 4.0   # Lerp speed for fog color/density transitions (lower = smoother biome blending)
 
@@ -484,24 +484,24 @@ HORIZON_GLOW_HEIGHT_MAX = 40          # Top of glow band (fades into sky)
 HORIZON_GLOW_ALPHA_BASE = 35          # Base alpha for glow quads
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
-C_GRASS    = color.rgb(34, 139, 34)
-C_DESERT   = color.rgb(210, 180, 100)
-C_WATER    = color.rgb(30, 100, 200)
-C_LAVA     = color.rgb(200, 30, 30)
-C_FOREST   = color.rgb(0, 80, 0)
-C_CRYSTAL  = color.rgb(0, 200, 210)
-C_SNOW     = color.rgb(220, 220, 240)
-C_SWAMP    = color.rgb(60, 90, 40)
+C_GRASS    = color.rgb(10, 180, 80)
+C_DESERT   = color.rgb(210, 170, 80)
+C_WATER    = color.rgb(20, 60, 180)
+C_LAVA     = color.rgb(255, 80, 20)
+C_FOREST   = color.rgb(0, 60, 30)
+C_CRYSTAL  = color.rgb(0, 240, 255)
+C_SNOW     = color.rgb(200, 210, 240)
+C_SWAMP    = color.rgb(50, 80, 30)
 C_ALIEN    = color.rgb(0, 230, 70)
 C_ENEMY    = color.rgb(200, 30, 30)
 C_LASER    = color.rgb(0, 255, 255)
 C_GOLD     = color.rgb(255, 215, 0)
 C_PURPLE   = color.rgb(170, 0, 255)
 C_PINK     = color.rgb(255, 80, 180)
-C_MUSHROOM = color.rgb(50, 180, 90)
-C_FLOATING_ISLANDS = color.rgb(180, 140, 220)
+C_MUSHROOM = color.rgb(200, 40, 120)
+C_FLOATING_ISLANDS = color.rgb(160, 120, 220)
 C_STAR_FRUIT = color.rgb(255, 255, 100)
-C_TOXIC_BOG = color.rgb(60, 100, 30)
+C_TOXIC_BOG = color.rgb(80, 120, 20)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -658,6 +658,17 @@ class Player(Entity):
             position=(self.x, 0.05, self.z),
             rotation_x=90,
         )
+
+        # Player glow aura — soft green ring under the player
+        self.glow_ring = Entity(
+            model='quad',
+            color=color.rgba(0, 200, 80, 50),
+            scale=2.5,
+            position=(self.x, 0.06, self.z),
+            rotation_x=90,
+        )
+        # Player glow point light (faint green)
+        self.glow_light = PointLight(color=color.rgba(0, 200, 80, 120))
 
         # Squish/stretch animation state
         self.squish_current = 1.0  # Current Y scale (1.0 = normal)
@@ -1727,13 +1738,38 @@ class Game:
         self._spawn_monoliths()
         self._assign_missions(count=3)
 
-        # Lighting
-        self.sun = DirectionalLight()
+        # Lighting — warm alien sun with higher ambient for vivid colors
+        self.sun = DirectionalLight(color=color.rgba(255, 220, 180, 255))
         self.sun.look_at(Vec3(1, -1, 1))
-        AmbientLight(color=color.rgba(100, 100, 100, 255))
+        AmbientLight(color=color.rgba(140, 130, 120, 255))
 
-        # Sky
-        Sky(color=color.rgb(25, 0, 60))
+        # Gradient sky dome — stacked quads from deep purple (top) to alien pink (horizon)
+        self.sky_quads = []
+        sky_layers = 12
+        sky_top_color = (20, 0, 60)       # deep purple at zenith
+        sky_horizon_color = (120, 40, 80)  # alien pink at horizon
+        sky_height_min = 60
+        sky_height_max = 250
+        sky_radius = 300
+        for i in range(sky_layers):
+            t = i / (sky_layers - 1)  # 0 = top, 1 = horizon
+            r = int(sky_top_color[0] + (sky_horizon_color[0] - sky_top_color[0]) * t)
+            g = int(sky_top_color[1] + (sky_horizon_color[1] - sky_top_color[1]) * t)
+            b = int(sky_top_color[2] + (sky_horizon_color[2] - sky_top_color[2]) * t)
+            y_pos = sky_height_max - t * (sky_height_max - sky_height_min)
+            layer_size = sky_radius * (0.5 + 0.5 * t)
+            for angle_deg in range(0, 360, 45):
+                rad = math.radians(angle_deg)
+                qx = math.cos(rad) * layer_size
+                qz = math.sin(rad) * layer_size
+                sky_quad = Entity(
+                    model='quad',
+                    color=color.rgb(r, g, b),
+                    scale=(sky_radius * 0.6, sky_radius * 0.4),
+                    position=(qx, y_pos, qz),
+                    billboard=True,
+                )
+                self.sky_quads.append(sky_quad)
 
         # Stars in the sky — varied colors for a richer alien sky
         self.stars = []
@@ -1767,14 +1803,14 @@ class Game:
         # Nebula clouds — large translucent colored quads for atmospheric depth
         self.nebula_clouds = []
         nebula_palette = [
-            color.rgb(120, 40, 180),   # deep purple
-            color.rgb(40, 80, 180),    # deep blue
-            color.rgb(180, 40, 80),    # crimson
-            color.rgb(40, 160, 120),   # teal
-            color.rgb(180, 100, 40),   # amber
-            color.rgb(80, 40, 160),    # indigo
-            color.rgb(60, 120, 180),   # sky blue
-            color.rgb(160, 60, 120),   # rose
+            color.rgb(100, 30, 160),   # deep purple
+            color.rgb(30, 60, 160),    # deep blue
+            color.rgb(160, 30, 60),    # crimson
+            color.rgb(30, 140, 100),   # teal
+            color.rgb(160, 90, 30),    # amber
+            color.rgb(60, 30, 140),    # indigo
+            color.rgb(50, 100, 160),   # sky blue
+            color.rgb(140, 50, 100),   # rose
         ]
         for i in range(NEBULA_CLOUD_COUNT):
             angle_h = random.uniform(0, math.pi * 2)
@@ -1798,14 +1834,14 @@ class Game:
         # Horizon glow band — translucent gradient quads at low altitude for atmospheric depth
         self.horizon_glows = []
         horizon_palette = [
-            color.rgb(80, 30, 120),    # purple
-            color.rgb(40, 60, 140),    # blue
-            color.rgb(140, 40, 60),    # red
-            color.rgb(40, 120, 80),    # teal
-            color.rgb(120, 70, 30),    # amber
-            color.rgb(60, 30, 120),    # indigo
-            color.rgb(50, 90, 130),    # slate blue
-            color.rgb(110, 40, 80),    # rose
+            color.rgb(100, 30, 140),    # purple
+            color.rgb(30, 50, 130),     # blue
+            color.rgb(140, 30, 60),     # red
+            color.rgb(30, 110, 70),     # teal
+            color.rgb(110, 60, 25),     # amber
+            color.rgb(50, 25, 110),     # indigo
+            color.rgb(40, 80, 120),     # slate blue
+            color.rgb(100, 30, 70),     # rose
         ]
         for i in range(HORIZON_GLOW_COUNT):
             angle_h = random.uniform(0, math.pi * 2)
@@ -1826,8 +1862,8 @@ class Game:
             horizon_glow.base_color = glow_color
             self.horizon_glows.append(horizon_glow)
 
-        # Fog for atmosphere
-        scene.fog_color = color.rgb(25, 0, 60)
+        # Fog for atmosphere — matches grass biome default on start
+        scene.fog_color = color.rgb(30, 10, 60)
         scene.fog_density = 0.007
 
         # Weather particles (rain, snow, embers)
@@ -2002,6 +2038,10 @@ class Game:
         if self.player and self.player.enabled:
             if hasattr(self.player, 'ground_shadow') and self.player.ground_shadow:
                 destroy(self.player.ground_shadow)
+            if hasattr(self.player, 'glow_ring') and self.player.glow_ring:
+                destroy(self.player.glow_ring)
+            if hasattr(self.player, 'glow_light') and self.player.glow_light:
+                destroy(self.player.glow_light)
             if hasattr(self.player, 'float_ring') and self.player.float_ring is not None:
                 destroy(self.player.float_ring)
             if hasattr(self.player, 'monolith_ring') and self.player.monolith_ring is not None:
@@ -2067,32 +2107,80 @@ class Game:
             if hasattr(e, 'model') and e.model and 'sky' in str(e.model).lower():
                 destroy(e)
 
+        # Destroy gradient sky quads
+        if hasattr(self, 'sky_quads'):
+            for sq in self.sky_quads:
+                if sq and hasattr(sq, 'enabled') and sq.enabled:
+                    destroy(sq)
+            self.sky_quads.clear()
+
     def _build_terrain(self):
-        """Build the 3D terrain from the world grid."""
+        """Build the 3D terrain from the world grid with height variation per biome."""
+        # Height and scale_y settings per biome for terrain variation
+        biome_height = {
+            'water': -0.3,
+            'lava': -0.2,
+            'snow': 0.2,
+            'crystal': 0.1,
+            'mushroom': 0.15,
+            'floating_islands': 0.3,
+        }
+        biome_scale_y = {
+            'water': 0.4,
+            'lava': 0.5,
+            'snow': 1.1,
+            'crystal': 1.05,
+            'mushroom': 1.1,
+            'floating_islands': 1.2,
+        }
         for y in range(WORLD_SIZE):
             for x in range(WORLD_SIZE):
                 biome = self.world_grid[y][x]
                 c = BIOME_COLORS.get(biome, C_GRASS)
+                tile_y = biome_height.get(biome, 0)
+                tile_sy = biome_scale_y.get(biome, 1)
                 tile = Entity(
                     model='cube',
                     color=c,
-                    position=(x * TILE_SCALE, 0, y * TILE_SCALE),
-                    scale=(TILE_SCALE, 1, TILE_SCALE),
+                    position=(x * TILE_SCALE, tile_y, y * TILE_SCALE),
+                    scale=(TILE_SCALE, tile_sy, TILE_SCALE),
                     collider='box',
                 )
                 self.terrain_entities.append(tile)
+
+                # Water surface overlay — semi-transparent blue tint for depth feel
+                if biome == 'water':
+                    water_overlay = Entity(
+                        model='quad',
+                        color=color.rgba(30, 80, 220, 80),
+                        position=(x * TILE_SCALE, -0.05, y * TILE_SCALE),
+                        scale=TILE_SCALE,
+                        rotation_x=90,
+                    )
+                    self.crystal_entities.append(water_overlay)
+
+                # Lava glow overlay — orange glow disc above lava tiles
+                if biome == 'lava':
+                    lava_glow = Entity(
+                        model='quad',
+                        color=color.rgba(255, 120, 30, 60),
+                        position=(x * TILE_SCALE, 0.06, y * TILE_SCALE),
+                        scale=TILE_SCALE * 0.9,
+                        rotation_x=90,
+                    )
+                    self.crystal_entities.append(lava_glow)
 
                 # Decorations
                 if biome == 'forest' and random.random() < 0.3:
                     tree = Entity(
                         model='cube',
-                        color=color.rgb(80, 50, 20),
+                        color=color.rgb(60, 35, 15),
                         position=(x * TILE_SCALE, 3, y * TILE_SCALE),
                         scale=(0.6, 6, 0.6),
                     )
                     canopy = Entity(
                         model='sphere',
-                        color=color.rgb(0, 130, 0),
+                        color=color.rgb(0, 80, 30),
                         position=(x * TILE_SCALE, 7, y * TILE_SCALE),
                         scale=3,
                     )
@@ -2102,8 +2190,8 @@ class Game:
                     height = random.uniform(3, 8)
                     crystal = Entity(
                         model='cube',
-                        color=color.rgb(0, 220, 230),
-                        position=(x * TILE_SCALE, height / 2 + 0.5, y * TILE_SCALE),
+                        color=color.rgb(0, 240, 255),
+                        position=(x * TILE_SCALE, height / 2 + 0.6, y * TILE_SCALE),
                         scale=(0.5, height, 0.5),
                     )
                     self.crystal_entities.append(crystal)
@@ -2165,7 +2253,7 @@ class Game:
                         crystal_h = random.uniform(1.5, 4.0)
                         crystal_top = Entity(
                             model='cube',
-                            color=color.rgb(200, 180, 255),
+                            color=color.rgb(180, 140, 255),
                             position=(x * TILE_SCALE, island_h + crystal_h / 2 + 0.25, y * TILE_SCALE),
                             scale=(0.3, crystal_h, 0.3),
                         )
@@ -3437,6 +3525,11 @@ def game_update():
     if hasattr(p, 'ground_shadow') and p.ground_shadow:
         p.ground_shadow.x = p.x
         p.ground_shadow.z = p.z
+
+    # Update player glow ring to track position
+    if hasattr(p, 'glow_ring') and p.glow_ring:
+        p.glow_ring.x = p.x
+        p.glow_ring.z = p.z
 
     # Invulnerability timer
     if p.invuln_timer > 0:
