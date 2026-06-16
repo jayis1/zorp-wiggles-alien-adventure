@@ -2576,36 +2576,23 @@ class Game:
         then overlays a white player dot and red enemy dots that update
         each refresh interval.
         """
+        from PIL import Image as PILImage
         size = MINIMAP_RESOLUTION
-        # Build a pixel image from the world grid biome colors
-        pixels = []
-        for gz in range(WORLD_SIZE):
-            for gx in range(WORLD_SIZE):
-                biome = self.world_grid[gz][gx]
-                c = BIOME_COLORS.get(biome, C_GRASS)
-                pixels.append((min(255, int(c[0])), min(255, int(c[1])), min(255, int(c[2]))))
-
-        # Downsample to minimap resolution
+        # Build a PIL image from the world grid biome colors, downsampled
+        img = PILImage.new('RGB', (size, size))
         scale_factor = WORLD_SIZE / size
-        img = [[(0, 0, 0)] * size for _ in range(size)]
         for my in range(size):
             for mx in range(size):
-                wx = int(mx * scale_factor)
-                wy = int(my * scale_factor)
-                wx = min(wx, WORLD_SIZE - 1)
-                wy = min(wy, WORLD_SIZE - 1)
-                img[my][mx] = pixels[wy * WORLD_SIZE + wx]
+                wx = min(int(mx * scale_factor), WORLD_SIZE - 1)
+                wy = min(int(my * scale_factor), WORLD_SIZE - 1)
+                biome = self.world_grid[wy][wx]
+                c = BIOME_COLORS.get(biome, C_GRASS)
+                r = min(255, max(0, int(c[0])))
+                g = min(255, max(0, int(c[1])))
+                b = min(255, max(0, int(c[2])))
+                img.putpixel((mx, my), (r, g, b))
 
-        # Flatten for Ursina Texture
-        flat_pixels = []
-        for row in img:
-            for r, g, b in row:
-                flat_pixels.extend([r, g, b])
-
-        tex_data = bytes(flat_pixels)
-        minimap_texture = Texture()
-        minimap_texture.setup2d_texture(size, size, Texture.T_unsigned_byte, Texture.F_rgb8)
-        minimap_texture.set_ram_image(tex_data)
+        minimap_texture = Texture(img)
 
         self.minimap_entity = Entity(
             parent=camera.ui,
