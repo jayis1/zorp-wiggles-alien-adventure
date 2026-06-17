@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.11.1"
+VERSION = "2.12.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -503,6 +503,18 @@ MINIMAP_ENEMY_DOT_RGB = (255, 60, 60)
 MINIMAP_PLAYER_DOT_SIZE = 0.008
 MINIMAP_PLAYER_DOT_RGB = (255, 255, 255)
 MINIMAP_REFRESH_INTERVAL = 0.25  # seconds between minimap redraws
+
+# ─── Enemy Spawn Warning Marker ──────────────────────────────────────────────
+SPAWN_WARNING_DURATION = 1.5  # Seconds of warning before enemy materializes
+SPAWN_WARNING_RING_COLOR = color.rgb(255, 60, 60)
+
+# ─── Dash Collectible Vacuum ─────────────────────────────────────────────────
+DASH_VACUUM_RADIUS = 8.0       # How far the dash vacuum reaches
+DASH_VACUUM_PULL_SPEED = 20.0  # How fast items are pulled during dash
+
+# ─── Combo Damage Buff ────────────────────────────────────────────────────────
+COMBO_DAMAGE_TIER = 10         # Combo count needed to activate damage buff
+COMBO_DAMAGE_MULT = 1.25       # +25% projectile damage at combo x10+
 
 # ─── Performance: Visual Culling ──────────────────────────────────────────────
 VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
@@ -1339,6 +1351,46 @@ class PulseWaveRing(Entity):
         return self.lifetime <= 0 or self.current_radius >= PULSE_WAVE_RING_MAX_SCALE
 
 
+# ─── Spawn Warning Ring ─────────────────────────────────────────────────────
+class SpawnWarningRing(Entity):
+    """A pulsing red ring that appears at an enemy spawn location before the
+    enemy materializes, giving the player time to react.
+
+    The ring shrinks and intensifies in brightness as the countdown approaches
+    zero, then disappears when the enemy spawns.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='quad',
+            color=color.rgba(255, 60, 60, 0),
+            scale=3.0,
+            position=position + Vec3(0, 0.12, 0),
+            rotation_x=90,
+        )
+        self.lifetime = SPAWN_WARNING_DURATION
+        self.max_lifetime = SPAWN_WARNING_DURATION
+        self.start_scale = 3.0
+        self.end_scale = 1.0
+
+    def update_warning(self, dt):
+        """Animate the warning ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Shrink from start_scale to end_scale as the warning counts down
+        current_scale = self.start_scale + (self.end_scale - self.start_scale) * progress
+        self.scale = current_scale
+        # Alpha ramps up: starts faint, gets brighter and pulses faster near the end
+        base_alpha = int(60 + 120 * progress)
+        pulse_rate = 4 + progress * 12  # pulses faster as spawn approaches
+        pulse = 0.5 + 0.5 * math.sin(self.lifetime * pulse_rate * math.pi)
+        alpha = int(base_alpha * pulse)
+        self.color = color.rgba(255, 60, 60, alpha)
+        return False
+
+
 # ─── Achievement ──────────────────────────────────────────────────────────
 class Achievement:
     """A milestone that unlocks when the player reaches a specific goal.
@@ -2006,6 +2058,7 @@ class Game:
         # Pulse Wave ability (Q key)
         self.pulse_wave_cooldown = 0.0
         self.pulse_wave_rings = []
+        self.spawn_warnings = []  # Enemy spawn warning rings
 
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
@@ -2333,6 +2386,12 @@ class Game:
             if pwr and hasattr(pwr, 'enabled') and pwr.enabled:
                 destroy(pwr)
         self.pulse_wave_rings.clear()
+
+        # Destroy spawn warning rings
+        for sw in self.spawn_warnings:
+            if sw and hasattr(sw, 'enabled') and sw.enabled:
+                destroy(sw)
+        self.spawn_warnings.clear()
 
         # Destroy spawn healing zone ring
         if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
@@ -3442,6 +3501,10 @@ class Game:
 
         base_damage = PROJECTILE_BASE_DAMAGE + self.player.level * PROJECTILE_LEVEL_DAMAGE_BONUS
 
+        # Combo Damage Buff: at combo x10+, projectiles deal +25% damage
+        if self.combo_count >= COMBO_DAMAGE_TIER:
+            base_damage = int(base_damage * COMBO_DAMAGE_MULT)
+
         # Muzzle flash: brief bright sphere at firing point
         flash_pos = self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.2
         flash = Entity(model='sphere', color=color.rgba(200, 255, 255, 220),
@@ -3617,7 +3680,11 @@ class Game:
                 self.combo_text.scale = 2.0 * scale_bonus
                 # Show XP bonus percentage so players understand the combo reward
                 xp_pct = int((min(self.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER * 100)
-                self.combo_text.text = f'COMBO x{self.combo_count}  (+{xp_pct}% XP)'
+                combo_str = f'COMBO x{self.combo_count}  (+{xp_pct}% XP)'
+                # Show damage buff indicator when combo is high enough
+                if self.combo_count >= COMBO_DAMAGE_TIER:
+                    combo_str += f'  ⚔+{int((COMBO_DAMAGE_MULT - 1) * 100)}% DMG'
+                self.combo_text.text = combo_str
             else:
                 self.combo_text.visible = False
         else:
@@ -3999,6 +4066,11 @@ def game_update():
             if pwr.update_ring(time.dt):
                 destroy(pwr)
                 game.pulse_wave_rings.remove(pwr)
+        # Update spawn warning rings during freeze (visual only)
+        for sw in game.spawn_warnings[:]:
+            if sw.update_warning(time.dt):
+                destroy(sw)
+                game.spawn_warnings.remove(sw)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -4054,6 +4126,15 @@ def game_update():
         # Dash trail particles
         if int(game.t * 30) % 2 == 0:
             game._spawn_particles(p.position + Vec3(0, 0.5, 0), color.rgba(0, 230, 70, 180), count=DASH_TRAIL_PARTICLES)
+        # Dash collectible vacuum — pull nearby items toward player while dashing
+        for col in game.collectibles:
+            if col.popping or col.spawn_timer > 0:
+                continue
+            col_dist = (col.position - p.position).length()
+            if col_dist < DASH_VACUUM_RADIUS and col_dist > 0.5:
+                vacuum_dir = (p.position - col.position).normalized()
+                col.position += vacuum_dir * DASH_VACUUM_PULL_SPEED * time.dt
+                col.rotation_y += 300 * time.dt  # Spin items as they get vacuumed
         # FOV zoom during dash for speed feel
         camera.fov = lerp(camera.fov, DASH_FOV_ZOOM, time.dt * DASH_FOV_LERP_SPEED)
     elif held_keys['space'] and p.dash_cooldown <= 0 and move_dir.length() > 0:
@@ -5413,7 +5494,9 @@ def game_update():
     if game.spawn_timer >= spawn_interval:
         game.spawn_timer = 0
         alive_count = len([e for e in game.enemies if e.alive or e.dying])
-        if alive_count < MAX_ACTIVE_ENEMIES:
+        # Count pending spawns too so we don't over-spawn
+        pending_count = len(game.spawn_warnings)
+        if alive_count + pending_count < MAX_ACTIVE_ENEMIES:
             angle = random.uniform(0, math.pi * 2)
             dist = random.uniform(ENEMY_SPAWN_DISTANCE_MIN, ENEMY_SPAWN_DISTANCE_MAX)
             ex = p.x + math.cos(angle) * dist
@@ -5421,15 +5504,29 @@ def game_update():
             ex = max(5, min(ex, (WORLD_SIZE - 5) * TILE_SCALE))
             ez = max(5, min(ez, (WORLD_SIZE - 5) * TILE_SCALE))
             if game._is_walkable(ex, ez):
-                # Distance-based difficulty scaling
-                spawn_center_x = WORLD_SIZE // 2 * TILE_SCALE
-                spawn_center_z = WORLD_SIZE // 2 * TILE_SCALE
-                dist_from_spawn = game._dist2d_coords(ex, ez, spawn_center_x, spawn_center_z)
-                enemy_type = game._pick_enemy_type(dist_from_spawn)
-                e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
-                game._scale_enemy_to_player_level(e)
-                e.spawn_time = game.t  # Track spawn time for grace period
-                game.enemies.append(e)
+                # Spawn a warning ring — enemy will materialize after the warning
+                warning = SpawnWarningRing(position=Vec3(ex, 0, ez))
+                warning.spawn_x = ex
+                warning.spawn_z = ez
+                game.spawn_warnings.append(warning)
+
+    # ── Update Spawn Warnings & Materialize Enemies ──
+    for sw in game.spawn_warnings[:]:
+        if sw.update_warning(time.dt):
+            # Warning expired — materialize the enemy
+            ex, ez = sw.spawn_x, sw.spawn_z
+            spawn_center_x = WORLD_SIZE // 2 * TILE_SCALE
+            spawn_center_z = WORLD_SIZE // 2 * TILE_SCALE
+            dist_from_spawn = game._dist2d_coords(ex, ez, spawn_center_x, spawn_center_z)
+            enemy_type = game._pick_enemy_type(dist_from_spawn)
+            e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
+            game._scale_enemy_to_player_level(e)
+            e.spawn_time = game.t  # Track spawn time for grace period
+            game.enemies.append(e)
+            # Spawn flash particles at the materialization point
+            game._spawn_particles(Vec3(ex, 1, ez), color.rgb(255, 100, 100), count=6)
+            destroy(sw)
+            game.spawn_warnings.remove(sw)
 
     # Respawn collectibles
     if len(game.collectibles) < MIN_COLLECTIBLES and random.random() < COLLECTIBLE_RESPAWN_CHANCE:

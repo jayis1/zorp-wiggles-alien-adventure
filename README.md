@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.11.1 — 3D!)
+## Features (v2.12.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -53,7 +53,7 @@ python game.py
 - **Fireball Scroll** — projectiles explode on impact, dealing 50% damage to all enemies within a 4-unit blast radius for 8 seconds! Orange aura visual effect
 - **Regen Crystal** — regenerates 8 HP per second for 10 seconds! Green glow visual effect
 - **Lucky Clover** — boosts critical hit chance by +35% for 8 seconds (stacks with base 15% for 50% total)! Bright green aura ring and power-up HUD indicator
-- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red). **Combo milestone fireworks** at x5, x10, x15... — colorful particle bursts erupt around Zorp for hitting kill streak milestones!
+- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red). **Combo milestone fireworks** at x5, x10, x15... — colorful particle bursts erupt around Zorp for hitting kill streak milestones! **At x10+ combo, projectiles gain +25% damage** — a rewards skillful chains with raw firepower
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel!
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items
 - **Alien Monoliths** — mysterious ancient structures in crystal and snow biomes that grant random buffs when approached! Speed Surge (1.5x speed), Power Surge (1.4x damage), or Wisdom Aura (2x XP) for 10 seconds
@@ -131,6 +131,9 @@ python game.py
 - **Spawn Healing Zone** — a gentle green healing aura surrounds the spawn point, regenerating 5 HP/sec when you're inside it. Pulsing ring visual indicator on the ground. A safe haven to retreat to when low on health
 - **Level-scaled collection radius** — both pickup radius and magnetic pull radius grow slightly with each level, rewarding progression with smoother collection
 - **Level-up magnet burst** — when you level up, all collectibles within 25 units are vacuumed toward Zorp in a satisfying vortex effect, making level-ups feel powerful and rewarding
+- **Enemy Spawn Warning Markers** — a pulsing red ring now appears at enemy spawn locations 1.5 seconds before they materialize! The ring shrinks and pulses faster as the countdown approaches zero, giving you time to react and reposition. No more surprise spawns!
+- **Dash Collectible Vacuum** — dashing now pulls nearby collectibles (within 8 units) toward Zorp! Dash through fields of items to vacuum them up, making dash useful for collection as well as dodging
+- **Combo Damage Buff** — at combo x10+, your projectiles deal +25% damage! The HUD combo counter displays a ⚔+25% DMG indicator when active, rewarding skillful kill chains with raw firepower
 
 ## The Self-Improving Game
 
@@ -206,8 +209,10 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 Chain kills within 4.5 seconds to build combos! Each combo tier grants:
 - **+15% XP bonus** per tier (up to 10 tiers)
 - **+8% score bonus** per tier (up to 10 tiers)
+- **+25% projectile damage** at combo x10+!
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
+- **⚔+25% DMG** indicator appears on the combo HUD at x10+
 
 ## Critical Hits
 
@@ -308,6 +313,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.12.0 — Spawn Warnings, Dash Vacuum & Combo Damage
+- **Enemy Spawn Warning Markers**: Enemies no longer appear out of thin air! A pulsing red ring now appears at the spawn location 1.5 seconds before the enemy materializes. The ring shrinks and pulses faster as the countdown approaches, giving players time to react and reposition — eliminating unfair surprise spawns
+- **Dash Collectible Vacuum**: Dashing through fields of collectibles now vacuums them toward Zorp! Items within 8 units get pulled in and spin rapidly, making dash a versatile tool for both dodging enemies and collecting loot at high speed
+- **Combo Damage Buff**: Maintaining a combo of x10 or higher now grants +25% projectile damage! The HUD combo counter displays a ⚔+25% DMG indicator when active, rewarding skilled players who chain kills with raw firepower on top of the existing XP and score bonuses
 
 ### v2.11.1 — Kill Impact & Polish
 - **Kill Burst Particles**: Enemy deaths now produce a dramatic radial ring of particles that burst outward and upward, making kills feel more explosive and satisfying — a clear visual upgrade from the previous single-direction particle spray
