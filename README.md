@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.10.2 — 3D!)
+## Features (v2.11.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -53,7 +53,7 @@ python game.py
 - **Fireball Scroll** — projectiles explode on impact, dealing 50% damage to all enemies within a 4-unit blast radius for 8 seconds! Orange aura visual effect
 - **Regen Crystal** — regenerates 8 HP per second for 10 seconds! Green glow visual effect
 - **Lucky Clover** — boosts critical hit chance by +35% for 8 seconds (stacks with base 15% for 50% total)! Bright green aura ring and power-up HUD indicator
-- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red)
+- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red). **Combo milestone fireworks** at x5, x10, x15... — colorful particle bursts erupt around Zorp for hitting kill streak milestones!
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel!
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items
 - **Alien Monoliths** — mysterious ancient structures in crystal and snow biomes that grant random buffs when approached! Speed Surge (1.5x speed), Power Surge (1.4x damage), or Wisdom Aura (2x XP) for 10 seconds
@@ -121,6 +121,8 @@ python game.py
 - **AI culling for distant enemies** — complex special AI behaviors (teleporting, spitting, orbiting, cloaking) are skipped for enemies beyond 50 units, improving performance with many active enemies
 - **Refactored enemy cleanup** — duplicated enemy sub-entity destruction code consolidated into a single `_destroy_enemy_entities()` helper method for cleaner, more maintainable code
 - **Low-HP danger vignette** — a pulsing red screen overlay appears when health drops below 30%, with heartbeat-style rhythm that intensifies as HP drops lower — clearer danger feedback than the HP bar alone
+- **Low-HP player model pulse** — Zorp's body pulses red when below 30% HP, blending between alien green and danger red in sync with the heartbeat vignette — an in-world visual cue that complements the screen overlay
+- **Damage direction indicator** — red directional arrows appear on the HUD pointing toward the source of incoming damage (enemies, projectiles, explosions, shockwaves) — immediately tells you which direction the threat is coming from, with pulsing urgency animation and fade-out
 - **Particle color variation** — each burst particle gets a ±20% random color shift for natural, non-uniform effects instead of identical-looking spheres
 - **Projectile collision pre-check** — squared-distance pre-check skips expensive sqrt calculations for far-away enemies, improving combat performance with many active enemies
 - **Named constants** — magic numbers for shield particles, enemy projectile hit radius, collectible respawn range, and spawn interval extracted into named constants for readability
@@ -128,6 +130,7 @@ python game.py
 - **Achievement system (18 achievements)** — track milestones like First Blood, Warrior, Dragon Slayer, Survivor, and more! Popup notification on unlock with golden particles. Press F to view the full achievements panel
 - **Spawn Healing Zone** — a gentle green healing aura surrounds the spawn point, regenerating 5 HP/sec when you're inside it. Pulsing ring visual indicator on the ground. A safe haven to retreat to when low on health
 - **Level-scaled collection radius** — both pickup radius and magnetic pull radius grow slightly with each level, rewarding progression with smoother collection
+- **Level-up magnet burst** — when you level up, all collectibles within 25 units are vacuumed toward Zorp in a satisfying vortex effect, making level-ups feel powerful and rewarding
 
 ## The Self-Improving Game
 

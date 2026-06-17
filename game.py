@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.10.2"
+VERSION = "2.11.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -563,6 +563,19 @@ COLLECT_PULL_RADIUS_PER_LEVEL = 0.1 # Extra pull radius per player level
 SPAWN_HEAL_RADIUS = 25.0            # Radius of the healing zone around spawn
 SPAWN_HEAL_HP_PER_SECOND = 5        # HP restored per second while in zone
 SPAWN_HEAL_INDICATOR_ALPHA = 40     # Alpha of the healing zone ring
+
+# ─── Damage Direction Indicator ────────────────────────────────────────────
+DAMAGE_INDICATOR_DURATION = 1.5     # How long the damage arrow stays visible (seconds)
+DAMAGE_INDICATOR_MAX_ALPHA = 220    # Peak alpha of the damage direction arrow
+DAMAGE_INDICATOR_DISTANCE = 0.28    # Distance from center of HUD for the arrow
+
+# ─── Level-Up Magnet Burst ────────────────────────────────────────────────
+LEVEL_UP_MAGNET_RADIUS = 25.0       # How far the level-up magnet pulls collectibles from
+LEVEL_UP_MAGNET_FORCE = 40.0        # How fast collectibles are pulled toward player
+
+# ─── Combo Milestone Fireworks ─────────────────────────────────────────────
+COMBO_MILESTONE_INTERVAL = 5        # Combo milestones: x5, x10, x15, etc.
+COMBO_MILESTONE_PARTICLES = 25      # Particle burst count at combo milestones
 
 # ─── Achievement System ────────────────────────────────────────────────────
 ACHIEVEMENT_POPUP_DURATION = 4.0    # How long achievement popup stays visible
@@ -2171,6 +2184,28 @@ class Game:
         )
         self.kill_flash_timer = 0.0
 
+        # Damage direction indicator — red arrow pointing toward the source of damage
+        self.damage_indicators = []  # List of (Entity, direction_vec, remaining_time) tuples
+        self.damage_indicator_entities = []  # Arrow entities on the HUD
+
+        # Pre-create 4 directional damage arrows (up, down, left, right quadrants)
+        # These are hidden and shown when the player takes damage from a direction
+        self.dmg_arrow_entities = []
+        for i in range(8):  # 8 directions (N, NE, E, SE, S, SW, W, NW)
+            angle = math.radians(i * 45)
+            ax = math.sin(angle) * DAMAGE_INDICATOR_DISTANCE
+            ay = math.cos(angle) * DAMAGE_INDICATOR_DISTANCE
+            arrow = Text(
+                parent=camera.ui,
+                text='▲',
+                scale=2.0,
+                color=color.rgba(255, 50, 50, 0),
+                position=(ax, ay),
+                origin=(0, 0),
+                z=-0.5,
+            )
+            self.dmg_arrow_entities.append(arrow)
+
     @staticmethod
     def _destroy_enemy_entities(enemy):
         """Clean up all sub-entities owned by an enemy (decor, eyes, HP bar, shadow, segments).
@@ -2358,6 +2393,12 @@ class Game:
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
+        # Destroy damage direction arrows
+        for arrow_ent in self.dmg_arrow_entities:
+            if arrow_ent and hasattr(arrow_ent, 'enabled'):
+                destroy(arrow_ent)
+        self.dmg_arrow_entities.clear()
+        self.damage_indicators.clear()
         for t in self.msg_texts:
             if t:
                 destroy(t)
@@ -3640,7 +3681,22 @@ class Game:
         else:
             self.spawn_heal_text.text = ''
 
-        # ── Achievement Popup Display ──
+        # ── Damage Direction Indicator ──
+        # Show red arrows on the HUD pointing toward the source of recent damage
+        new_indicators = []
+        for arrow_ent, dmg_dir, remaining in self.damage_indicators:
+            remaining -= time.dt
+            if remaining > 0:
+                # Fade out as time runs out
+                fade_alpha = int(DAMAGE_INDICATOR_MAX_ALPHA * min(1.0, remaining / (DAMAGE_INDICATOR_DURATION * 0.5)))
+                arrow_ent.color = color.rgba(255, 50, 50, fade_alpha)
+                # Pulse for urgency
+                pulse = 0.8 + 0.2 * math.sin(self.t * 15)
+                arrow_ent.scale = 2.0 * pulse
+                new_indicators.append((arrow_ent, dmg_dir, remaining))
+            else:
+                arrow_ent.color = color.rgba(255, 50, 50, 0)
+        self.damage_indicators = new_indicators
         # Show the most recent achievement popup for ACHIEVEMENT_POPUP_DURATION seconds
         if self.achievement_popups:
             unlock_time, ach = self.achievement_popups[-1]
@@ -3727,6 +3783,36 @@ class Game:
                 self.add_message(f"Achievement Unlocked: {ach.icon} {ach.name}!")
                 self._spawn_particles(p.position + Vec3(0, 2, 0), color.yellow, count=15)
                 self.screen_shake = max(self.screen_shake, 0.2)
+
+    def _show_damage_indicator(self, damage_source_pos):
+        """Show a directional damage indicator arrow on the HUD pointing toward the damage source.
+
+        Args:
+            damage_source_pos: Vec3 position of the entity that dealt damage.
+        """
+        p = self.player
+        dx = damage_source_pos.x - p.x
+        dz = damage_source_pos.z - p.z
+        dist = math.sqrt(dx * dx + dz * dz)
+        if dist < 0.1:
+            return  # Don't show if source is right on top of player
+
+        # Calculate angle in degrees (0 = up/north, clockwise)
+        angle = math.degrees(math.atan2(dx, dz)) % 360
+
+        # Find the closest arrow entity (8 directions, 45 degrees apart)
+        # Arrow indices: 0=N(0°), 1=NE(45°), 2=E(90°), 3=SE(135°), 4=S(180°), 5=SW(225°), 6=W(270°), 7=NW(315°)
+        closest_idx = round(angle / 45) % 8
+
+        # Rotate the arrow character to match the direction
+        arrow_ent = self.dmg_arrow_entities[closest_idx]
+        # Set visible with full alpha
+        arrow_ent.color = color.rgba(255, 50, 50, DAMAGE_INDICATOR_MAX_ALPHA)
+        arrow_ent.scale = 2.0
+
+        # Track this indicator for fade-out
+        direction = Vec3(dx, 0, dz).normalized()
+        self.damage_indicators.append((arrow_ent, direction, DAMAGE_INDICATOR_DURATION))
 
     def _activate_pulse_wave(self):
         """Fire a pulse wave from the player's position.
@@ -4196,6 +4282,20 @@ def game_update():
         p.visible = True
     else:
         p.visible = True
+        # ── Low-HP Danger Pulse ── When below 30% HP, the player model pulses red
+        # as an additional visual warning (complements the screen vignette)
+        if p.hp < p.max_hp * LOW_HP_VIGNETTE_THRESHOLD:
+            danger_ratio = 1.0 - (p.hp / (p.max_hp * LOW_HP_VIGNETTE_THRESHOLD))
+            pulse = 0.5 + 0.5 * math.sin(game.t * LOW_HP_HEARTBEAT_SPEED)
+            red_mix = danger_ratio * pulse
+            # Blend between normal alien color and danger red
+            p.color = color.rgb(
+                min(255, int(C_ALIEN[0] + (255 - C_ALIEN[0]) * red_mix)),
+                max(0, int(C_ALIEN[1] * (1 - red_mix * 0.6))),
+                max(0, int(C_ALIEN[2] * (1 - red_mix * 0.6))),
+            )
+        else:
+            p.color = C_ALIEN
 
     # Shoot cooldown
     if p.shoot_timer > 0:
@@ -4222,6 +4322,20 @@ def game_update():
         p.color = color.yellow
         invoke(setattr, p, 'color', C_ALIEN, delay=LEVEL_UP_COLOR_FLASH_DURATION)
         game.add_message(f"Level Up! Now Lv.{p.level}!")
+        # ── Level-Up Magnet Burst ── Pull all nearby collectibles toward the player
+        # A satisfying "vortex" effect that rewards leveling up by vacuuming items
+        magnet_range = LEVEL_UP_MAGNET_RADIUS + (p.level * 0.5)  # Grows slightly with level
+        for col in game.collectibles:
+            if col.popping:
+                continue
+            dist = (col.position - p.position).length()
+            if dist < magnet_range and dist > 0.5:
+                # Snap collectibles toward the player — satisfying vacuum effect
+                pull_dir = (p.position - col.position).normalized()
+                snap_dist = min(dist - 0.5, dist * 0.7)  # Pull 70% of the way
+                col.position = col.position + pull_dir * snap_dist
+                # Spin items rapidly as they get pulled
+                col.rotation_y += 720 * 0.1  # Quick spin burst
 
     if game.level_up_timer > 0:
         game.level_up_timer -= time.dt
@@ -4412,6 +4526,7 @@ def game_update():
                                 died = p.take_damage(VOID_BOMBER_EXPLOSION_DAMAGE)
                                 game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
                                 game.damage_numbers.append(DamageNumber(p.position, VOID_BOMBER_EXPLOSION_DAMAGE, is_kill=False))
+                                game._show_damage_indicator(enemy.position)
                                 if died:
                                     game._show_death_screen(p)
                         # Damage other nearby enemies too (friendly fire!)
@@ -4682,6 +4797,8 @@ def game_update():
                 died = p.take_damage(effective_damage)
                 game.screen_shake = SCREEN_SHAKE_DAMAGE
                 game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                # Show damage direction indicator pointing toward the enemy
+                game._show_damage_indicator(enemy.position)
                 if effective_damage > enemy.damage:
                     game.damage_numbers.append(DamageNumber(p.position, effective_damage, is_kill=False))
                 if died:
@@ -4848,6 +4965,17 @@ def game_update():
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    # ── Combo Milestone Fireworks ── Celebrate every 5x combo with a burst
+                    if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                        # Burst of colorful particles around the player
+                        milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                           color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                        for _ in range(COMBO_MILESTONE_PARTICLES):
+                            burst_color = random.choice(milestone_colors)
+                            burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                            game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                        game.screen_shake = max(game.screen_shake, 0.4)
+                        game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
                     combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
                     combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     # Apply monolith XP multiplier buff
@@ -4932,6 +5060,8 @@ def game_update():
                 game.screen_shake = SCREEN_SHAKE_DAMAGE
                 game._spawn_particles(p.position, color.rgb(200, 100, 0), count=PARTICLE_DAMAGE_COUNT)
                 game.damage_numbers.append(DamageNumber(p.position, eproj.damage, is_kill=False))
+                # Show damage direction indicator pointing toward the projectile source
+                game._show_damage_indicator(eproj.position)
                 if died:
                     game._show_death_screen(p)
             destroy(eproj)
@@ -4965,6 +5095,7 @@ def game_update():
                     game.screen_shake = SCREEN_SHAKE_DAMAGE
                     game._spawn_particles(p.position, color.rgb(255, 220, 50), count=PARTICLE_DAMAGE_COUNT)
                     game.damage_numbers.append(DamageNumber(p.position, ring.damage, is_kill=False))
+                    game._show_damage_indicator(ring.position)
                     if died:
                         game._show_death_screen(p)
 
