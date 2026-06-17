@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.10.1"
+VERSION = "2.10.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -21,6 +21,8 @@ TILE_SCALE = 4
 
 # ─── Player ───────────────────────────────────────────────────────────────────
 PLAYER_SPEED = 12
+PLAYER_ACCELERATION = 45.0         # How fast the player accelerates (higher = snappier)
+PLAYER_DECELERATION = 25.0          # How fast the player decelerates (lower = more slide)
 PLAYER_INVULN_DURATION = 0.5
 PLAYER_BLINK_RATE = 20
 PLAYER_START_XP = 80               # Smoother early-game: first level-up comes sooner (was 100)
@@ -39,6 +41,7 @@ ENEMY_DETECT_RANGE = 32
 ENEMY_ATTACK_RANGE = 2.0            # Tighter melee range — more dodge room for the player
 ENEMY_ATTACK_COOLDOWN = 1.2         # Slower enemy attacks — more readable patterns
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
+ENEMY_SPAWN_GRACE_PERIOD = 2.0     # Seconds after spawn before enemies detect the player — prevents instant-aggro
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
 ENEMY_WANDER_SPEED_FACTOR = 0.20
@@ -246,6 +249,7 @@ DASH_TRAIL_PARTICLES = 6
 DASH_FOV_ZOOM = 85          # FOV during dash (wider for speed feel)
 DASH_FOV_NORMAL = 75        # Normal gameplay FOV
 DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
+DASH_INVULN_DURATION = 0.3  # Seconds of invulnerability during dash — makes dash a dodge tool
 
 # ─── Power-Up Durations ───────────────────────────────────────────────────────
 SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
@@ -696,6 +700,9 @@ class Player(Entity):
         self.dash_cooldown = 0
         self.dash_direction = Vec3(0, 0, 0)
 
+        # Movement velocity for smooth acceleration/deceleration
+        self.velocity = Vec3(0, 0, 0)
+
         # Power-up timers
         self.speed_boost_timer = 0
         self.shield_timer = 0
@@ -944,6 +951,7 @@ class Enemy(Entity):
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
         self.alerted = False                  # Whether enemy has detected the player (for alert flash)
         self.alert_flash_timer = 0.0          # Timer for the detection alert flash
+        self.spawn_time = 0.0                  # Set by game_update when spawned — tracks spawn age for grace period
 
         # Type-specific special behaviors
         self.is_phase_shifter = (enemy_type == 'Phase Shifter')
@@ -3893,6 +3901,7 @@ def game_update():
         p.dash_direction = move_dir.normalized()
         p.dash_timer = DASH_DURATION
         p.dash_cooldown = DASH_COOLDOWN
+        p.invuln_timer = max(p.invuln_timer, DASH_INVULN_DURATION)  # Brief invincibility during dash
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
     else:
@@ -4110,13 +4119,48 @@ def game_update():
     else:
         p._dust_timer = getattr(p, '_dust_timer', 0.0)
 
-    if move_dir.length() > 0 and p.dash_timer <= 0:
-        move_dir = move_dir.normalized()
-        new_pos = p.position + move_dir * effective_speed * time.dt
-        if game._is_walkable(new_pos.x, new_pos.z) or (p.float_timer > 0 and game._get_biome_at(new_pos.x, new_pos.z) in ('water', 'lava')):
-            p.x = max(1, min(new_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
-            p.z = max(1, min(new_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
-            p.facing = move_dir
+    if p.dash_timer <= 0:
+        # ── Smooth Acceleration/Deceleration ──
+        # Instead of instant start/stop, accelerate toward desired velocity and
+        # decelerate smoothly for a more polished, weighty movement feel.
+        target_vel = Vec3(0, 0, 0)
+        if move_dir.length() > 0:
+            target_vel = move_dir.normalized() * effective_speed
+
+        if target_vel.length() > 0.1:
+            # Accelerate toward desired direction
+            p.velocity = Vec3(
+                lerp(p.velocity.x, target_vel.x, time.dt * PLAYER_ACCELERATION),
+                0,
+                lerp(p.velocity.z, target_vel.z, time.dt * PLAYER_ACCELERATION),
+            )
+        else:
+            # Decelerate to zero
+            p.velocity = Vec3(
+                lerp(p.velocity.x, 0, time.dt * PLAYER_DECELERATION),
+                0,
+                lerp(p.velocity.z, 0, time.dt * PLAYER_DECELERATION),
+            )
+
+        # Apply velocity if significant
+        if p.velocity.length() > 0.3:
+            new_pos = p.position + p.velocity * time.dt
+            # ── Wall Sliding ── Try full move first; if blocked, try each axis
+            # independently so the player slides along walls instead of stopping dead.
+            if game._is_walkable(new_pos.x, new_pos.z) or (p.float_timer > 0 and game._get_biome_at(new_pos.x, new_pos.z) in ('water', 'lava')):
+                p.x = max(1, min(new_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
+                p.z = max(1, min(new_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
+                p.facing = p.velocity.normalized()
+            elif game._is_walkable(new_pos.x, p.z) or (p.float_timer > 0 and game._get_biome_at(new_pos.x, p.z) in ('water', 'lava')):
+                # Slide along Z axis only
+                p.x = max(1, min(new_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
+                p.facing = p.velocity.normalized()
+            elif game._is_walkable(p.x, new_pos.z) or (p.float_timer > 0 and game._get_biome_at(p.x, new_pos.z) in ('water', 'lava')):
+                # Slide along X axis only
+                p.z = max(1, min(new_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
+                p.facing = p.velocity.normalized()
+    else:
+        p.velocity = Vec3(0, 0, 0)  # Reset velocity during dash
 
     # Face mouse
     hit = mouse.world_point
@@ -4224,6 +4268,28 @@ def game_update():
 
         dist_to_player = (enemy.position - p.position).length()
 
+        # ── Spawn Fade-In ── Newly spawned enemies fade in over the grace period
+        # for a polished "materializing" effect instead of popping in instantly.
+        spawn_age = game.t - enemy.spawn_time if hasattr(enemy, 'spawn_time') and enemy.spawn_time > 0 else 999
+        if spawn_age < ENEMY_SPAWN_GRACE_PERIOD:
+            fade_t = min(1.0, spawn_age / ENEMY_SPAWN_GRACE_PERIOD)
+            # Scale up from small to full size during fade-in
+            enemy.scale = enemy.original_scale * max(0.3, fade_t)
+            # Tint toward white then settle to original color
+            if fade_t < 0.5:
+                # Flash bright white/cyan at spawn, then settle
+                flash_t = fade_t / 0.5
+                cr, cg, cb = _c255_color(enemy.original_color)
+                r = min(255, int(cr + (255 - cr) * (1 - flash_t)))
+                g = min(255, int(cg + (255 - cg) * (1 - flash_t)))
+                b = min(255, int(cb + (255 - cb) * (1 - flash_t)))
+                a = max(80, int(255 * fade_t))
+                enemy.color = color.rgba(r, g, b, a)
+        elif spawn_age < ENEMY_SPAWN_GRACE_PERIOD + 0.05:
+            # Just exited grace period — restore original color and scale
+            enemy.scale = enemy.original_scale
+            enemy.color = enemy.original_color
+
         # ── Process knockback velocity ──
         if enemy.knockback_vel.length() > 0.1:
             kb_pos = enemy.position + enemy.knockback_vel * time.dt
@@ -4244,7 +4310,9 @@ def game_update():
                 enemy.knockback_vel = Vec3(0, enemy.knockback_vel.y, 0)
 
         # Skip AI updates for very distant enemies (performance)
-        if dist_to_player < enemy.detect_range:
+        # Grace period: newly spawned enemies don't detect the player for ENEMY_SPAWN_GRACE_PERIOD seconds
+        spawn_age = game.t - enemy.spawn_time if hasattr(enemy, 'spawn_time') and enemy.spawn_time > 0 else 999
+        if dist_to_player < enemy.detect_range and spawn_age >= ENEMY_SPAWN_GRACE_PERIOD:
             # Alert flash: first time enemy detects the player
             if not enemy.alerted:
                 enemy.alerted = True
@@ -5142,6 +5210,7 @@ def game_update():
                 enemy_type = game._pick_enemy_type(dist_from_spawn)
                 e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
                 game._scale_enemy_to_player_level(e)
+                e.spawn_time = game.t  # Track spawn time for grace period
                 game.enemies.append(e)
 
     # Respawn collectibles

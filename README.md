@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.10.1 — 3D!)
+## Features (v2.10.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -305,6 +305,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.10.2 — Movement & Combat Polish
+- **Smooth Acceleration/Deceleration**: Player movement now uses velocity-based acceleration (45 units/s²) and deceleration (25 units/s²) instead of instant start/stop. Zorp feels heavier and more responsive — starting has a satisfying ramp-up and stopping has a gentle slide that makes the alien feel more physical
+- **Wall Sliding**: Moving diagonally into walls no longer stops Zorp dead. The movement system now tries each axis independently, so you slide along obstacles smoothly — a huge quality-of-life improvement for navigating tight terrain
+- **Dash Invincibility**: Dashing now grants 0.3 seconds of invulnerability, making dash a true dodge mechanic rather than just a speed boost. Time your dashes to avoid attacks!
+- **Enemy Spawn Grace Period**: Newly spawned enemies no longer aggro instantly. They have a 2-second grace period where they can't detect the player, during which they fade in with a materializing visual effect (scaling up from small, flashing bright before settling to their normal color). This prevents unfair instant-attacks from enemies that just appeared
 
 ### v2.10.1 — Game Feel & UX Polish
 - **Smooth Enemy Rotation**: Enemies now smoothly rotate toward the player instead of snapping instantly, making movement feel more natural and polished. Traders also turn smoothly at a slower rate for a casual feel
