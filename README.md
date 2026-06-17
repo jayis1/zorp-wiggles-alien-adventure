@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.9.1 — 3D!)
+## Features (v2.9.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -297,6 +297,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.9.2 — Game Feel & Visual Polish
+- **Camera Kill Zoom**: Brief FOV punch-in effect on enemy kills for cinematic impact, complementing existing hit-stop and screen shake
+- **Power-Up Aura Ring**: Pulsing ground ring appears under Zorp when a buff is active (shield=cyan, speed=green, magnet=purple, weapon=orange, fireball=red, regen=green, damage=red, XP=gold) — makes active buffs immediately visible at a glance
+- **Game Balance**: XP Orb distance bonus increased from 2 to 3 per 50 units from spawn, making deep exploration more rewarding
+- **Code Quality**: Added `_dist2d_coords()` static method for cleaner 2D distance calculations from raw coordinates; replaced two inline `math.sqrt((x1-x2)**2 + (z1-z2)**2)` patterns with the helper
 
 ### v2.9.1 — Polish & Performance
 - **Game Balance**: Reduced first level-up threshold from 100 to 80 XP for smoother early-game progression; collectible XP now has a floor of 1 (no more 0 XP drops from cheap items)

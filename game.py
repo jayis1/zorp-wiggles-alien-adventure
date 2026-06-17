@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.9.1"
+VERSION = "2.9.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -143,6 +143,11 @@ PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
 
 # ─── Hit-Stop ────────────────────────────────────────────────────────────────
 HIT_STOP_KILL_DURATION = 0.08  # Slightly longer freeze — more dramatic kill impact
+
+# ─── Camera Kill Zoom ────────────────────────────────────────────────────────
+CAMERA_KILL_ZOOM_FOV = 65      # FOV to zoom to on kill (tighter than 75 normal) — punch-in effect
+CAMERA_KILL_ZOOM_DURATION = 0.2 # How long the zoom lasts before returning to normal
+CAMERA_KILL_ZOOM_LERP_SPEED = 12.0  # How fast the zoom snaps back to normal FOV
 
 # ─── Enemy Knockback ──────────────────────────────────────────────────────────
 ENEMY_KNOCKBACK_FORCE = 4.0    # How far enemies get pushed on hit
@@ -351,7 +356,7 @@ BOSS_HP_BAR_Y = 0.4                  # Y position on screen (above center)
 
 # ─── XP Orb (New Collectible) ────────────────────────────────────────────
 XP_ORB_BASE_XP = 50                  # Base XP granted by an XP Orb
-XP_ORB_DISTANCE_BONUS = 2            # Bonus XP per 50 world units from spawn center
+XP_ORB_DISTANCE_BONUS = 3            # Bonus XP per 50 world units from spawn center (was 2 — increased for more rewarding exploration)
 XP_ORB_MAX_XP = 300                  # Cap on XP Orb value
 
 # ─── Alien Monolith (World Feature) ──────────────────────────────────────
@@ -701,6 +706,15 @@ class Player(Entity):
         )
         # Player glow point light (faint green)
         self.glow_light = PointLight(color=color.rgba(0, 200, 80, 120))
+
+        # Power-up aura ring — pulses with the active buff's color for visual clarity
+        self.powerup_ring = Entity(
+            model='quad',
+            color=color.rgba(0, 200, 80, 0),
+            scale=3.0,
+            position=(self.x, 0.07, self.z),
+            rotation_x=90,
+        )
 
         # Squish/stretch animation state
         self.squish_current = 1.0  # Current Y scale (1.0 = normal)
@@ -1821,6 +1835,7 @@ class Game:
         self.screen_shake = 0.0
         self.level_up_timer = 0.0
         self.hit_stop_timer = 0.0
+        self.kill_fov_timer = 0.0  # Camera FOV punch on kill — brief zoom-in effect
         self.current_biome = 'grass'
 
         # Combo system
@@ -2598,6 +2613,24 @@ class Game:
         """
         dx = a.x - b.x
         dz = a.z - b.z
+        return math.sqrt(dx * dx + dz * dz)
+
+    @staticmethod
+    def _dist2d_coords(x1: float, z1: float, x2: float, z2: float) -> float:
+        """Compute 2D (XZ-plane) distance between two coordinate pairs.
+
+        Useful when you have raw x,z coordinates instead of Entity objects,
+        avoiding the need to reference .x and .z on intermediate variables.
+
+        Args:
+            x1, z1: Coordinates of the first point.
+            x2, z2: Coordinates of the second point.
+
+        Returns:
+            Euclidean distance on the XZ plane.
+        """
+        dx = x1 - x2
+        dz = z1 - z2
         return math.sqrt(dx * dx + dz * dz)
 
     def _show_death_screen(self, p):
@@ -3680,8 +3713,13 @@ def game_update():
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
     else:
-        # Return FOV to normal when not dashing
-        if abs(camera.fov - DASH_FOV_NORMAL) > 0.5:
+        # Return FOV to normal when not dashing and not in kill zoom
+        if game.kill_fov_timer > 0:
+            game.kill_fov_timer -= time.dt
+            # Lerp back to normal FOV after kill zoom punch
+            target_fov = DASH_FOV_NORMAL
+            camera.fov = lerp(camera.fov, target_fov, time.dt * CAMERA_KILL_ZOOM_LERP_SPEED)
+        elif abs(camera.fov - DASH_FOV_NORMAL) > 0.5:
             camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_LERP_SPEED)
         else:
             camera.fov = DASH_FOV_NORMAL
@@ -3704,6 +3742,39 @@ def game_update():
     if p.regen_timer > 0:
         # Pulsing green glow
         p.regen_visual.scale = 1.5 + math.sin(game.t * 4) * 0.1
+
+    # Power-up aura ring — shows a pulsing ground ring in the color of the active buff
+    # Priority: shield (cyan) > speed (green) > magnet (purple) > weapon (orange) > fireball (red)
+    # The ring makes active buffs immediately visible without reading the HUD.
+    powerup_ring_color = None
+    if p.shield_timer > 0:
+        powerup_ring_color = (100, 200, 255)  # Cyan for shield
+    elif p.speed_boost_timer > 0 or p.monolith_speed_timer > 0:
+        powerup_ring_color = (50, 255, 50)  # Green for speed
+    elif p.magnet_timer > 0:
+        powerup_ring_color = (200, 50, 255)  # Purple for magnet
+    elif p.weapon_upgrade_timer > 0:
+        powerup_ring_color = (255, 150, 0)  # Orange for weapon upgrade
+    elif p.fireball_timer > 0:
+        powerup_ring_color = (255, 80, 20)  # Red-orange for fireball
+    elif p.regen_timer > 0:
+        powerup_ring_color = (50, 255, 120)  # Soft green for regen
+    elif p.monolith_damage_timer > 0:
+        powerup_ring_color = (255, 50, 50)  # Red for damage buff
+    elif p.monolith_xp_timer > 0:
+        powerup_ring_color = (200, 200, 50)  # Gold for XP buff
+
+    if powerup_ring_color is not None:
+        pulse = 0.5 + 0.5 * math.sin(game.t * 5)
+        ring_alpha = int(40 + 35 * pulse)
+        p.powerup_ring.color = color.rgba(
+            powerup_ring_color[0], powerup_ring_color[1], powerup_ring_color[2], ring_alpha
+        )
+        p.powerup_ring.scale = 3.0 + pulse * 0.4
+        p.powerup_ring.position = (p.x, 0.07, p.z)
+        p.powerup_ring.visible = True
+    else:
+        p.powerup_ring.visible = False
 
     # Float visual update — show golden shimmer when floating
     if p.float_timer > 0:
@@ -4468,6 +4539,9 @@ def game_update():
                     game.screen_shake = SCREEN_SHAKE_KILL
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                    # Camera FOV punch: brief zoom-in on kill for cinematic impact
+                    game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                    camera.fov = CAMERA_KILL_ZOOM_FOV
                     # Kill damage number (bigger, yellow)
                     # Bug fix: use computed damage (includes crit multiplier) instead of base proj.damage
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
@@ -4800,7 +4874,7 @@ def game_update():
                 # Distance-based difficulty scaling
                 spawn_center_x = WORLD_SIZE // 2 * TILE_SCALE
                 spawn_center_z = WORLD_SIZE // 2 * TILE_SCALE
-                dist_from_spawn = math.sqrt((ex - spawn_center_x) ** 2 + (ez - spawn_center_z) ** 2)
+                dist_from_spawn = game._dist2d_coords(ex, ez, spawn_center_x, spawn_center_z)
                 enemy_type = game._pick_enemy_type(dist_from_spawn)
                 e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
                 game._scale_enemy_to_player_level(e)
@@ -5002,7 +5076,7 @@ def game_update():
     # ── Spawn Healing Zone ──
     spawn_center_x = WORLD_SIZE // 2 * TILE_SCALE
     spawn_center_z = WORLD_SIZE // 2 * TILE_SCALE
-    dist_from_spawn = math.sqrt((p.x - spawn_center_x) ** 2 + (p.z - spawn_center_z) ** 2)
+    dist_from_spawn = game._dist2d_coords(p.x, p.z, spawn_center_x, spawn_center_z)
     if dist_from_spawn < SPAWN_HEAL_RADIUS and p.hp < p.max_hp:
         game._spawn_heal_tick += time.dt
         if game._spawn_heal_tick >= 1.0:
