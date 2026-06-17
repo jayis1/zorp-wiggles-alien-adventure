@@ -33,13 +33,13 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.9.2 — 3D!)
+## Features (v2.10.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
-- **16 collectible item types** — including **10 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), **Fireball Scroll** (explosive AOE shots!), **Regen Crystal** (HP regeneration over time!)
-- **16 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!)
-- **Critical Hit system** — 15% chance per shot to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact!
+- **17 collectible item types** — including **11 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!)
+- **17 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!)
+- **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
@@ -52,7 +52,8 @@ python game.py
 - **XP Orb** — grants bonus XP that scales with distance from spawn! Up to 300 XP in distant regions
 - **Fireball Scroll** — projectiles explode on impact, dealing 50% damage to all enemies within a 4-unit blast radius for 8 seconds! Orange aura visual effect
 - **Regen Crystal** — regenerates 8 HP per second for 10 seconds! Green glow visual effect
-- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier
+- **Lucky Clover** — boosts critical hit chance by +35% for 8 seconds (stacks with base 15% for 50% total)! Bright green aura ring and power-up HUD indicator
+- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red)
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel!
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items
 - **Alien Monoliths** — mysterious ancient structures in crystal and snow biomes that grant random buffs when approached! Speed Surge (1.5x speed), Power Surge (1.4x damage), or Wisdom Aura (2x XP) for 10 seconds
@@ -108,6 +109,10 @@ python game.py
 - **Void Stalker enemy** — stealth predator that cloaks (nearly invisible) and decloaks to ambush! First hit from stealth deals 50% bonus damage
 - **Plasma Serpent enemy** — segmented snake-like creature with 4 body segments that smoothly follow the head. When killed, each segment scatters into a Swarm Mite! Screen shake and particle burst on split
 - **Graviton enemy** — floating purple orb that periodically activates a gravity pull, dragging the player toward it! Purple ring visual indicator when pulling, dim warning pulse before activation. Deals continuous damage while pulling. Appears in medium and hard zones
+- **Void Wisp enemy** — tiny, semi-transparent, extremely fast enemy that teleports away when hit! 50% chance to blink to a nearby position after taking damage, with teal poof particles at both old and new positions. Spawns in easy and medium zones. Low HP (18) but very evasive
+- **Lucky Clover collectible** — uncommon green diamond that boosts critical hit chance by +35% for 8 seconds, stacking with the base 15% for 50% total crit! Bright green power-up aura ring and HUD timer display
+- **Kill flash effect** — brief white screen flash on enemy kills for satisfying juice and impact feedback
+- **Combo timer bar** — visual progress bar beneath the combo counter showing time remaining before the combo resets. Color shifts from green (full) → yellow (half) → red (almost empty)
 - **Boss Health Bar** — prominent health bar appears at the top of the screen when a Plasma Drake (boss) is nearby! Shows boss name and color-coded HP (green → yellow → red)
 - **XP Orb collectible** — golden-blue glowing orbs that grant bonus XP scaling with distance from spawn (50–300 XP). Perfect for risk/reward exploration!
 - **Hit ripple effect** — expanding ring at enemy hit location for satisfying impact feedback; golden ripple for critical hits, white for normal hits
@@ -168,6 +173,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **XP Orb** | 25 pts | Bonus XP (50–300) scaled by distance from spawn | Uncommon |
 | **Fireball Scroll** | 25 pts | Projectiles explode on impact for AOE damage (8s) | Rare |
 | **Regen Crystal** | 20 pts | Regenerates 8 HP/sec for 10 seconds | Uncommon |
+| **Lucky Clover** | 20 pts | +35% crit chance for 8 seconds | Uncommon |
 
 ## Enemies
 
@@ -186,6 +192,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Void Stalker** | 55 | Fast | 15 | **Stealth Cloak** | Nearly invisible when cloaked, decloaks to ambush for 50% bonus damage |
 | **Plasma Serpent** | 120 | Medium | 20 | **Segmented + Splits** | Snake with 4 body segments; splits into Swarm Mites on death |
 | **Graviton** | 75 | Medium | 10 | **Gravity Pull** | Periodically pulls player toward it; deals DoT while pulling; purple ring indicator |
+| **Void Wisp** | 18 | Very Fast | 5 | **Teleport Dodge** | Tiny & semi-transparent; 50% chance to teleport away when hit! |
 | Lava Crawler | 100 | Medium | 28 | — | Hot-headed |
 | Crystal Guardian | 180 | Slow | 38 | — | Tough |
 | Plasma Drake | 350 | Fast | 45 | — | Endgame boss |
@@ -218,7 +225,7 @@ Every projectile hit has a **15% chance** to be a critical hit, dealing **2x dam
 
 - **Friendly alien NPCs** wander the world, wearing purple hats
 - Approach a trader and press **E** to trade 5 Space Gloop for a random rare item
-- Possible trade rewards: Meteor Shard, Quantum Fuzz, Shield Crystal, Weapon Upgrade, Nebula Dust, Magnet Core, Time Warp, Star Fruit, Fireball Scroll, Regen Crystal
+- Possible trade rewards: Meteor Shard, Quantum Fuzz, Shield Crystal, Weapon Upgrade, Nebula Dust, Magnet Core, Time Warp, Star Fruit, Fireball Scroll, Regen Crystal, Lucky Clover
 - New traders spawn periodically if fewer than 3 are alive
 - Trader names: Zix, Glip, Orbix, Fweem
 

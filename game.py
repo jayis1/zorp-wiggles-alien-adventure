@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.9.2"
+VERSION = "2.10.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -73,6 +73,7 @@ ENEMY_LOOT_DROPS = {
     'Plasma Drake':        (4, 6),   # Boss-tier: 4-6 items
     'Plasma Serpent':      (3, 5),   # Mid-hard: head splits into segments
     'Graviton':            (2, 4),   # Mid: drops moderate loot
+    'Void Wisp':           (1, 3),   # Easy-mid: elusive, drops modest loot
 }
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
@@ -287,8 +288,8 @@ KILL_FEED_MAX_ENTRIES = 5           # Maximum number of kill feed entries shown
 KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
-EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton']
+EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite', 'Void Wisp']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton', 'Void Wisp']
 HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent', 'Graviton']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
@@ -340,7 +341,20 @@ GRAVITON_PULL_COOLDOWN_MAX = 7.0     # Max seconds between pull activations
 GRAVITON_PULL_DAMAGE = 5            # Damage dealt per second while pulled
 GRAVITON_PULL_INDICATOR_COLOR = color.rgb(180, 0, 255)  # Purple indicator ring
 
-# ─── Fireball Scroll (New Collectible) ─────────────────────────────────
+# ─── Void Wisp (New Enemy) ──────────────────────────────────────────────
+VOID_WISP_TELEPORT_RANGE = 8.0       # How far a Void Wisp teleports when hit
+VOID_WISP_TELEPORT_CHANCE = 0.50     # 50% chance to teleport away when hit
+VOID_WISP_TELEPORT_COOLDOWN = 2.0    # Minimum seconds between teleports
+
+# ─── Lucky Clover (New Collectible) ──────────────────────────────────────
+LUCKY_CLOVER_DURATION = 8.0          # Duration of crit chance boost
+LUCKY_CLOVER_CRIT_BONUS = 0.35      # +35% crit chance while active (stacks with base 15%)
+
+# ─── Kill Flash ──────────────────────────────────────────────────────────
+KILL_FLASH_DURATION = 0.06           # How long the white screen flash lasts on kill
+KILL_FLASH_MAX_ALPHA = 50            # Max alpha of the kill flash overlay
+
+# ─── Fireball Scroll (New Collectible) ─────────────────────────────────────
 FIREBALL_DURATION = 8.0              # Duration of fireball effect
 FIREBALL_BLAST_RADIUS = 4.0          # AOE radius on projectile impact
 FIREBALL_BLAST_DAMAGE_PERCENT = 0.5  # Fireball blast deals 50% of projectile damage to nearby enemies
@@ -422,6 +436,7 @@ COLLECTIBLE_WEIGHTS = {
     'XP Orb':         6,    # Uncommon — grants bonus XP scaled by distance
     'Fireball Scroll': 4,   # Rare — projectiles explode on impact
     'Regen Crystal':  6,    # Uncommon — regenerates HP over time
+    'Lucky Clover':   5,    # Uncommon — boosts critical hit chance
 }
 
 # ─── Collectible Rarity Tiers ────────────────────────────────────────────────
@@ -442,6 +457,7 @@ RARITY_TIER = {
     'XP Orb':         'uncommon',
     'Fireball Scroll': 'rare',
     'Regen Crystal':  'uncommon',
+    'Lucky Clover':   'uncommon',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
 }
@@ -654,6 +670,9 @@ class Player(Entity):
         # Regen Crystal timer — regenerates HP over time
         self.regen_timer = 0.0
 
+        # Lucky Clover timer — boosts critical hit chance
+        self.crit_boost_timer = 0.0
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -686,6 +705,10 @@ class Player(Entity):
         # Regen glow visual (invisible by default)
         self.regen_visual = Entity(model='sphere', color=color.rgba(50, 255, 120, 50),
                                    scale=1.5, parent=self, visible=False)
+
+        # Lucky Clover crit aura visual (invisible by default)
+        self.crit_visual = Entity(model='sphere', color=color.rgba(50, 255, 50, 50),
+                                  scale=1.4, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
         self.ground_shadow = Entity(
@@ -842,6 +865,7 @@ class Enemy(Entity):
         'Void Stalker':     {'color': color.rgb(40, 40, 60),        'hp': 55,  'speed': 6.5,'damage': 15, 'scale': 1.1,  'model': 'diamond', 'decor': 'aura', 'detect': 32},
         'Plasma Serpent':   {'color': color.rgb(0, 255, 200),       'hp': 120,  'speed': 3.5,'damage': 20, 'scale': 1.0,  'model': 'sphere', 'decor': 'aura', 'detect': 34},
         'Graviton':         {'color': color.rgb(180, 0, 255),       'hp': 75,   'speed': 2.8,'damage': 10, 'scale': 1.5,  'model': 'sphere', 'decor': 'aura', 'detect': 30},
+        'Void Wisp':        {'color': color.rgba(100, 255, 200, 160), 'hp': 18,  'speed': 8,  'damage': 5,  'scale': 0.4,  'model': 'sphere', 'decor': 'aura', 'detect': 26},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -937,6 +961,11 @@ class Enemy(Entity):
         self.graviton_pull_active = False
         self.graviton_pull_timer = 0.0
         self.graviton_cooldown_timer = random.uniform(GRAVITON_PULL_COOLDOWN_MIN, GRAVITON_PULL_COOLDOWN_MAX)
+
+        # Void Wisp: tiny, fast, semi-transparent enemy that teleports when hit
+        self.is_void_wisp = (enemy_type == 'Void Wisp')
+        self.wisp_teleport_cooldown = 0.0  # Cooldown between teleport-on-hit
+        self.wisp_just_teleported = False  # Flag set by take_damage, read by game_update
         # Visual indicator ring for gravity pull (hidden by default)
         if self.is_graviton:
             self.pull_ring = Entity(
@@ -999,6 +1028,13 @@ class Enemy(Entity):
             amount: Damage points to subtract from HP.
             hit_direction: Optional direction vector for knockback (from projectile source).
         """
+        # Void Wisp: chance to teleport away when hit (dodge the damage)
+        if self.is_void_wisp and self.wisp_teleport_cooldown <= 0 and self.hp > 0:
+            if random.random() < VOID_WISP_TELEPORT_CHANCE:
+                # Teleport away — the hit still lands but the wisp blinks to a new position
+                self.wisp_teleport_cooldown = VOID_WISP_TELEPORT_COOLDOWN
+                self.wisp_just_teleported = True  # Flag for game_update to move the wisp
+
         self.hp -= amount
         self.hit_flash = ENEMY_HIT_FLASH_DURATION
         self.hit_scale_punch = 1.0  # Trigger scale punch animation
@@ -1116,6 +1152,7 @@ class Collectible(Entity):
         'XP Orb':         {'color': color.rgb(100, 200, 255), 'value': 25,  'model': 'sphere'},
         'Fireball Scroll': {'color': color.rgb(255, 80, 20),  'value': 25,  'model': 'diamond'},
         'Regen Crystal':  {'color': color.rgb(50, 255, 120),  'value': 20,  'model': 'diamond'},
+        'Lucky Clover':   {'color': color.rgb(50, 255, 50),   'value': 20,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -1483,7 +1520,7 @@ class Trader(Entity):
     5 Space Gloop into a random rare item.
     """
 
-    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit', 'Fireball Scroll', 'Regen Crystal']
+    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover']
 
     def __init__(self, position, name=None):
         if name is None:
@@ -2054,6 +2091,17 @@ class Game:
             z=1,  # Render behind other UI
         )
 
+        # Kill flash overlay — brief white screen flash on enemy kills for satisfying feedback
+        self.kill_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 255, 255, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.5,  # Render behind UI but above vignette
+        )
+        self.kill_flash_timer = 0.0
+
     @staticmethod
     def _destroy_enemy_entities(enemy):
         """Clean up all sub-entities owned by an enemy (decor, eyes, HP bar, shadow, segments).
@@ -2232,9 +2280,9 @@ class Game:
                       'game_over_text', 'game_over_sub', 'game_over_stats',
                       'game_over_restart', 'level_up_text', 'dash_text',
                       'powerup_text', 'crosshair', 'crosshair2',
-                      'combo_text', 'weapon_text', 'effect_text', 'biome_text',
+                      'combo_text', 'combo_bar_bg', 'combo_bar', 'weapon_text', 'effect_text', 'biome_text',
                       'boss_hp_bar_bg', 'boss_hp_bar', 'boss_name_text',
-                      'danger_vignette',
+                      'danger_vignette', 'kill_flash',
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text'):
@@ -2870,6 +2918,11 @@ class Game:
 
         # Combo counter display
         self.combo_text = Text(text='', position=(0.35, 0.3), scale=2.0, color=color.yellow, visible=False, origin=(0, 0))
+        # Combo timer bar — shows time remaining before combo resets
+        self.combo_bar_bg = Entity(model='quad', color=color.rgba(80, 80, 80, 180), scale=(0.22, 0.012),
+                                  position=(0.35, 0.255), parent=camera.ui, origin=(0, 0), visible=False)
+        self.combo_bar = Entity(model='quad', color=color.yellow, scale=(0.22, 0.012),
+                                position=(0.35, 0.255), parent=camera.ui, origin=(0, 0), visible=False, z=-0.01)
 
         # Weapon upgrade indicator
         self.weapon_text = Text(text='', position=(-0.75, 0.29), scale=0.85, color=color.orange)
@@ -3244,6 +3297,15 @@ class Game:
         else:
             self.danger_vignette.color = color.rgba(200, 0, 0, 0)
 
+        # Kill flash — brief white screen flash that fades on enemy kill
+        if self.kill_flash_timer > 0:
+            self.kill_flash_timer -= time.dt
+            flash_ratio = max(0, self.kill_flash_timer / KILL_FLASH_DURATION)
+            flash_alpha = int(KILL_FLASH_MAX_ALPHA * flash_ratio)
+            self.kill_flash.color = color.rgba(255, 255, 255, flash_alpha)
+        else:
+            self.kill_flash.color = color.rgba(255, 255, 255, 0)
+
         # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
         self.xp_bar.scale_x = 0.4 * xp_ratio
@@ -3309,6 +3371,8 @@ class Game:
             pu_lines.append(f'FIREBALL: {p.fireball_timer:.1f}s')
         if p.regen_timer > 0:
             pu_lines.append(f'REGEN: {p.regen_timer:.1f}s')
+        if p.crit_boost_timer > 0:
+            pu_lines.append(f'LUCKY CLOVER: {p.crit_boost_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
@@ -3338,6 +3402,26 @@ class Game:
             self.combo_text.visible = False
             if self.combo_count > 0:
                 self.combo_count = 0
+
+        # Combo timer bar update — visual indicator of time remaining before combo resets
+        if self.combo_count >= 2 and self.combo_display_timer > 0:
+            ratio = max(0, self.combo_display_timer / COMBO_TIMEOUT)
+            bar_width = 0.22 * ratio
+            # Offset so bar shrinks from right to left (centered origin=0)
+            self.combo_bar.scale_x = max(0.001, bar_width)
+            self.combo_bar.x = 0.35 - (0.22 - bar_width) / 2
+            self.combo_bar.visible = True
+            self.combo_bar_bg.visible = True
+            # Color shifts: green when full, yellow mid, red when almost empty
+            if ratio > 0.5:
+                self.combo_bar.color = color.rgba(50, 255, 50, 220)
+            elif ratio > 0.25:
+                self.combo_bar.color = color.rgba(255, 255, 0, 220)
+            else:
+                self.combo_bar.color = color.rgba(255, 50, 50, 220)
+        else:
+            self.combo_bar.visible = False
+            self.combo_bar_bg.visible = False
 
         # Weapon upgrade indicator
         if p.weapon_upgrade_timer > 0:
@@ -3743,6 +3827,12 @@ def game_update():
         # Pulsing green glow
         p.regen_visual.scale = 1.5 + math.sin(game.t * 4) * 0.1
 
+    # Lucky Clover crit aura visual update
+    p.crit_visual.visible = p.crit_boost_timer > 0
+    if p.crit_boost_timer > 0:
+        # Pulsing bright green glow
+        p.crit_visual.scale = 1.4 + math.sin(game.t * 6) * 0.12
+
     # Power-up aura ring — shows a pulsing ground ring in the color of the active buff
     # Priority: shield (cyan) > speed (green) > magnet (purple) > weapon (orange) > fireball (red)
     # The ring makes active buffs immediately visible without reading the HUD.
@@ -3759,6 +3849,8 @@ def game_update():
         powerup_ring_color = (255, 80, 20)  # Red-orange for fireball
     elif p.regen_timer > 0:
         powerup_ring_color = (50, 255, 120)  # Soft green for regen
+    elif p.crit_boost_timer > 0:
+        powerup_ring_color = (50, 255, 50)   # Bright green for Lucky Clover crit boost
     elif p.monolith_damage_timer > 0:
         powerup_ring_color = (255, 50, 50)  # Red for damage buff
     elif p.monolith_xp_timer > 0:
@@ -3856,6 +3948,10 @@ def game_update():
                 # equality comparison is unreliable, so color the damage number directly.
                 heal_dn = game.damage_numbers[-1]
                 heal_dn.text_ent.color = color.green
+
+    # Lucky Clover timer — boost critical hit chance
+    if p.crit_boost_timer > 0:
+        p.crit_boost_timer -= time.dt
 
     # Cosmic Leech drain DoT — deals damage over time
     if p.drain_timer > 0:
@@ -4413,6 +4509,10 @@ def game_update():
             if enemy.hit_flash < 0:
                 enemy.hit_flash = 0
 
+        # Void Wisp teleport cooldown decrement
+        if enemy.is_void_wisp and enemy.wisp_teleport_cooldown > 0:
+            enemy.wisp_teleport_cooldown -= time.dt
+
         # Hit scale punch: brief size increase on hit for satisfying impact feedback
         if enemy.hit_scale_punch > 0:
             enemy.hit_scale_punch -= time.dt * ENEMY_HIT_SCALE_RECOVERY
@@ -4458,8 +4558,9 @@ def game_update():
             if dx * dx + dz * dz > PROJECTILE_COLLISION_PRECHECK_SQ:
                 continue
             if (proj.position - enemy.position).length() < enemy.scale_x + 0.5:
-                # Critical hit system: 15% chance for 2x damage
-                is_crit = random.random() < CRIT_CHANCE
+                # Critical hit system: base 15% chance + Lucky Clover bonus
+                effective_crit_chance = CRIT_CHANCE + (LUCKY_CLOVER_CRIT_BONUS if p.crit_boost_timer > 0 else 0)
+                is_crit = random.random() < effective_crit_chance
                 damage = int(proj.damage * CRIT_DAMAGE_MULT) if is_crit else proj.damage
                 # Apply monolith damage buff
                 if p.monolith_damage_timer > 0:
@@ -4485,6 +4586,24 @@ def game_update():
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
                 # White ripple for normal hits
                     game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 255, 220, 160)))
+                # Void Wisp teleport-on-hit: after taking damage, blink to a new position
+                if enemy.is_void_wisp and enemy.alive and enemy.wisp_just_teleported:
+                    enemy.wisp_just_teleported = False
+                    # Wisp teleported — move it to a random nearby position
+                    tp_angle = random.uniform(0, math.pi * 2)
+                    tp_dist = random.uniform(VOID_WISP_TELEPORT_RANGE * 0.5, VOID_WISP_TELEPORT_RANGE)
+                    tp_x = enemy.x + math.cos(tp_angle) * tp_dist
+                    tp_z = enemy.z + math.sin(tp_angle) * tp_dist
+                    tp_x = max(5, min(tp_x, (WORLD_SIZE - 5) * TILE_SCALE))
+                    tp_z = max(5, min(tp_z, (WORLD_SIZE - 5) * TILE_SCALE))
+                    if game._is_walkable(tp_x, tp_z):
+                        # Poof at old position
+                        game._spawn_particles(enemy.position, color.rgba(100, 255, 200, 200), count=8)
+                        enemy.x = tp_x
+                        enemy.z = tp_z
+                        # Poof at new position
+                        game._spawn_particles(enemy.position, color.rgba(100, 255, 200, 150), count=6)
+                        game.add_message("Void Wisp teleported!")
                 # Fireball Scroll AOE: if active, projectile impacts explode and hit nearby enemies
                 if p.fireball_timer > 0:
                     blast_damage = int(damage * FIREBALL_BLAST_DAMAGE_PERCENT)
@@ -4525,6 +4644,9 @@ def game_update():
                 if killed:
                     p.add_kill(enemy.name)
                     game.total_kills += 1
+                    # Kill flash — brief white screen flash for satisfying feedback
+                    game.kill_flash_timer = KILL_FLASH_DURATION
+                    game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                     # Combo system: increment combo and apply bonus
                     game.combo_count += 1
                     game.combo_timer = COMBO_TIMEOUT
@@ -4771,6 +4893,11 @@ def game_update():
                 game.add_message(f"Regen Crystal! +{REGEN_HP_PER_SECOND} HP/s for {REGEN_DURATION:.0f}s!")
                 game._spawn_particles(col.position, color.rgb(50, 255, 120), count=16)
                 game.screen_shake = max(game.screen_shake, 0.15)
+            elif col.name == 'Lucky Clover':
+                p.crit_boost_timer = LUCKY_CLOVER_DURATION
+                game.add_message(f"Lucky Clover! +{int(LUCKY_CLOVER_CRIT_BONUS * 100)}% crit for {LUCKY_CLOVER_DURATION:.0f}s!")
+                game._spawn_particles(col.position, color.rgb(50, 255, 50), count=16)
+                game.screen_shake = max(game.screen_shake, 0.15)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -4778,7 +4905,7 @@ def game_update():
                 game._spawn_collect_burst(col.position, col.item_color)
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover'):
                 p.score += col.value
                 p.gain_xp(max(1, col.value // 10))
             # Start pop animation instead of immediate destroy
