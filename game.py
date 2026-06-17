@@ -580,6 +580,43 @@ BIOME_COLORS = {
 
 WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands', 'toxic_bog'}
 
+# ─── Color Helper ──────────────────────────────────────────────────────────────
+# BUG FIX: Ursina's color.rgb()/color.rgba() store component values in 0-255
+# range, but named colors (color.lime, color.yellow, etc.) store them in 0-1
+# range. Any code that reads color components and feeds them to color.rgba()
+# or does arithmetic on them MUST normalize first. _c255() converts any color
+# component to the 0-255 integer range regardless of which system it came from.
+
+def _c255(component):
+    """Normalize a Ursina color component to 0-255 integer range.
+    
+    Ursina stores named colors (color.lime, color.red, etc.) with 0-1 float
+    values, but color.rgb()/color.rgba() use 0-255 integer values. This
+    helper safely converts either format to 0-255 for use with color.rgba()
+    or arithmetic operations that expect 0-255.
+    
+    Args:
+        component: A single color channel value (R, G, or B), either 0-1 float
+                   or 0-255 integer/float.
+    Returns:
+        Integer in 0-255 range.
+    """
+    if component > 1.0:
+        # Already in 0-255 range (from color.rgb() or color.rgba())
+        return int(min(255, max(0, component)))
+    else:
+        # In 0-1 range (from a named color like color.lime)
+        return int(min(255, max(0, component * 255)))
+
+
+def _c255_color(col):
+    """Return (r, g, b) tuple from any Ursina Color, all values normalized to 0-255.
+    
+    Works correctly regardless of whether the color was created with
+    color.rgb()/color.rgba() (0-255 range) or is a named color (0-1 range).
+    """
+    return (_c255(col[0]), _c255(col[1]), _c255(col[2]))
+
 # ─── World Generation ─────────────────────────────────────────────────────────
 class WorldGenerator:
     """Procedural terrain generation for a 3D open world."""
@@ -991,14 +1028,20 @@ class Enemy(Entity):
 
         # Type-specific decorations
         decor = info['decor']
+        # BUG FIX: Use _c255_color() to normalize color components from mixed
+        # color sources. Named colors (color.lime, etc.) store 0-1 floats, but
+        # color.rgb()/color.rgba() store 0-255 ints. Blindly multiplying by 255
+        # double-scales color.rgb() colors (e.g. 200*255=51000 → washed out).
         if decor == 'wings':
-            wing_l = Entity(model='quad', color=color.rgba(int(info['color'][0]*255), int(info['color'][1]*255), int(info['color'][2]*255), 180),
+            wr, wg, wb = _c255_color(info['color'])
+            wing_l = Entity(model='quad', color=color.rgba(wr, wg, wb, 180),
                             scale=(1.0, 0.5), parent=self, position=(-0.8, 0.2, 0.2), rotation_y=-30)
-            wing_r = Entity(model='quad', color=color.rgba(int(info['color'][0]*255), int(info['color'][1]*255), int(info['color'][2]*255), 180),
+            wing_r = Entity(model='quad', color=color.rgba(wr, wg, wb, 180),
                             scale=(1.0, 0.5), parent=self, position=(0.8, 0.2, 0.2), rotation_y=30)
             self.decor_entities.extend([wing_l, wing_r])
         elif decor == 'aura':
-            aura = Entity(model='sphere', color=color.rgba(int(info['color'][0]*255), int(info['color'][1]*255), int(info['color'][2]*255), 60),
+            ar, ag, ab = _c255_color(info['color'])
+            aura = Entity(model='sphere', color=color.rgba(ar, ag, ab, 60),
                           scale=1.5, parent=self)
             self.decor_entities.append(aura)
         elif decor == 'spikes':
@@ -1101,23 +1144,28 @@ class Enemy(Entity):
         shrink = max(0.01, self.original_scale * (1.0 - ease_progress))
         self.scale = shrink
         # Flash between white and original color, dissolving at end
+        # BUG FIX: Use _c255_color() to normalize — original_color may be a named
+        # color (0-1 range) or color.rgb() (0-255 range). Arithmetic on 0-1 values
+        # produces wrong results (e.g. 1.0*1.3+60=61 instead of 255*1.3+60=391).
         if progress < 0.7:
             if int(self.death_timer * 15) % 2 == 0:
                 self.color = color.white
             else:
                 # Use a brightened version of original color for more vivid flashing
+                or_, og, ob = _c255_color(self.original_color)
                 self.color = color.rgb(
-                    min(255, int(self.original_color[0] * 1.3) + 60),
-                    min(255, int(self.original_color[1] * 1.3) + 60),
-                    min(255, int(self.original_color[2] * 1.3) + 60),
+                    min(255, int(or_ * 1.3) + 60),
+                    min(255, int(og * 1.3) + 60),
+                    min(255, int(ob * 1.3) + 60),
                 )
         else:
             # Dissolve to faded color with a warm glow
             fade = max(0, 1.0 - (progress - 0.7) / 0.3)
+            or_, og, ob = _c255_color(self.original_color)
             self.color = color.rgba(
-                min(255, int(self.original_color[0] * fade) + int(40 * fade)),
-                min(255, int(self.original_color[1] * fade) + int(20 * fade)),
-                min(255, int(self.original_color[2] * fade) + int(10 * fade)),
+                min(255, int(or_ * fade) + int(40 * fade)),
+                min(255, int(og * fade) + int(20 * fade)),
+                min(255, int(ob * fade) + int(10 * fade)),
                 int(255 * fade),
             )
         # Hide HP bar during death
@@ -1672,9 +1720,9 @@ class HitRipple(Entity):
         self.scale = current_scale
         # Fade alpha out over lifetime
         alpha = max(0, int(180 * (1.0 - progress)))
-        r = int(self.base_color[0]) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 0 else 255
-        g = int(self.base_color[1]) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 1 else 255
-        b = int(self.base_color[2]) if hasattr(self.base_color, '__getitem__') and len(self.base_color) > 2 else 200
+        # BUG FIX: Use _c255_color() to normalize base_color — could be
+        # named (0-1) or color.rgba() (0-255). int() on 0-1 gives 0 or 1.
+        r, g, b = _c255_color(self.base_color)
         self.color = color.rgba(r, g, b, alpha)
         return False
 
@@ -1748,9 +1796,12 @@ class DamageNumber:
         scale_factor = 1.4 if is_kill else (1.25 if is_crit else 1.0)
 
         # 3D billboard quad as a glowing background dot behind the number
+        # BUG FIX: col may be a named color (0-1 .r/.g/.b) or color.rgb() (0-255).
+        # Use _c255_color() to normalize before passing to color.rgba().
+        cr, cg, cb = _c255_color(col)
         self.bg_dot = Entity(
             model='quad',
-            color=color.rgba(col.r, col.g, col.b, 120),
+            color=color.rgba(cr, cg, cb, 120),
             scale=0.6 * scale_factor,
             position=Vec3(position.x, position.y + 2.0, position.z),
             billboard=True,
@@ -1785,7 +1836,8 @@ class DamageNumber:
         self.text_ent.position = (screen_pos[0], screen_pos[1])
         # Fade out — defensive: clamp alpha to prevent negative values
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
-        r, g, b = int(self.text_ent.color[0]), int(self.text_ent.color[1]), int(self.text_ent.color[2])
+        # NOTE: r, g, b were previously read from text_ent.color but never used —
+        # the color is always overridden below with hardcoded values.
         if self.is_kill:
             self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
         elif self.is_crit:
@@ -3220,9 +3272,13 @@ class Game:
         for _ in range(count):
             vel = Vec3(random.uniform(-3, 3), random.uniform(1, 5), random.uniform(-3, 3))
             # Color variation: shift each RGB channel by ±PARTICLE_COLOR_VARIATION for natural look
-            r_var = max(0, min(255, int(col[0] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            g_var = max(0, min(255, int(col[1] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            b_var = max(0, min(255, int(col[2] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            # BUG FIX: Normalize col components to 0-255 with _c255() before arithmetic.
+            # Named colors (0-1) would produce near-zero values otherwise
+            # (e.g. color.yellow[0]=1.0 → int(1.0*1.2)=1 instead of 255).
+            cr, cg, cb = _c255_color(col)
+            r_var = max(0, min(255, int(cr * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(cg * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(cb * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
             varied_col = color.rgb(r_var, g_var, b_var)
             p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.1, 0.3),
                        position=pos)
@@ -3240,9 +3296,11 @@ class Game:
             spread = random.uniform(1.5, 3.5)
             vel = Vec3(math.cos(angle) * spread, random.uniform(2, 5), math.sin(angle) * spread)
             # Color variation for a richer, more natural burst
-            r_var = max(0, min(255, int(col[0] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            g_var = max(0, min(255, int(col[1] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
-            b_var = max(0, min(255, int(col[2] * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            # BUG FIX: Same normalization as _spawn_particles — see above.
+            cr, cg, cb = _c255_color(col)
+            r_var = max(0, min(255, int(cr * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(cg * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(cb * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
             varied_col = color.rgb(r_var, g_var, b_var)
             p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.15, 0.35),
                        position=pos)
@@ -4390,11 +4448,14 @@ def game_update():
                     enemy.eye_l.color = color.rgba(255, 0, 0, stalker_alpha)
                     enemy.eye_r.color = color.rgba(255, 0, 0, stalker_alpha)
                     # Aura nearly invisible
+                    # BUG FIX: Use _c255() to normalize decor entity color components.
+                    # d.color may store 0-1 (named) or 0-255 (color.rgb), and
+                    # color.rgba() expects 0-255. int() on a 0-1 float gives 0 or 1.
                     for d in enemy.decor_entities:
-                        d.color = color.rgba(int(d.color[0]) if len(d.color) > 0 else 100,
-                                             int(d.color[1]) if len(d.color) > 1 else 50,
-                                             int(d.color[2]) if len(d.color) > 2 else 200,
-                                             stalker_alpha)
+                        dr = _c255(d.color[0]) if len(d.color) > 0 else 100
+                        dg = _c255(d.color[1]) if len(d.color) > 1 else 50
+                        db = _c255(d.color[2]) if len(d.color) > 2 else 200
+                        d.color = color.rgba(dr, dg, db, stalker_alpha)
                     # Decloak when close to player or timer expires
                     if dist_to_player < VOID_STALKER_DECLOAK_BURST_RANGE or enemy.cloak_timer <= 0:
                         enemy.cloak_state = 'decloaked'
@@ -4407,10 +4468,12 @@ def game_update():
                         enemy.color = enemy.original_color
                         enemy.eye_l.color = color.red
                         enemy.eye_r.color = color.red
+                        # BUG FIX: Use _c255_color() to normalize — original_color may
+                        # be named (0-1) or color.rgb() (0-255). Passing 0-1 values
+                        # to color.rgba() makes decorations nearly invisible.
+                        dr, dg, db = _c255_color(enemy.original_color)
                         for d in enemy.decor_entities:
-                            d.color = color.rgba(int(enemy.original_color[0]),
-                                                 int(enemy.original_color[1]),
-                                                 int(enemy.original_color[2]), 60)
+                            d.color = color.rgba(dr, dg, db, 60)
                 elif enemy.cloak_state == 'decloaked':
                     # Fully visible — attack aggressively
                     # Ambush bonus is applied in the attack section below
@@ -4867,7 +4930,11 @@ def game_update():
                 col.color = col.item_color
                 # Fade out glow
                 fade = max(0, 1.0 - (progress - 0.3) / 0.7)
-                col.glow.color = color.rgba(col.item_color.r, col.item_color.g, col.item_color.b, int(80 * fade))
+                # BUG FIX: item_color may be a named color (0-1 .r/.g/.b) or
+                # color.rgb() (0-255). Use _c255_color() to normalize before
+                # passing to color.rgba() which expects 0-255 values.
+                ir, ig, ib = _c255_color(col.item_color)
+                col.glow.color = color.rgba(ir, ig, ib, int(80 * fade))
             col.rotation_y += 720 * time.dt  # Spin fast during pop
             if col.pop_timer <= 0:
                 destroy(col.glow)
@@ -4905,7 +4972,11 @@ def game_update():
                 glow_brightness = min(1.0, closeness * COLLECT_PULL_GLOW_INTENSITY)
                 glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
                 glow_alpha = min(255, int(glow_cfg['glow_alpha'] * (1.0 + glow_brightness)))
-                col.glow.color = color.rgba(col.item_color.r, col.item_color.g, col.item_color.b, glow_alpha)
+                # BUG FIX: item_color may be a named color (0-1 .r/.g/.b) or
+                # color.rgb() (0-255). Use _c255_color() to normalize before
+                # passing to color.rgba() which expects 0-255 values.
+                ir, ig, ib = _c255_color(col.item_color)
+                col.glow.color = color.rgba(ir, ig, ib, glow_alpha)
         if dist < COLLECT_RADIUS:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
@@ -5258,12 +5329,17 @@ def game_update():
         for enemy in game.enemies:
             if enemy.alive and not enemy.dying and enemy.hit_flash <= 0:
                 # Flash enemies with a blue tint periodically
+                # BUG FIX: Use _c255_color() to normalize — original_color may be
+                # named (0-1 range) or color.rgb() (0-255 range). Multiplying 0-255
+                # values by 128 produces garbage (e.g. 200*128=25600).
                 if int(game.t * 4) % 2 == 0:
+                    or_, og, ob = _c255_color(enemy.original_color)
+                    oa = _c255(enemy.original_color[3]) if len(enemy.original_color) > 3 else 255
                     tinted = color.rgba(
-                        int(enemy.original_color[0] * 128),
-                        int(enemy.original_color[1] * 128 + 127),
-                        int(min(255, enemy.original_color[2] * 128 + 200)),
-                        int(enemy.original_color[3]) if len(enemy.original_color) > 3 else 255
+                        int(or_ * 0.5),
+                        min(255, int(og * 0.5 + 127)),
+                        min(255, int(ob * 0.5 + 200)),
+                        oa,
                     )
                     enemy.color = tinted
 
