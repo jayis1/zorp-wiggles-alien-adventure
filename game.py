@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.11.0"
+VERSION = "2.11.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -165,6 +165,17 @@ COLLECT_POP_MAX_SCALE = 2.8    # Bigger overshoot — more dramatic punch
 COLLECT_PULL_SCALE_MIN = 0.6   # Minimum scale at pull edge (normal)
 COLLECT_PULL_SCALE_MAX = 1.4   # Maximum scale when very close (snapping toward player)
 COLLECT_PULL_GLOW_INTENSITY = 1.5  # Glow brightness multiplier during pull
+
+# ─── Kill Burst ──────────────────────────────────────────────────────────────
+KILL_BURST_PARTICLE_COUNT = 10        # Number of particles in radial kill burst ring
+KILL_BURST_SPREAD = 5.0               # How far burst particles fly outward
+KILL_BURST_UP_SPEED = 4.0             # Upward velocity component for burst particles
+
+# ─── Collectible Spawn Animation ─────────────────────────────────────────────
+COLLECT_SPAWN_DURATION = 0.4           # Seconds for collectible spawn scale-in animation
+
+# ─── Dash Afterimage ─────────────────────────────────────────────────────────
+DASH_AFTERIMAGE_DURATION = 0.25       # How long the dash ghost persists
 
 # ─── Movement Dust ──────────────────────────────────────────────────────────
 MOVEMENT_DUST_INTERVAL = 0.12       # Seconds between dust puffs while moving
@@ -1249,6 +1260,9 @@ class Collectible(Entity):
         self.item_color = info['color']
         self.popping = False
         self.pop_timer = 0.0
+        # Spawn animation: collectibles scale up from 0 over COLLECT_SPAWN_DURATION seconds
+        # for a polished fade-in instead of popping into existence
+        self.spawn_timer = COLLECT_SPAWN_DURATION
         # Rarity-based glow configuration
         self.rarity = RARITY_TIER.get(item_type, 'common')
         glow_cfg = RARITY_GLOW_CONFIG.get(self.rarity, RARITY_GLOW_CONFIG['common'])
@@ -1259,9 +1273,33 @@ class Collectible(Entity):
         glow_alpha = glow_cfg['glow_alpha']
         self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, glow_alpha),
                            scale=glow_cfg['min_scale'], parent=self, rotation_x=90, position=(0, -0.3, 0))
+        # Spawn animation: start tiny and invisible, scale up over COLLECT_SPAWN_DURATION
+        self.scale = 0.01
+        self.glow.visible = False
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
+        # Spawn animation: scale up from tiny to full size with an elastic overshoot
+        if self.spawn_timer > 0:
+            self.spawn_timer -= time.dt
+            progress = 1.0 - max(0, self.spawn_timer / COLLECT_SPAWN_DURATION)
+            # Elastic ease-out: overshoot then settle
+            if progress < 0.6:
+                # Scale up rapidly
+                self.scale = 0.01 + 0.59 * (progress / 0.6) ** 0.5
+            else:
+                # Overshoot: scale past 0.6 then settle back
+                overshoot = (progress - 0.6) / 0.4  # 0 to 1
+                self.scale = 0.6 + 0.15 * math.sin(overshoot * math.pi)  # peaks at ~0.75
+            # Show glow once mostly visible
+            if progress > 0.3 and not self.glow.visible:
+                self.glow.visible = True
+            return
+        elif self.spawn_timer > -0.01:
+            # Just finished spawning — snap to normal scale
+            self.scale = 0.6
+            self.glow.visible = True
+            self.spawn_timer = -1  # Mark as done
         self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
         self.rotation_y += 60 * time.dt
         # Rarity-scaled glow pulse — faster pulse and wider range for rarer items
@@ -3355,6 +3393,34 @@ class Game:
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
+    def _spawn_kill_burst(self, pos, col):
+        """Spawn a radial ring burst effect on enemy kills for more satisfying, explosive feedback.
+
+        Unlike _spawn_collect_burst which is a flat ring, this creates particles that
+        fly outward AND upward in a dramatic fountain pattern — making kills feel
+        punchier and more impactful.
+        """
+        count = min(KILL_BURST_PARTICLE_COUNT, MAX_PARTICLES - len(self.particles))
+        if count <= 0:
+            return
+        cr, cg, cb = _c255_color(col)
+        for i in range(count):
+            angle = (i / count) * math.pi * 2 + random.uniform(-0.2, 0.2)
+            spread = random.uniform(KILL_BURST_SPREAD * 0.7, KILL_BURST_SPREAD)
+            vel = Vec3(
+                math.cos(angle) * spread,
+                random.uniform(KILL_BURST_UP_SPEED * 0.5, KILL_BURST_UP_SPEED * 1.5),
+                math.sin(angle) * spread,
+            )
+            # Color variation: shift RGB ±20% for natural, vibrant burst
+            r_var = max(0, min(255, int(cr * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            g_var = max(0, min(255, int(cg * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            b_var = max(0, min(255, int(cb * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+            varied_col = color.rgb(r_var, g_var, b_var)
+            p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.15, 0.4),
+                       position=pos)
+            self.particles.append((p, vel, random.uniform(0.4, 0.9)))
+
     def shoot(self):
         """Fire tentacle laser toward the mouse cursor.
 
@@ -3432,13 +3498,21 @@ class Game:
         self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
         # Low-HP danger vignette — red pulsing overlay at screen edges when health is low
+        # Enhanced: adds a sharper "thump" effect with brief bright flash at heartbeat peak
+        # when HP is critically low (below 15%), for more urgent danger feedback
         if hp_ratio < LOW_HP_VIGNETTE_THRESHOLD:
             # Urgency scales with how low HP is: 0 HP = max alpha, threshold HP = 0 alpha
             danger_ratio = 1.0 - (hp_ratio / LOW_HP_VIGNETTE_THRESHOLD)
-            # Heartbeat-style pulsing: fast rhythmic throb for urgency
-            heartbeat = 0.5 + 0.5 * math.sin(self.t * LOW_HP_HEARTBEAT_SPEED)
+            # Heartbeat-style pulsing: uses sin² for a sharper "thump" shape
+            # that feels more like a real heartbeat (sharp rise, quick fade)
+            raw_pulse = math.sin(self.t * LOW_HP_HEARTBEAT_SPEED)
+            heartbeat = 0.3 + 0.7 * max(0, raw_pulse) ** 1.5  # Sharper, more urgent thump
             vignette_alpha = int(LOW_HP_VIGNETTE_MAX_ALPHA * danger_ratio * heartbeat)
             self.danger_vignette.color = color.rgba(200, 0, 0, vignette_alpha)
+            # Critical flash: when HP is below 15%, add a brief brighter flash at heartbeat peak
+            # for an even more dramatic warning that the player is about to die
+            if hp_ratio < 0.15 and raw_pulse > 0.95:
+                self.danger_vignette.color = color.rgba(255, 30, 30, min(255, vignette_alpha + 40))
         else:
             self.danger_vignette.color = color.rgba(200, 0, 0, 0)
 
@@ -3990,6 +4064,15 @@ def game_update():
         p.invuln_timer = max(p.invuln_timer, DASH_INVULN_DURATION)  # Brief invincibility during dash
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
+        # Dash afterimage: leave a fading ghost silhouette at the start position
+        # for a more dramatic speed effect that communicates the dash direction clearly
+        afterimage = Entity(
+            model='sphere',
+            color=color.rgba(0, 230, 70, 120),
+            scale=p.scale_x * 1.1,
+            position=p.position,
+        )
+        destroy(afterimage, delay=DASH_AFTERIMAGE_DURATION)
     else:
         # Return FOV to normal when not dashing and not in kill zoom
         if game.kill_fov_timer > 0:
@@ -5005,6 +5088,8 @@ def game_update():
                             c = Collectible(position=drop_pos)
                             game.collectibles.append(c)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                    # Kill burst: radial ring of particles for satisfying, explosive kill feedback
+                    game._spawn_kill_burst(enemy.position, enemy.original_color)
                     game.add_message(f"Defeated {enemy.name}!")
                     # Add to kill feed
                     game.kill_feed.append((game.t, f"✦ {enemy.name}"))
@@ -5143,7 +5228,9 @@ def game_update():
 
         col.animate(game.t)
         # Reset scale to default if not being pulled (pull sets scale dynamically)
-        col.scale = 0.6
+        # and if spawn animation is complete (spawn animation handles its own scaling)
+        if col.spawn_timer <= 0:
+            col.scale = 0.6
         dist = (col.position - p.position).length()
         # PERFORMANCE: skip expensive pull/glow updates for distant collectibles
         near_player = dist < COLLECTIBLE_CULL_RANGE or col.popping

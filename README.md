@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.11.0 — 3D!)
+## Features (v2.11.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -308,6 +308,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.11.1 — Kill Impact & Polish
+- **Kill Burst Particles**: Enemy deaths now produce a dramatic radial ring of particles that burst outward and upward, making kills feel more explosive and satisfying — a clear visual upgrade from the previous single-direction particle spray
+- **Collectible Spawn Animation**: Collectibles no longer pop into existence instantly. They now scale up from tiny with an elastic overshoot over 0.4 seconds, with the glow ring fading in partway through — giving the world a more alive, polished feel when items respawn
+- **Dash Afterimage Ghost**: Initiating a dash now leaves a brief green afterimage silhouette at the starting position that fades over 0.25 seconds, making the dash feel faster and more dramatic while clearly communicating the dash direction
+- **Enhanced Low-HP Heartbeat Vignette**: The danger vignette now uses a sharper `sin^1.5` heartbeat curve that feels more like an actual heartbeat (sharp thump, quick fade) instead of a smooth sine wave. When HP drops below 15%, a brief bright-red flash appears at the peak of each heartbeat for urgent near-death warning
 
 ### v2.10.2 — Movement & Combat Polish
 - **Smooth Acceleration/Deceleration**: Player movement now uses velocity-based acceleration (45 units/s²) and deceleration (25 units/s²) instead of instant start/stop. Zorp feels heavier and more responsive — starting has a satisfying ramp-up and stopping has a gentle slide that makes the alien feel more physical
