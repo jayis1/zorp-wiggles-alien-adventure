@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.10.0 — 3D!)
+## Features (v2.10.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -77,12 +77,13 @@ python game.py
 - Satisfying collectible pickup burst particles with magnetic pull snap
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
-- Detailed death screen with survival stats (time, KPM, inventory breakdown)
+- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo)
 - Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
 - Enemy respawning and loot drops
 - Particle system for hits, kills, and pickups
 - Dash cooldown indicator on HUD
+- **Kill counter** on HUD — shows total kills this run for progression feedback
 - Active power-up timers displayed on HUD (including monolith buff timers)
 - **Hit-stop freeze frames** on kills for satisfying impact
 - **Collectible pop animation** — items scale up and spin before disappearing
@@ -304,6 +305,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.10.1 — Game Feel & UX Polish
+- **Smooth Enemy Rotation**: Enemies now smoothly rotate toward the player instead of snapping instantly, making movement feel more natural and polished. Traders also turn smoothly at a slower rate for a casual feel
+- **Movement Dust Particles**: Subtle dust puffs now appear beneath Zorp while moving, with color that adapts to the current biome (green dust on grass, tan on desert, blue on snow, etc.) — gives movement a more grounded, alive feel
+- **Kill Counter HUD**: A persistent "Kills: N" display has been added below the score, providing real-time progression feedback without waiting for the death screen
+- **Best Combo Tracker**: The highest combo streak reached during a run is now tracked and displayed on the death screen as "Best Combo: xN" — gives players a satisfying milestone to beat
 
 ### v2.9.2 — Game Feel & Visual Polish
 - **Camera Kill Zoom**: Brief FOV punch-in effect on enemy kills for cinematic impact, complementing existing hit-stop and screen shake

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.10.0"
+VERSION = "2.10.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -162,6 +162,14 @@ COLLECT_POP_MAX_SCALE = 2.8    # Bigger overshoot — more dramatic punch
 COLLECT_PULL_SCALE_MIN = 0.6   # Minimum scale at pull edge (normal)
 COLLECT_PULL_SCALE_MAX = 1.4   # Maximum scale when very close (snapping toward player)
 COLLECT_PULL_GLOW_INTENSITY = 1.5  # Glow brightness multiplier during pull
+
+# ─── Movement Dust ──────────────────────────────────────────────────────────
+MOVEMENT_DUST_INTERVAL = 0.12       # Seconds between dust puffs while moving
+MOVEMENT_DUST_COLOR = color.rgb(180, 160, 130)  # Subtle tan dust color
+MOVEMENT_DUST_COUNT = 2              # Number of dust particles per puff
+
+# ─── Enemy Smooth Rotation ──────────────────────────────────────────────────
+ENEMY_TURN_SPEED = 8.0               # How fast enemies rotate to face the player (higher = snappier)
 
 # ─── Player-Level Difficulty Scaling ──────────────────────────────────────────
 PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
@@ -1879,6 +1887,7 @@ class Game:
         self.combo_count = 0
         self.combo_timer = 0.0
         self.combo_display_timer = 0.0
+        self.max_combo = 0  # Track highest combo reached in this run
 
         # Kill feed: list of (timestamp, text) entries
         self.kill_feed = []
@@ -2275,7 +2284,7 @@ class Game:
 
         # Destroy HUD entities
         for attr in ('hp_bar_bg', 'hp_bar', 'xp_bar_bg', 'xp_bar',
-                      'level_text', 'score_text', 'hp_text',
+                      'level_text', 'score_text', 'hp_text', 'kills_text',
                       'mission_text', 'controls_text', 'version_text',
                       'game_over_text', 'game_over_sub', 'game_over_stats',
                       'game_over_restart', 'level_up_text', 'dash_text',
@@ -2582,6 +2591,33 @@ class Game:
                         )
                         self.crystal_entities.append(wall)
 
+    @staticmethod
+    def _smooth_rotate_toward(entity, target_pos, turn_speed, dt):
+        """Smoothly rotate an entity to face a target position on the XZ plane.
+
+        Uses angle lerp with proper wraparound handling so enemies turn
+        naturally instead of snapping instantly.
+
+        Args:
+            entity: The entity to rotate.
+            target_pos: World position to face toward.
+            turn_speed: Degrees per second for the rotation lerp.
+            dt: Frame delta time.
+        """
+        dx = target_pos.x - entity.x
+        dz = target_pos.z - entity.z
+        if abs(dx) < 0.01 and abs(dz) < 0.01:
+            return  # Already facing target, skip
+        target_angle = math.degrees(math.atan2(dx, dz))
+        current = entity.rotation_y
+        # Shortest-path angle difference (handles wraparound at 360/0)
+        diff = (target_angle - current + 180) % 360 - 180
+        max_turn = turn_speed * dt
+        if abs(diff) < max_turn:
+            entity.rotation_y = target_angle
+        else:
+            entity.rotation_y = current + max_turn * (1 if diff > 0 else -1)
+
     def _is_walkable(self, world_x: float, world_z: float) -> bool:
         """Check if a world position is on walkable terrain.
 
@@ -2700,6 +2736,7 @@ class Game:
             f'Time Survived: {minutes}m {seconds}s',
             f'Total Kills: {total_kills}   Items Collected: {total_items}',
             f'Kills Per Minute: {kpm}',
+            f'Best Combo: x{self.max_combo}',
             f'Missions Completed: {p.completed_missions}',
             f'Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
@@ -2891,6 +2928,7 @@ class Game:
         self.level_text = Text(text='Lv.1', position=(-0.75, 0.46), scale=1.5, color=color.yellow)
         self.score_text = Text(text='Score: 0', position=(-0.75, 0.41), scale=1.2, color=color.white)
         self.hp_text = Text(text='HP: 100/100', position=(-0.37, 0.46), scale=1.0, color=color.white)
+        self.kills_text = Text(text='Kills: 0', position=(-0.75, 0.37), scale=1.0, color=color.rgb(200, 200, 200))
 
         self.msg_texts = []
         for i in range(5):
@@ -3313,6 +3351,9 @@ class Game:
 
         self.level_text.text = f'Lv.{p.level}'
         self.score_text.text = f'Score: {p.score}'
+        # Kill counter — shows total kills this run for progression feedback
+        total_kills_hud = sum(p.kills.values())
+        self.kills_text.text = f'Kills: {total_kills_hud}'
 
         # Level-up flash
         if self.level_up_timer > 0:
@@ -3989,6 +4030,28 @@ def game_update():
     # Track whether player is actually moving (for squish/stretch animation)
     p.is_moving = move_dir.length() > 0 and p.dash_timer <= 0
 
+    # ── Movement Dust ── Subtle dust puffs beneath the player while moving
+    if p.is_moving:
+        p._dust_timer = getattr(p, '_dust_timer', 0.0) + time.dt
+        if p._dust_timer >= MOVEMENT_DUST_INTERVAL:
+            p._dust_timer = 0.0
+            dust_pos = Vec3(p.x + random.uniform(-0.3, 0.3), 0.1, p.z + random.uniform(-0.3, 0.3))
+            # Adapt dust color to current biome
+            biome = game.current_biome
+            biome_col = BIOME_COLORS.get(biome, C_GRASS)
+            # Lighten the biome color for a natural dust tint
+            dust_r = min(255, int(biome_col[0] * 0.7 + 80))
+            dust_g = min(255, int(biome_col[1] * 0.7 + 60))
+            dust_b = min(255, int(biome_col[2] * 0.6 + 70))
+            dust_col = color.rgb(dust_r, dust_g, dust_b)
+            for _ in range(MOVEMENT_DUST_COUNT):
+                vel = Vec3(random.uniform(-1.5, 1.5), random.uniform(0.5, 2.0), random.uniform(-1.5, 1.5))
+                dust_p = Entity(model='sphere', color=dust_col, scale=random.uniform(0.06, 0.14),
+                               position=dust_pos)
+                game.particles.append((dust_p, vel, random.uniform(0.2, 0.5)))
+    else:
+        p._dust_timer = getattr(p, '_dust_timer', 0.0)
+
     if move_dir.length() > 0 and p.dash_timer <= 0:
         move_dir = move_dir.normalized()
         new_pos = p.position + move_dir * effective_speed * time.dt
@@ -4149,7 +4212,8 @@ def game_update():
                 # Try Z axis only
                 if game._is_walkable(enemy.x, enemy.z + move_step.z):
                     enemy.z += move_step.z
-            enemy.look_at_2d(p.position)
+            # Smooth rotation toward player instead of snap-rotate
+            game._smooth_rotate_toward(enemy, p.position, ENEMY_TURN_SPEED, time.dt)
 
             # ── Phase Shifter: Teleport near player periodically ──
             # PERFORMANCE: skip complex special AI for distant enemies
@@ -4259,7 +4323,7 @@ def game_update():
                         enemy.z = target_z
                     # Float higher than normal enemies
                     enemy.y = 4 + math.sin(game.t * 3 + id(enemy) % 100) * 0.5
-                    enemy.look_at_2d(p.position)
+                    game._smooth_rotate_toward(enemy, p.position, ENEMY_TURN_SPEED, time.dt)
                     # Check if should dive
                     enemy.dive_timer -= time.dt
                     if enemy.dive_timer <= 0:
@@ -4291,7 +4355,7 @@ def game_update():
                 # Starburst Sentinel doesn't move — it stays in place and pulses
                 # Rotate to face player
                 if dist_to_player < STARBURST_DETECT_RANGE:
-                    enemy.look_at_2d(p.position)
+                    game._smooth_rotate_toward(enemy, p.position, ENEMY_TURN_SPEED, time.dt)
                     # Pulsing glow effect when player is in range
                     pulse = 0.5 + 0.5 * math.sin(game.t * 6)
                     enemy.scale = enemy.original_scale * (1.0 + pulse * 0.15)
@@ -4622,6 +4686,7 @@ def game_update():
                                 p.add_kill(nearby_enemy.name)
                                 game.total_kills += 1
                                 game.combo_count += 1
+                                game.max_combo = max(game.max_combo, game.combo_count)
                                 game.combo_timer = COMBO_TIMEOUT
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                                 game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
@@ -4649,6 +4714,7 @@ def game_update():
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                     # Combo system: increment combo and apply bonus
                     game.combo_count += 1
+                    game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
@@ -5061,7 +5127,8 @@ def game_update():
         else:
             trader.wander_dir = -trader.wander_dir
         trader.y = 1 + math.sin(game.t * 2 + id(trader) % 100) * 0.2
-        trader.look_at_2d(p.position)
+        # Smooth rotation toward player — traders turn more slowly for a casual feel
+        game._smooth_rotate_toward(trader, p.position, ENEMY_TURN_SPEED * 0.5, time.dt)
 
         # Show/hide name label based on distance
         dist_to_trader = (trader.position - p.position).length()
