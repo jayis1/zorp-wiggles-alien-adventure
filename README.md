@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.12.1 — 3D!)
+## Features (v2.12.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -137,6 +137,10 @@ python game.py
 - **Dash Landing Impact** — when a dash ends, Zorp squishes flat with an elastic bounce-back, kicks up a biome-tinted dust burst, and triggers a small camera shake. The dash finally feels like it *lands* instead of just switching off
 - **Smooth biome indicator color** — the biome indicator HUD text color smoothly lerps between biomes instead of snapping instantly, for a more polished transition as you explore
 - **Dynamic collectible respawn scaling** — when the world is depleted of items (after big combat/loot explosions), the respawn rate ramps up to 4x and spawns in small batches so the world refills faster instead of trickling back one item at a time
+- **Projectile glow aura** — tentacle laser shots now have a soft pulsing cyan energy aura around the core, making projectiles look like glowing energy balls instead of flat dots — a visual upgrade that makes shooting feel more powerful
+- **Rare collectible pickup flash** — when you pick up a rare-or-better item (rare, very rare, legendary, mythic), the screen edges briefly flash with that item's color, making valuable finds feel special and rewarding instead of identical to common junk
+- **Dynamic heartbeat acceleration** — the low-HP danger vignette heartbeat now speeds up as your health drops from 30% to critical, with the pulse rate accelerating from 8 to 14 beats/sec — escalating tension as you near death instead of a flat constant rhythm
+- **Enemy idle breathing** — enemies that haven't detected the player gently breathe in and out with a subtle scale oscillation, making the world feel alive instead of populated with frozen statues waiting to aggro
 
 ## The Self-Improving Game
 
@@ -316,6 +320,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.12.2 — Visual Polish & Game Feel
+- **Projectile Glow Aura**: Tentacle laser shots now feature a soft pulsing cyan energy aura around the core sphere, making projectiles look like glowing energy balls instead of flat dots. The aura gently pulses in brightness as the projectile flies, giving every shot a more powerful, satisfying visual presence
+- **Rare Collectible Pickup Flash**: When you pick up a rare-or-better item (rare, very rare, legendary, mythic), the screen edges briefly flash with that item's color — making valuable finds feel special and rewarding instead of identical to picking up common Space Gloop. Mythic Plasma Core pickups now get a dramatic magenta flash!
+- **Dynamic Heartbeat Acceleration**: The low-HP danger vignette heartbeat now speeds up as your health drops from 30% toward 0%, with the pulse rate accelerating from 8 to 14 beats/sec. This creates escalating tension as you near death — the heartbeat gets faster and more frantic — instead of a flat constant rhythm. The player model's red pulse syncs with the accelerated heartbeat too
+- **Enemy Idle Breathing**: Enemies that haven't detected the player gently breathe in and out with a subtle 4% scale oscillation, making the world feel alive instead of populated with frozen statues waiting to aggro. Once an enemy detects you, the breathing stops and it switches to active combat behavior
 
 ### v2.12.1 — Performance, Dash Landing & Polish
 - **Collectible Loop Performance**: The collectible update loop (200+ items per frame) now uses squared-distance pre-checks instead of calling `sqrt` for every item. Most distant collectibles skip the expensive square-root call entirely, reducing per-frame overhead when the world is full of loot. Player position is also cached once per loop to avoid repeated Vec3 property access

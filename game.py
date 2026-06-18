@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.12.1"
+VERSION = "2.12.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -135,6 +135,10 @@ MUZZLE_FLASH_DURATION = 0.08            # How long the muzzle flash is visible
 MUZZLE_FLASH_SCALE = 0.6                 # Size of the flash sphere
 MUZZLE_FLASH_PARTICLES = 4               # Extra particles on each shot
 
+# ─── Projectile Glow Aura ──────────────────────────────────────────────────────
+PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
+PROJECTILE_AURA_SCALE = 1.8                           # Aura sphere scale multiplier (relative to projectile)
+
 # ─── Projectile Trail ────────────────────────────────────────────────────────
 PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
 PROJECTILE_TRAIL_LIFETIME = 0.25  # How long each trail dot lives
@@ -201,6 +205,7 @@ DMG_NUMBER_SCALE = 1.2
 LOW_HP_VIGNETTE_THRESHOLD = 0.30   # HP ratio below which the danger vignette appears
 LOW_HP_VIGNETTE_MAX_ALPHA = 90     # Peak alpha of red vignette at 0 HP
 LOW_HP_HEARTBEAT_SPEED = 8.0      # How fast the vignette pulses (mimics heartbeat)
+LOW_HP_HEARTBEAT_SPEED_MAX = 14.0 # Heartbeat speeds up as HP approaches 0 for escalating tension
 
 # ─── Level-Up Feedback ──────────────────────────────────────────────────────
 LEVEL_UP_SCALE_BOUNCE_DURATION = 0.6    # How long the player bounces on level-up
@@ -536,6 +541,16 @@ DASH_LAND_SCREEN_SHAKE = 0.12     # Small camera shake on landing for impact
 GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
 GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
 GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
+
+# ─── Rare Collectible Pickup Flash ────────────────────────────────────────────
+# When the player picks up a rare-or-better item, the screen edges briefly
+# flash with that item's color for an extra reward cue — making rare finds
+# feel special instead of identical to common junk.
+RARE_PICKUP_FLASH_DURATION = 0.35   # Seconds the pickup flash stays visible
+RARE_PICKUP_FLASH_MAX_ALPHA = 55     # Peak alpha of the pickup flash overlay
+RARE_PICKUP_TIER_THRESHOLD = 'rare'  # Minimum rarity tier that triggers the flash
+# Ordered rarity tiers so we can check >= rare
+RARITY_TIER_ORDER = ['common', 'uncommon', 'rare', 'very_rare', 'legendary', 'mythic']
 
 # ─── Enemy Attack / Contact Constants ──────────────────────────────────────────
 SHIELD_BLOCK_PARTICLE_COUNT = 10  # Particle burst count when shield absorbs a hit
@@ -1857,7 +1872,12 @@ class HitRipple(Entity):
 
 
 class Projectile(Entity):
-    """A laser projectile fired by the player."""
+    """A laser projectile fired by the player.
+
+    A bright cyan core sphere with a soft translucent glow aura child entity
+    that gives the shot a satisfying energy-ball appearance instead of a
+    flat dot, making the tentacle laser feel more powerful.
+    """
 
     def __init__(self, position, direction, damage=PROJECTILE_BASE_DAMAGE, speed=PROJECTILE_SPEED):
         super().__init__(
@@ -1871,13 +1891,35 @@ class Projectile(Entity):
         self.speed = speed
         self.lifetime = PROJECTILE_LIFETIME
 
+        # Soft glow aura — a larger translucent sphere parented to the projectile
+        # that gives the shot an energy-ball look without any lighting cost
+        # (unlit shader ignores it, so it's pure additive-style visual).
+        self.aura = Entity(
+            model='sphere',
+            color=PROJECTILE_AURA_COLOR,
+            scale=PROJECTILE_AURA_SCALE,
+            parent=self,
+        )
+        self.aura_base_alpha = PROJECTILE_AURA_COLOR[3]
+        self._aura_phase = random.uniform(0, math.pi * 2)
+
         # Trail spawning timer
         self.trail_timer = 0.0
 
     def move(self, dt):
-        """Move the projectile forward. Returns False when lifetime expires."""
+        """Move the projectile forward. Returns False when lifetime expires.
+
+        Also pulses the glow aura's alpha for a living energy-ball effect
+        rather than a static translucent sphere.
+        """
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
+        # Pulse aura alpha for a subtle living glow
+        self._aura_phase += dt * 12.0
+        pulse = 0.5 + 0.5 * math.sin(self._aura_phase)
+        a = max(20, min(255, int(self.aura_base_alpha * (0.6 + 0.4 * pulse))))
+        r, g, b = _c255_color(PROJECTILE_AURA_COLOR)
+        self.aura.color = color.rgba(r, g, b, a)
         return self.lifetime > 0
 
 
@@ -2295,6 +2337,19 @@ class Game:
         )
         self.kill_flash_timer = 0.0
 
+        # Rare collectible pickup flash — screen-edge color flash for rare+
+        # pickups, making valuable finds feel special
+        self.rare_pickup_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 255, 255, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.5,  # Same layer as kill flash
+        )
+        self.rare_pickup_flash_timer = 0.0
+        self.rare_pickup_flash_color = (255, 255, 255)
+
         # Damage direction indicator — red arrow pointing toward the source of damage
         self.damage_indicators = []  # List of (Entity, direction_vec, remaining_time) tuples
         self.damage_indicator_entities = []  # Arrow entities on the HUD
@@ -2503,7 +2558,7 @@ class Game:
                       'powerup_text', 'crosshair', 'crosshair2',
                       'combo_text', 'combo_bar_bg', 'combo_bar', 'weapon_text', 'effect_text', 'biome_text',
                       'boss_hp_bar_bg', 'boss_hp_bar', 'boss_name_text',
-                      'danger_vignette', 'kill_flash',
+                      'danger_vignette', 'kill_flash', 'rare_pickup_flash',
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text'):
@@ -3586,9 +3641,12 @@ class Game:
         if hp_ratio < LOW_HP_VIGNETTE_THRESHOLD:
             # Urgency scales with how low HP is: 0 HP = max alpha, threshold HP = 0 alpha
             danger_ratio = 1.0 - (hp_ratio / LOW_HP_VIGNETTE_THRESHOLD)
+            # Dynamic heartbeat speed: accelerates from base to max as HP drops,
+            # so the pulse gets faster and more urgent the closer you are to death
+            heartbeat_speed = LOW_HP_HEARTBEAT_SPEED + (LOW_HP_HEARTBEAT_SPEED_MAX - LOW_HP_HEARTBEAT_SPEED) * danger_ratio
             # Heartbeat-style pulsing: uses sin² for a sharper "thump" shape
             # that feels more like a real heartbeat (sharp rise, quick fade)
-            raw_pulse = math.sin(self.t * LOW_HP_HEARTBEAT_SPEED)
+            raw_pulse = math.sin(self.t * heartbeat_speed)
             heartbeat = 0.3 + 0.7 * max(0, raw_pulse) ** 1.5  # Sharper, more urgent thump
             vignette_alpha = int(LOW_HP_VIGNETTE_MAX_ALPHA * danger_ratio * heartbeat)
             self.danger_vignette.color = color.rgba(200, 0, 0, vignette_alpha)
@@ -3607,6 +3665,16 @@ class Game:
             self.kill_flash.color = color.rgba(255, 255, 255, flash_alpha)
         else:
             self.kill_flash.color = color.rgba(255, 255, 255, 0)
+
+        # Rare pickup flash — colored screen flash that fades on rare+ pickup
+        if self.rare_pickup_flash_timer > 0:
+            self.rare_pickup_flash_timer -= time.dt
+            flash_ratio = max(0, self.rare_pickup_flash_timer / RARE_PICKUP_FLASH_DURATION)
+            flash_alpha = int(RARE_PICKUP_FLASH_MAX_ALPHA * flash_ratio)
+            fr, fg, fb = self.rare_pickup_flash_color
+            self.rare_pickup_flash.color = color.rgba(fr, fg, fb, flash_alpha)
+        else:
+            self.rare_pickup_flash.color = color.rgba(255, 255, 255, 0)
 
         # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
@@ -4494,7 +4562,8 @@ def game_update():
         # as an additional visual warning (complements the screen vignette)
         if p.hp < p.max_hp * LOW_HP_VIGNETTE_THRESHOLD:
             danger_ratio = 1.0 - (p.hp / (p.max_hp * LOW_HP_VIGNETTE_THRESHOLD))
-            pulse = 0.5 + 0.5 * math.sin(game.t * LOW_HP_HEARTBEAT_SPEED)
+            heartbeat_speed = LOW_HP_HEARTBEAT_SPEED + (LOW_HP_HEARTBEAT_SPEED_MAX - LOW_HP_HEARTBEAT_SPEED) * danger_ratio
+            pulse = 0.5 + 0.5 * math.sin(game.t * heartbeat_speed)
             red_mix = danger_ratio * pulse
             # Blend between normal alien color and danger red
             p.color = color.rgb(
@@ -5042,6 +5111,13 @@ def game_update():
             punch_t = max(0, enemy.hit_scale_punch)
             scale_mult = 1.0 + (ENEMY_HIT_SCALE_PUNCH - 1.0) * punch_t
             enemy.scale = enemy.original_scale * scale_mult
+        elif dist_to_player < VISUAL_CULL_RANGE and not enemy.alerted and enemy.alive and not enemy.dying:
+            # ── Idle Breathing ── Enemies that haven't detected the player gently
+            # breathe in and out (subtle scale oscillation) so the world feels
+            # alive instead of populated with frozen statues. Only applies to
+            # idle, non-aggroed, non-hit enemies within visual range.
+            breath = 1.0 + 0.04 * math.sin(game.t * 1.8 + id(enemy) % 100 * 0.01)
+            enemy.scale = enemy.original_scale * breath
 
         # Update ground shadow position to follow enemy (world-space, on ground plane)
         # PERFORMANCE: only update shadows/HP bars for nearby enemies
@@ -5470,6 +5546,17 @@ def game_update():
             game.total_items_collected += 1
             # Brief screen flash on pickup for satisfying feedback
             game.screen_shake = max(game.screen_shake, 0.08)
+            # ── Rare Collectible Pickup Flash ── For rare-or-better items, flash
+            # the screen edges with the item's color so valuable finds feel
+            # special instead of identical to common junk.
+            col_rarity_idx = RARITY_TIER_ORDER.index(col.rarity) if col.rarity in RARITY_TIER_ORDER else 0
+            threshold_idx = RARITY_TIER_ORDER.index(RARE_PICKUP_TIER_THRESHOLD) if RARE_PICKUP_TIER_THRESHOLD in RARITY_TIER_ORDER else 2
+            if col_rarity_idx >= threshold_idx:
+                ir, ig, ib = _c255_color(col.item_color)
+                game.rare_pickup_flash_color = (ir, ig, ib)
+                game.rare_pickup_flash_timer = RARE_PICKUP_FLASH_DURATION
+                # Slightly stronger screen shake for rare pickups
+                game.screen_shake = max(game.screen_shake, 0.15)
 
     # ── Update Particles ──
     # Bug fix: must update the tuple in-place; Python tuple unpacking creates local copies
