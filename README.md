@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.13.1 — 3D!)
+## Features (v2.13.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -126,7 +126,7 @@ python game.py
 - **Particle color variation** — each burst particle gets a ±20% random color shift for natural, non-uniform effects instead of identical-looking spheres
 - **Projectile collision pre-check** — squared-distance pre-check skips expensive sqrt calculations for far-away enemies, improving combat performance with many active enemies
 - **Named constants** — magic numbers for shield particles, enemy projectile hit radius, collectible respawn range, and spawn interval extracted into named constants for readability
-- **Pulse Wave ability (Q key)** — press Q to emit an expanding teal shockwave that pushes enemies away and deals minor damage! 8-second cooldown. Great for crowd control and creating breathing room when surrounded
+- **Pulse Wave ability (Q key)** — press Q to emit an expanding teal shockwave that **pushes enemies away with knockback AND deals 8 damage** to each enemy it reaches! 8-second cooldown. Great for crowd control and creating breathing room when surrounded. Enemies hit by the wave show hit flashes, damage numbers, and teal ripples
 - **Achievement system (18 achievements)** — track milestones like First Blood, Warrior, Dragon Slayer, Survivor, and more! Popup notification on unlock with golden particles. Press F to view the full achievements panel
 - **Spawn Healing Zone** — a gentle green healing aura surrounds the spawn point, regenerating 5 HP/sec when you're inside it. Pulsing ring visual indicator on the ground. A safe haven to retreat to when low on health
 - **Level-scaled collection radius** — both pickup radius and magnetic pull radius grow slightly with each level, rewarding progression with smoother collection
@@ -252,10 +252,11 @@ Every projectile hit has a **15% chance** to be a critical hit, dealing **2x dam
 ## Pulse Wave Ability
 
 - Press **Q** to emit an expanding teal shockwave from Zorp's position
-- The wave **pushes enemies away** with strong knockback and deals 8 damage
+- The wave **pushes enemies away** with strong knockback and deals **8 damage** to each enemy it reaches
 - **8-second cooldown** — shown on HUD as "PULSE READY [Q]" or countdown timer
 - Great for **crowd control** — use when surrounded to create breathing room
 - Visual: expanding teal ring that fades as it spreads outward
+- Enemies caught in the wave flash, take damage, and get knocked back — with hit ripples and floating damage numbers for clear feedback
 - Kills from pulse wave count toward combos and drop loot!
 
 ## Spawn Healing Zone
@@ -324,6 +325,13 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.13.2 — Pulse Wave Power, Damage Reaction & Spawn Sparkles
+- **Pulse Wave now actually works!** The Pulse Wave ability (Q key) was creating a visual ring but never pushed or damaged enemies — the `PULSE_WAVE_PUSH_FORCE` and `PULSE_WAVE_DAMAGE` constants were defined but unused. Now the expanding ring pushes enemies away with knockback, deals 8 damage per enemy (each hit only once per ring via the `hit_enemies` tracking set), shows hit flashes + damage numbers + teal ripples on affected enemies, and even grants XP/score/loot/combo credit on kills. The ability finally delivers on its "push enemies away and deal minor damage" promise
+- **Player damage scale punch**: When Zorp takes damage, the model now briefly squashes flat (compressed Y, bulged XZ) and recovers elastically — a visceral on-model reaction that complements the existing HP bar shake and screen shake. You see *and* feel every hit on the character itself, not just the HUD
+- **Collectible spawn sparkle**: When a collectible finishes its spawn-in animation, a small burst of sparkles in the item's color pops outward. Respawns feel alive and polished instead of silently appearing from nothing
+- **Level-scaled collection radius (fixed)**: The `COLLECT_RADIUS_PER_LEVEL` constant existed but was never used — only the magnetic *pull* radius scaled with level, not the actual pickup radius. The final collection check now scales with player level as advertised in the README, rewarding progression with smoother collection
+- **Code quality**: Extracted duplicated biome-tinted dust color computation (was copy-pasted in movement dust and dash landing) into a single `_biome_dust_color()` helper method for maintainability
 
 ### v2.13.1 — Portal Bursts, Smart Monoliths, Trader Glow & Dash Flash
 - **Portal Teleport Burst**: Stepping into a portal now triggers dramatic particle bursts at BOTH the departure point (cyan) and arrival point (purple), plus an extra ring burst at the destination. Teleporting feels like a real event instead of a silent blink — you see where you left and where you landed

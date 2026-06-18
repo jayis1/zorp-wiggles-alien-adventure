@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.13.1"
+VERSION = "2.13.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -150,6 +150,13 @@ PLAYER_SQUISH_AMOUNT = 0.18   # How much the player squishes on landing/moving
 PLAYER_SQUISH_SPEED = 8.0     # How fast the squish animation runs
 PLAYER_STRETCH_FACTOR = 1.14  # Y stretch when moving (elongated alien look)
 PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
+
+# ─── Player Damage Scale Punch ──────────────────────────────────────────────
+# When the player takes damage, the model briefly squashes (flat Y, bulged XZ)
+# and recovers elastically — a visceral "I got hit" reaction on the model itself,
+# complementing the HP bar shake and screen shake.
+PLAYER_DAMAGE_PUNCH_AMOUNT = 0.25   # Max Y compression (0.25 = squished to 75% height)
+PLAYER_DAMAGE_PUNCH_RECOVERY = 10.0  # How fast the punch recovers to normal
 
 # ─── Hit-Stop ────────────────────────────────────────────────────────────────
 HIT_STOP_KILL_DURATION = 0.08  # Slightly longer freeze — more dramatic kill impact
@@ -895,6 +902,9 @@ class Player(Entity):
         self.is_moving = False
         # Level-up scale bounce timer — integrates with animate_bob for satisfying pop
         self.level_up_scale_timer = 0.0
+        # Damage scale punch — brief squish reaction when the player takes damage,
+        # making hits feel visceral (similar to enemy hit_scale_punch)
+        self.damage_scale_punch = 0.0
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
@@ -922,6 +932,9 @@ class Player(Entity):
         self.hp -= amount
         self.invuln_timer = PLAYER_INVULN_DURATION
         self.damage_taken_flag = True  # Flag for HP bar shake trigger
+        # Damage scale punch — trigger a brief squish reaction so the player
+        # model visibly reacts to being hit, not just the HP bar
+        self.damage_scale_punch = 1.0
         # Flash red
         self.color = color.rgb(255, 100, 100)
         invoke(setattr, self, 'color', C_ALIEN, delay=0.15)
@@ -991,6 +1004,19 @@ class Player(Entity):
             self.dash_land_squish += (1.0 - self.dash_land_squish) * min(1.0, DASH_LAND_SQUISH_RECOVERY * time.dt)
             if self.dash_land_squish > 0.998:
                 self.dash_land_squish = 1.0
+
+        # ── Damage Scale Punch ── When the player takes damage, the model briefly
+        # squashes flat (compressed Y, bulged XZ) and recovers elastically — a
+        # visceral on-model reaction that complements the HP bar shake and screen
+        # shake. Decays exponentially for a quick pop-then-recover feel.
+        if self.damage_scale_punch > 0:
+            self.damage_scale_punch -= time.dt * PLAYER_DAMAGE_PUNCH_RECOVERY
+            if self.damage_scale_punch < 0:
+                self.damage_scale_punch = 0
+            punch_t = self.damage_scale_punch  # 1.0 → 0.0
+            y_compression = 1.0 - PLAYER_DAMAGE_PUNCH_AMOUNT * punch_t
+            xz_bulge = 1.0 + PLAYER_DAMAGE_PUNCH_AMOUNT * 0.6 * punch_t
+            self.scale = Vec3(xz_scale * xz_bulge, y_scale * self.dash_land_squish * y_compression, xz_scale * xz_bulge)
 
     def set_facing_from_mouse(self, cam_pivot):
         """Point the alien toward where the mouse ray hits the ground."""
@@ -1365,6 +1391,9 @@ class Collectible(Entity):
         self.glow.visible = False
         # Sparkle trail timer — rare+ collectibles emit occasional sparkle particles
         self.sparkle_timer = random.uniform(0, SPARKLE_INTERVAL)
+        # Spawn-finished flag — set True for one frame when the spawn animation
+        # completes, so the game loop can emit a spawn sparkle burst
+        self.spawn_just_finished = False
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
@@ -1389,6 +1418,7 @@ class Collectible(Entity):
             self.scale = 0.6
             self.glow.visible = True
             self.spawn_timer = -1  # Mark as done
+            self.spawn_just_finished = True  # Signal game loop to emit spawn sparkle
         self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
         self.rotation_y += 60 * time.dt
         # Rarity-scaled glow pulse — faster pulse and wider range for rarer items
@@ -2936,6 +2966,26 @@ class Game:
                         self.crystal_entities.append(wall)
 
     @staticmethod
+    def _biome_dust_color(biome):
+        """Return a biome-tinted dust color for particle effects.
+
+        Lightens the biome's ground color to produce a natural dust tint
+        (e.g. green dust on grass, tan on desert, blue on snow). Used by
+        movement dust puffs and dash landing bursts for cohesive visuals.
+
+        Args:
+            biome: Biome name string (e.g. 'grass', 'desert').
+
+        Returns:
+            A Ursina Color suitable for dust particles.
+        """
+        biome_col = BIOME_COLORS.get(biome, C_GRASS)
+        dust_r = min(255, int(biome_col[0] * 0.7 + 80))
+        dust_g = min(255, int(biome_col[1] * 0.7 + 60))
+        dust_b = min(255, int(biome_col[2] * 0.6 + 70))
+        return color.rgb(dust_r, dust_g, dust_b)
+
+    @staticmethod
     def _smooth_rotate_toward(entity, target_pos, turn_speed, dt):
         """Smoothly rotate an entity to face a target position on the XZ plane.
 
@@ -4380,12 +4430,7 @@ def game_update():
         if p.dash_timer <= 0:
             p.dash_land_squish = DASH_LAND_SQUISH_AMOUNT
             # Dust burst — biome-tinted like movement dust for cohesion
-            biome = game.current_biome
-            biome_col = BIOME_COLORS.get(biome, C_GRASS)
-            dust_r = min(255, int(biome_col[0] * 0.7 + 80))
-            dust_g = min(255, int(biome_col[1] * 0.7 + 60))
-            dust_b = min(255, int(biome_col[2] * 0.6 + 70))
-            dust_col = color.rgb(dust_r, dust_g, dust_b)
+            dust_col = game._biome_dust_color(game.current_biome)
             for _ in range(DASH_LAND_DUST_COUNT):
                 vel = Vec3(random.uniform(-3, 3), random.uniform(0.5, 2.5), random.uniform(-3, 3))
                 dust_p = Entity(model='sphere', color=dust_col, scale=random.uniform(0.1, 0.2),
@@ -4609,13 +4654,7 @@ def game_update():
             p._dust_timer = 0.0
             dust_pos = Vec3(p.x + random.uniform(-0.3, 0.3), 0.1, p.z + random.uniform(-0.3, 0.3))
             # Adapt dust color to current biome
-            biome = game.current_biome
-            biome_col = BIOME_COLORS.get(biome, C_GRASS)
-            # Lighten the biome color for a natural dust tint
-            dust_r = min(255, int(biome_col[0] * 0.7 + 80))
-            dust_g = min(255, int(biome_col[1] * 0.7 + 60))
-            dust_b = min(255, int(biome_col[2] * 0.6 + 70))
-            dust_col = color.rgb(dust_r, dust_g, dust_b)
+            dust_col = game._biome_dust_color(game.current_biome)
             for _ in range(MOVEMENT_DUST_COUNT):
                 vel = Vec3(random.uniform(-1.5, 1.5), random.uniform(0.5, 2.0), random.uniform(-1.5, 1.5))
                 dust_p = Entity(model='sphere', color=dust_col, scale=random.uniform(0.06, 0.14),
@@ -5556,6 +5595,62 @@ def game_update():
             destroy(ripple)
             game.hit_ripples.remove(ripple)
 
+    # ── Pulse Wave Enemy Interaction ──
+    # The expanding pulse ring pushes enemies away and deals minor damage.
+    # Each enemy is only affected once per ring (tracked via hit_enemies set),
+    # and the ring must have expanded past the enemy's position to hit it
+    # (so enemies at the edge get hit later than ones close to the center).
+    for pwr in game.pulse_wave_rings[:]:
+        ring_radius = pwr.current_radius
+        for enemy in game.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            if id(enemy) in pwr.hit_enemies:
+                continue
+            e_dist = math.sqrt((enemy.x - pwr.x) ** 2 + (enemy.z - pwr.z) ** 2)
+            # Hit when the expanding ring edge reaches the enemy
+            if e_dist <= ring_radius:
+                pwr.hit_enemies.add(id(enemy))
+                # Push enemy away from the player (pulse origin)
+                push_dir = Vec3(enemy.x - pwr.x, 0, enemy.z - pwr.z)
+                if push_dir.length() > 0.01:
+                    push_dir = push_dir.normalized()
+                    enemy.knockback_vel = Vec3(
+                        push_dir.x * PULSE_WAVE_PUSH_FORCE,
+                        ENEMY_KNOCKBACK_UP * 0.7,  # Slightly less upward than projectile knockback
+                        push_dir.z * PULSE_WAVE_PUSH_FORCE,
+                    )
+                # Deal damage with visual feedback — hit flash + damage number
+                killed = enemy.take_damage(PULSE_WAVE_DAMAGE)
+                game._spawn_particles(enemy.position, PULSE_WAVE_RING_COLOR, count=4)
+                game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=False))
+                game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(0, 255, 200, 180)))
+                if killed:
+                    p.add_kill(enemy.name)
+                    game.total_kills += 1
+                    game.combo_count += 1
+                    game.max_combo = max(game.max_combo, game.combo_count)
+                    game.combo_timer = COMBO_TIMEOUT
+                    game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) *
+                                  (1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER) *
+                                  (MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0))
+                    p.gain_xp(xp_gain)
+                    p.score += enemy.max_hp
+                    game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=True))
+                    # Drop loot
+                    loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
+                    for _ in range(random.randint(loot_range[0], loot_range[1])):
+                        offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
+                        drop_pos = enemy.position + offset
+                        if game._is_walkable(drop_pos.x, drop_pos.z):
+                            c = Collectible(position=drop_pos)
+                            game.collectibles.append(c)
+                    game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                    game._spawn_kill_burst(enemy.position, enemy.original_color)
+                    game.add_message(f"Pulse Wave defeated {enemy.name}!")
+                    game.kill_feed.append((game.t, f"🌀 {enemy.name}"))
+
     # ── Update Collectibles ──
     # PERFORMANCE: cache player position once so we avoid repeated .position
     # attribute access (and the Vec3 property overhead) on every collectible.
@@ -5608,6 +5703,20 @@ def game_update():
         dist_sq = dx * dx + dz * dz
         near_player = dist_sq < COLLECTIBLE_CULL_RANGE_SQ or col.popping
 
+        # ── Collectible Spawn Sparkle ── When a collectible finishes its
+        # spawn-in animation, emit a small burst of sparkles in the item's color
+        # so respawns feel alive and polished instead of silently appearing.
+        if col.spawn_just_finished:
+            col.spawn_just_finished = False
+            if near_player or dist_sq < COLLECTIBLE_CULL_RANGE_SQ * 4:
+                sr, sg, sb = _c255_color(col.item_color)
+                for _ in range(6):
+                    spark_vel = Vec3(random.uniform(-2, 2), random.uniform(1.5, 3.5), random.uniform(-2, 2))
+                    spark = Entity(model='sphere', color=color.rgb(sr, sg, sb),
+                                   scale=random.uniform(0.06, 0.14),
+                                   position=Vec3(col.x, col.y, col.z))
+                    game.particles.append((spark, spark_vel, random.uniform(0.2, 0.4)))
+
         # ── Rare Collectible Sparkle Trail ── Rare+ collectibles emit occasional
         # sparkle particles that drift upward, making valuable items more
         # visually enticing and easier to spot from a distance.
@@ -5657,7 +5766,11 @@ def game_update():
                 # passing to color.rgba() which expects 0-255 values.
                 ir, ig, ib = _c255_color(col.item_color)
                 col.glow.color = color.rgba(ir, ig, ib, glow_alpha)
-        if dist_sq < COLLECT_RADIUS * COLLECT_RADIUS:
+        # Level-scaled collection radius — grows slightly with player level
+        # (rewards progression with smoother collection, as advertised in README)
+        level_collect_bonus = (p.level - 1) * COLLECT_RADIUS_PER_LEVEL
+        effective_collect_radius = COLLECT_RADIUS + level_collect_bonus
+        if dist_sq < effective_collect_radius * effective_collect_radius:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
                 p.hp = min(p.hp + HEALTH_POTION_HEAL, p.max_hp)
