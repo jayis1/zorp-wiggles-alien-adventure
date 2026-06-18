@@ -865,7 +865,11 @@ class Player(Entity):
             rotation_x=90,
         )
         # Player glow point light (faint green)
-        self.glow_light = PointLight(color=color.rgba(0, 200, 80, 120))
+        # BUG FIX: Removed PointLight — entities use unlit_with_fog_shader by
+        # default, so PointLight/DirectionalLight/AmbientLight have NO effect on
+        # them. This was a wasted resource (light entity with zero visual impact).
+        # The glow_ring quad above already provides the green glow visual.
+        self.glow_light = None  # Set to None so _cleanup() hasattr check works
 
         # Power-up aura ring — pulses with the active buff's color for visual clarity
         self.powerup_ring = Entity(
@@ -1338,8 +1342,13 @@ class Collectible(Entity):
         self.glow_min_scale = glow_cfg['min_scale']
         self.glow_max_scale = glow_cfg['max_scale']
         # Glow ring — alpha scales with rarity
+        # BUG FIX: Use _c255_color() to normalize — info['color'] may be a named
+        # color (0-1 range, e.g. color.orange) or color.rgb() (0-255 range).
+        # Using .r/.g/.b directly mixes the two systems and produces wrong colors
+        # for items like Meteor Shard (color.orange) and Plasma Core (color.magenta).
         glow_alpha = glow_cfg['glow_alpha']
-        self.glow = Entity(model='quad', color=color.rgba(info['color'].r, info['color'].g, info['color'].b, glow_alpha),
+        gr, gg, gb = _c255_color(info['color'])
+        self.glow = Entity(model='quad', color=color.rgba(gr, gg, gb, glow_alpha),
                            scale=glow_cfg['min_scale'], parent=self, rotation_x=90, position=(0, -0.3, 0))
         # Spawn animation: start tiny and invisible, scale up over COLLECT_SPAWN_DURATION
         self.scale = 0.01
@@ -2584,6 +2593,11 @@ class Game:
                 destroy(self.player.glow_ring)
             if hasattr(self.player, 'glow_light') and self.player.glow_light:
                 destroy(self.player.glow_light)
+            # BUG FIX: powerup_ring is a standalone Entity (no parent=self), so it
+            # doesn't cascade-destroy with the player. Must be explicitly destroyed
+            # to prevent entity leak on restart.
+            if hasattr(self.player, 'powerup_ring') and self.player.powerup_ring:
+                destroy(self.player.powerup_ring)
             if hasattr(self.player, 'float_ring') and self.player.float_ring is not None:
                 destroy(self.player.float_ring)
             if hasattr(self.player, 'monolith_ring') and self.player.monolith_ring is not None:
@@ -2653,10 +2667,11 @@ class Game:
         self.missions.clear()
         self.messages.clear()
 
-        # Destroy Sky (Ursina's Sky is a special entity)
-        for e in scene.entities[:]:
-            if hasattr(e, 'model') and e.model and 'sky' in str(e.model).lower():
-                destroy(e)
+        # BUG FIX: Removed fragile scene.entities iteration that destroyed any
+        # entity whose model name contained 'sky'. This could accidentally destroy
+        # unrelated entities and is unnecessary — gradient sky quads are destroyed
+        # explicitly below, and no Ursina Sky() entity is created in this game.
+        # (The sky is built from gradient quads in __init__.)
 
         # Destroy gradient sky quads
         if hasattr(self, 'sky_quads'):
@@ -3311,6 +3326,32 @@ class Game:
         self.minimap_enemy_dots = []
         self.minimap_refresh_timer = 0.0
         self._build_minimap()
+
+        # BUG FIX: Missing HUD text entities that were referenced in _update_hud()
+        # and game_update() but never created. Without these, accessing
+        # self.pulse_wave_text, self.spawn_heal_text, self.achievement_popup_text,
+        # self.achievement_popup_sub, or self.achievement_panel_text would crash
+        # with AttributeError on the first frame.
+        self.pulse_wave_text = Text(
+            text='PULSE READY [Q]', position=(-0.75, 0.21), scale=0.85,
+            color=color.rgb(0, 255, 200),
+        )
+        self.spawn_heal_text = Text(
+            text='', position=(0, -0.35), scale=1.0, color=color.rgb(100, 255, 100),
+            origin=(0, 0),
+        )
+        self.achievement_popup_text = Text(
+            text='', position=(0, 0.1), scale=2.0, color=color.rgba(255, 220, 50, 0),
+            origin=(0, 0), visible=False,
+        )
+        self.achievement_popup_sub = Text(
+            text='', position=(0, 0.04), scale=1.2, color=color.rgba(255, 200, 50, 0),
+            origin=(0, 0), visible=False,
+        )
+        self.achievement_panel_text = Text(
+            text='', position=(-0.3, 0.3), scale=0.8, color=color.white,
+            origin=(-0.5, 0.5), visible=False,
+        )
 
     def _build_minimap(self):
         """Create a minimap with terrain-color texture and enemy dot tracking.
