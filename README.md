@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.12.2 — 3D!)
+## Features (v2.13.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -141,6 +141,10 @@ python game.py
 - **Rare collectible pickup flash** — when you pick up a rare-or-better item (rare, very rare, legendary, mythic), the screen edges briefly flash with that item's color, making valuable finds feel special and rewarding instead of identical to common junk
 - **Dynamic heartbeat acceleration** — the low-HP danger vignette heartbeat now speeds up as your health drops from 30% to critical, with the pulse rate accelerating from 8 to 14 beats/sec — escalating tension as you near death instead of a flat constant rhythm
 - **Enemy idle breathing** — enemies that haven't detected the player gently breathe in and out with a subtle scale oscillation, making the world feel alive instead of populated with frozen statues waiting to aggro
+- **Overkill system** — when a kill deals 25+ more damage than the enemy's remaining HP, you get an OVERKILL! Bonus XP, red-orange "OVERKILL" damage number, extra particles, and screen shake reward excessive damage with satisfying feedback
+- **HP bar damage shake** — the HP bar on the HUD jitters briefly when you take damage, providing visceral feedback that makes hits feel impactful even when you're not looking at the action
+- **Spawn density throttle** — when 8+ enemies are already within 25 units of you, enemy spawning slows down by 50%, preventing overwhelming crowds and keeping combat fair instead of swarming
+- **Rare collectible sparkle trail** — rare+ collectibles emit occasional sparkle particles that drift upward in the item's color, making valuable items more visually enticing and easier to spot from a distance
 
 ## The Self-Improving Game
 
@@ -320,6 +324,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.13.0 — Overkill, HP Shake, Spawn Balance & Sparkles
+- **Overkill System**: When a kill deals 25+ more damage than the enemy's remaining HP, you trigger an OVERKILL! A red-orange "OVERKILL" damage number appears (bigger than even crit numbers), bonus XP is granted (scaled by combo and monolith multipliers), orange particles burst from the enemy, and the screen shakes harder. Makes high-damage crits and high-level shots against weak enemies feel satisfying instead of wasteful
+- **HP Bar Damage Shake**: The HP bar on the HUD now jitters briefly (0.4s) when you take damage, with decreasing intensity. This provides visceral, immediate feedback that you've been hit — you feel each damage event even when focused on the action. The shake applies to both the HP bar fill and its background
+- **Spawn Density Throttle**: When 8 or more enemies are already within 25 units of the player, enemy spawning slows down by 50% (spawn interval doubled). This prevents unfair overwhelming crowds while still keeping the world populated — combat stays challenging but fair, giving you breathing room to thin the herd before more arrive
+- **Rare Collectible Sparkle Trail**: Rare+ collectibles (rare, very rare, legendary, mythic) now emit occasional sparkle particles that drift upward in the item's color. This makes valuable items more visually enticing and easier to spot from a distance — you'll notice that legendary Cosmic Jelly or mythic Plasma Core shimmering in the distance before you even see its glow ring
 
 ### v2.12.2 — Visual Polish & Game Feel
 - **Projectile Glow Aura**: Tentacle laser shots now feature a soft pulsing cyan energy aura around the core sphere, making projectiles look like glowing energy balls instead of flat dots. The aura gently pulses in brightness as the projectile flies, giving every shot a more powerful, satisfying visual presence

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.12.2"
+VERSION = "2.13.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -542,6 +542,27 @@ GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
 GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
 GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
 
+# ─── Overkill System ──────────────────────────────────────────────────────────
+OVERKILL_DAMAGE_THRESHOLD = 25  # Minimum excess damage to trigger Overkill
+OVERKILL_XP_BONUS = 20            # Bonus XP for overkill
+OVERKILL_SCREEN_SHAKE = 0.3      # Screen shake on overkill
+OVERKILL_PARTICLE_COUNT = 15     # Particle burst on overkill
+
+# ─── HP Bar Damage Shake ──────────────────────────────────────────────────────
+HP_BAR_SHAKE_DURATION = 0.4      # How long the HP bar shakes after taking damage
+HP_BAR_SHAKE_INTENSITY = 0.012  # Max pixel offset of the HP bar shake
+
+# ─── Spawn Density Throttle ───────────────────────────────────────────────────
+SPAWN_DENSITY_NEAR_RADIUS = 25   # Radius to count "nearby" enemies
+SPAWN_DENSITY_NEAR_THRESHOLD = 8 # Max nearby enemies before spawn throttling
+SPAWN_DENSITY_SLOWDOWN = 0.5     # Spawn interval multiplier when too many nearby
+
+# ─── Rare Collectible Sparkle Trail ───────────────────────────────────────────
+SPARKLE_INTERVAL = 0.15          # Seconds between sparkle particle spawns
+SPARKLE_RISE_SPEED = 3.0         # Upward drift speed of sparkles
+SPARKLE_LIFETIME = 0.5            # How long each sparkle particle lives
+SPARKLE_SCALE = 0.08              # Size of sparkle particles
+
 # ─── Rare Collectible Pickup Flash ────────────────────────────────────────────
 # When the player picks up a rare-or-better item, the screen edges briefly
 # flash with that item's color for an extra reward cue — making rare finds
@@ -755,6 +776,7 @@ class Player(Entity):
         self.completed_missions = 0
         self.facing = Vec3(0, 0, 1)
         self.level_up_pending = False
+        self.damage_taken_flag = False  # Set by take_damage, checked by game_update for HP bar shake
 
         # Dash ability
         self.dash_timer = 0
@@ -885,6 +907,7 @@ class Player(Entity):
             return False
         self.hp -= amount
         self.invuln_timer = PLAYER_INVULN_DURATION
+        self.damage_taken_flag = True  # Flag for HP bar shake trigger
         # Flash red
         self.color = color.rgb(255, 100, 100)
         invoke(setattr, self, 'color', C_ALIEN, delay=0.15)
@@ -1321,6 +1344,8 @@ class Collectible(Entity):
         # Spawn animation: start tiny and invisible, scale up over COLLECT_SPAWN_DURATION
         self.scale = 0.01
         self.glow.visible = False
+        # Sparkle trail timer — rare+ collectibles emit occasional sparkle particles
+        self.sparkle_timer = random.uniform(0, SPARKLE_INTERVAL)
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
@@ -1952,9 +1977,13 @@ class DamageNumber:
     Tracks its own lifetime and handles cleanup.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False):
-        # Color: gold for crits, yellow for kills, white for normal hits
-        if is_crit and not is_kill:
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False):
+        # Color: gold for crits, yellow for kills, red-orange for overkills, white for normal hits
+        if is_overkill:
+            col = color.rgb(255, 80, 0)
+            text_str = f"OVERKILL {amount}!"
+            scale_factor = 1.6
+        elif is_crit and not is_kill:
             col = CRIT_NUMBER_COLOR
             text_str = f"★{amount}"
         elif is_kill:
@@ -1963,8 +1992,15 @@ class DamageNumber:
         else:
             col = color.white
             text_str = str(amount)
-        # Scale: crits pop bigger than normal hits, kills pop biggest
-        scale_factor = 1.4 if is_kill else (1.25 if is_crit else 1.0)
+        # Scale: crits pop bigger than normal hits, kills pop biggest, overkills biggest
+        if is_overkill:
+            scale_factor = 1.6
+        elif is_kill:
+            scale_factor = 1.4
+        elif is_crit:
+            scale_factor = 1.25
+        else:
+            scale_factor = 1.0
 
         # 3D billboard quad as a glowing background dot behind the number
         # BUG FIX: col may be a named color (0-1 .r/.g/.b) or color.rgb() (0-255).
@@ -1991,6 +2027,7 @@ class DamageNumber:
         self.world_pos = Vec3(position.x, position.y + 2.0, position.z)
         self.is_kill = is_kill
         self.is_crit = is_crit
+        self.is_overkill = is_overkill
         self.alive = True
 
     def update(self, dt):
@@ -2009,7 +2046,9 @@ class DamageNumber:
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
         # NOTE: r, g, b were previously read from text_ent.color but never used —
         # the color is always overridden below with hardcoded values.
-        if self.is_kill:
+        if self.is_overkill:
+            self.text_ent.color = color.rgba(255, 80, 0, int(255 * alpha))
+        elif self.is_kill:
             self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
         elif self.is_crit:
             self.text_ent.color = color.rgba(255, 200, 0, int(255 * alpha))
@@ -2336,6 +2375,9 @@ class Game:
             z=0.5,  # Render behind UI but above vignette
         )
         self.kill_flash_timer = 0.0
+
+        # HP bar damage shake — HP bar jitters briefly when player takes damage
+        self.hp_bar_shake_timer = 0.0
 
         # Rare collectible pickup flash — screen-edge color flash for rare+
         # pickups, making valuable finds feel special
@@ -3635,6 +3677,23 @@ class Game:
             self.hp_bar_bg.color = color.dark_gray
         self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
+        # ── HP Bar Damage Shake ── When the player takes damage, the HP bar
+        # jitters briefly with decreasing intensity for visceral damage feedback.
+        # Applied after the normal position so it doesn't conflict with the
+        # ratio-based x-positioning of the HP bar fill.
+        if self.hp_bar_shake_timer > 0:
+            self.hp_bar_shake_timer -= time.dt
+            shake_progress = max(0, self.hp_bar_shake_timer / HP_BAR_SHAKE_DURATION)
+            shake_amt = HP_BAR_SHAKE_INTENSITY * shake_progress
+            jitter_x = random.uniform(-shake_amt, shake_amt)
+            jitter_y = random.uniform(-shake_amt, shake_amt)
+            self.hp_bar.x += jitter_x
+            self.hp_bar.y += jitter_y
+            self.hp_bar_bg.x += jitter_x
+            self.hp_bar_bg.y += jitter_y
+            if self.hp_bar_shake_timer <= 0:
+                self.hp_bar_shake_timer = 0
+
         # Low-HP danger vignette — red pulsing overlay at screen edges when health is low
         # Enhanced: adds a sharper "thump" effect with brief bright flash at heartbeat peak
         # when HP is critically low (below 15%), for more urgent danger feedback
@@ -4547,6 +4606,12 @@ def game_update():
         p.glow_ring.x = p.x
         p.glow_ring.z = p.z
 
+    # ── HP Bar Damage Shake Trigger ── When the player takes damage, trigger
+    # the HP bar shake timer so _update_hud can apply the jitter effect.
+    if p.damage_taken_flag:
+        p.damage_taken_flag = False
+        game.hp_bar_shake_timer = HP_BAR_SHAKE_DURATION
+
     # Invulnerability timer
     if p.invuln_timer > 0:
         p.invuln_timer -= time.dt
@@ -5239,6 +5304,12 @@ def game_update():
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
                 if killed:
+                    # ── Overkill System ── If the damage exceeded the enemy's
+                    # remaining HP by more than OVERKILL_DAMAGE_THRESHOLD, grant
+                    # bonus XP, extra particles, and a special OVERKILL damage
+                    # number for satisfying excess-damage feedback.
+                    overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                    is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                     p.add_kill(enemy.name)
                     game.total_kills += 1
                     # Kill flash — brief white screen flash for satisfying feedback
@@ -5265,6 +5336,13 @@ def game_update():
                     # Apply monolith XP multiplier buff
                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                     xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                    # ── Overkill Bonus ── Extra XP and visual effects for excess damage
+                    if is_overkill:
+                        overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                        xp_gain += overkill_xp
+                        game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                        game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                        game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
                     p.gain_xp(xp_gain)
                     p.score += int(enemy.max_hp * combo_score_mult)
                     game.screen_shake = SCREEN_SHAKE_KILL
@@ -5273,9 +5351,12 @@ def game_update():
                     # Camera FOV punch: brief zoom-in on kill for cinematic impact
                     game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
                     camera.fov = CAMERA_KILL_ZOOM_FOV
-                    # Kill damage number (bigger, yellow)
+                    # Kill damage number (bigger, yellow) — or OVERKILL (red-orange, biggest)
                     # Bug fix: use computed damage (includes crit multiplier) instead of base proj.damage
-                    game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
+                    if is_overkill:
+                        game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True, is_overkill=True))
+                    else:
+                        game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                     # Drop loot
                     # BUG FIX: loot drops now check walkability so collectibles don't
                     # spawn in unreachable water/lava tiles.
@@ -5442,6 +5523,26 @@ def game_update():
         dz = col.z - p_pos.z
         dist_sq = dx * dx + dz * dz
         near_player = dist_sq < COLLECTIBLE_CULL_RANGE_SQ or col.popping
+
+        # ── Rare Collectible Sparkle Trail ── Rare+ collectibles emit occasional
+        # sparkle particles that drift upward, making valuable items more
+        # visually enticing and easier to spot from a distance.
+        if near_player and not col.popping and col.spawn_timer <= 0:
+            rarity_idx = RARITY_TIER_ORDER.index(col.rarity) if col.rarity in RARITY_TIER_ORDER else 0
+            threshold_idx = RARITY_TIER_ORDER.index(RARE_PICKUP_TIER_THRESHOLD) if RARE_PICKUP_TIER_THRESHOLD in RARITY_TIER_ORDER else 2
+            if rarity_idx >= threshold_idx:
+                col.sparkle_timer -= time.dt
+                if col.sparkle_timer <= 0:
+                    col.sparkle_timer = SPARKLE_INTERVAL
+                    # Spawn a sparkle particle
+                    spark_pos = Vec3(col.x + random.uniform(-0.3, 0.3),
+                                     col.y + random.uniform(-0.2, 0.2),
+                                     col.z + random.uniform(-0.3, 0.3))
+                    ir, ig, ib = _c255_color(col.item_color)
+                    sparkle = Entity(model='sphere', color=color.rgb(ir, ig, ib),
+                                     scale=SPARKLE_SCALE, position=spark_pos)
+                    spark_vel = Vec3(random.uniform(-0.5, 0.5), SPARKLE_RISE_SPEED, random.uniform(-0.5, 0.5))
+                    game.particles.append((sparkle, spark_vel, SPARKLE_LIFETIME))
 
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction
@@ -5630,6 +5731,21 @@ def game_update():
     game.spawn_timer += time.dt
     # Dynamic spawn interval: gets faster as player levels up (min 3s)
     spawn_interval = max(MIN_SPAWN_INTERVAL, ENEMY_SPAWN_INTERVAL - (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL * ENEMY_SPAWN_INTERVAL_LEVEL_DECAY)
+    # ── Spawn Density Throttle ── When too many enemies are already near the
+    # player, slow down spawning to prevent overwhelming crowds. This keeps
+    # combat challenging but fair — you won't get swarmed by 15 enemies at once.
+    nearby_enemy_count = 0
+    for e in game.enemies:
+        if not e.alive or e.dying:
+            continue
+        dx = e.x - p.x
+        dz = e.z - p.z
+        if dx * dx + dz * dz < SPAWN_DENSITY_NEAR_RADIUS * SPAWN_DENSITY_NEAR_RADIUS:
+            nearby_enemy_count += 1
+            if nearby_enemy_count >= SPAWN_DENSITY_NEAR_THRESHOLD:
+                break  # Early exit — we only need to know if we're at threshold
+    if nearby_enemy_count >= SPAWN_DENSITY_NEAR_THRESHOLD:
+        spawn_interval = spawn_interval / SPAWN_DENSITY_SLOWDOWN  # Double the interval
     if game.spawn_timer >= spawn_interval:
         game.spawn_timer = 0
         alive_count = len([e for e in game.enemies if e.alive or e.dying])
