@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.12.0 — 3D!)
+## Features (v2.12.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -134,6 +134,9 @@ python game.py
 - **Enemy Spawn Warning Markers** — a pulsing red ring now appears at enemy spawn locations 1.5 seconds before they materialize! The ring shrinks and pulses faster as the countdown approaches zero, giving you time to react and reposition. No more surprise spawns!
 - **Dash Collectible Vacuum** — dashing now pulls nearby collectibles (within 8 units) toward Zorp! Dash through fields of items to vacuum them up, making dash useful for collection as well as dodging
 - **Combo Damage Buff** — at combo x10+, your projectiles deal +25% damage! The HUD combo counter displays a ⚔+25% DMG indicator when active, rewarding skillful kill chains with raw firepower
+- **Dash Landing Impact** — when a dash ends, Zorp squishes flat with an elastic bounce-back, kicks up a biome-tinted dust burst, and triggers a small camera shake. The dash finally feels like it *lands* instead of just switching off
+- **Smooth biome indicator color** — the biome indicator HUD text color smoothly lerps between biomes instead of snapping instantly, for a more polished transition as you explore
+- **Dynamic collectible respawn scaling** — when the world is depleted of items (after big combat/loot explosions), the respawn rate ramps up to 4x and spawns in small batches so the world refills faster instead of trickling back one item at a time
 
 ## The Self-Improving Game
 
@@ -313,6 +316,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.12.1 — Performance, Dash Landing & Polish
+- **Collectible Loop Performance**: The collectible update loop (200+ items per frame) now uses squared-distance pre-checks instead of calling `sqrt` for every item. Most distant collectibles skip the expensive square-root call entirely, reducing per-frame overhead when the world is full of loot. Player position is also cached once per loop to avoid repeated Vec3 property access
+- **Dash Landing Impact**: Dashing previously ended with zero feedback — Zorp just stopped dead. Now when a dash ends, Zorp squishes flat (recovering with an elastic bounce), kicks up a biome-tinted dust burst, and triggers a small camera shake. The dash finally feels like it *lands* instead of just switching off
+- **Smooth Biome Indicator Color**: The biome indicator HUD text used to snap its color instantly when you crossed a biome border. The color now smoothly lerps between biomes for a more polished, less jarring transition as you explore
+- **Dynamic Collectible Respawn Scaling**: The collectible respawn rate now scales with how depleted the world is. When the item count drops well below the minimum (e.g., after a big combat/loot explosion), the respawn chance ramps up to 4x the base rate and spawns in small batches, so the world refills faster instead of trickling back one item at a time
 
 ### v2.12.0 — Spawn Warnings, Dash Vacuum & Combo Damage
 - **Enemy Spawn Warning Markers**: Enemies no longer appear out of thin air! A pulsing red ring now appears at the spawn location 1.5 seconds before the enemy materializes. The ring shrinks and pulses faster as the countdown approaches, giving players time to react and reposition — eliminating unfair surprise spawns

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.12.0"
+VERSION = "2.12.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -53,6 +53,8 @@ ENEMY_WANDER_DIR_JITTER = 1.0
 MAX_ACTIVE_ENEMIES = 40
 MIN_COLLECTIBLES = 120
 COLLECTIBLE_RESPAWN_CHANCE = 0.02   # Slightly increased for better world population density
+COLLECTIBLE_RESPAWN_CHANCE_MAX = 0.08  # Ceiling for dynamic respawn scaling when the world is depleted
+COLLECTIBLE_SPAWN_BATCH_SIZE = 4   # How many collectibles to attempt spawning per batch when world is very sparse
 ENEMY_SPAWN_INTERVAL = 10
 ENEMY_SPAWN_INTERVAL_LEVEL_DECAY = 0.5   # seconds faster per player level tier
 ENEMY_SPAWN_DISTANCE_MIN = 30
@@ -413,9 +415,10 @@ CRIT_NUMBER_COLOR = color.rgb(255, 200, 0)  # Gold for crit numbers
 CRIT_SCREEN_SHAKE = 0.35               # Extra screen shake on critical hits
 CRIT_HIT_STOP_DURATION = 0.06          # Brief freeze on crit hits for satisfying impact
 
-# ─── Biome Indicator HUD ──────────────────────────────────────────────────
+# ─── Biome Indicator HUD ──────────────────────────────────────────────────────
 BIOME_INDICATOR_POSITION = (0.72, 0.44)
 BIOME_INDICATOR_SCALE = 1.0
+BIOME_COLOR_LERP_SPEED = 5.0  # How fast the biome indicator text color transitions between biomes
 
 # ─── Portal System ───────────────────────────────────────────────────────
 PORTAL_COUNT = 4            # Number of portal pairs (8 portals total)
@@ -519,8 +522,15 @@ COMBO_DAMAGE_MULT = 1.25       # +25% projectile damage at combo x10+
 # ─── Performance: Visual Culling ──────────────────────────────────────────────
 VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
 COLLECTIBLE_CULL_RANGE = 60  # Skip animate/pull for collectibles beyond this distance
+COLLECTIBLE_CULL_RANGE_SQ = COLLECTIBLE_CULL_RANGE * COLLECTIBLE_CULL_RANGE  # Pre-squared for fast comparison
 AI_CULL_RANGE = 50       # Skip complex special AI (phase shift, spit, orbit, etc.) beyond this distance
 PROJECTILE_COLLISION_PRECHECK_SQ = 2500  # Squared distance: skip full collision math for enemies >50 units from projectile
+
+# ─── Dash Landing Impact ──────────────────────────────────────────────────────
+DASH_LAND_SQUISH_AMOUNT = 0.55   # How much Y compresses on dash landing (0.55 = very flat)
+DASH_LAND_SQUISH_RECOVERY = 8.0  # How fast scale recovers to normal after landing
+DASH_LAND_DUST_COUNT = 8          # Dust particle burst on landing
+DASH_LAND_SCREEN_SHAKE = 0.12     # Small camera shake on landing for impact
 
 # ─── Collectible Glow Pulse ──────────────────────────────────────────────────
 GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
@@ -738,6 +748,8 @@ class Player(Entity):
 
         # Movement velocity for smooth acceleration/deceleration
         self.velocity = Vec3(0, 0, 0)
+        # Dash landing squish — 1.0 = normal, < 1.0 = compressed Y from landing impact
+        self.dash_land_squish = 1.0
 
         # Power-up timers
         self.speed_boost_timer = 0
@@ -920,7 +932,13 @@ class Player(Entity):
             bounce_mult = max(1.0, bounce_mult)
         y_scale = 1.2 * self.squish_current * bounce_mult
         xz_scale = 1.0 / self.squish_current  # Inverse for XZ to preserve volume
-        self.scale = Vec3(xz_scale, y_scale, xz_scale)
+        # Apply dash landing squish on top of the normal animation.
+        # Recovers exponentially so it's a quick pop-then-fade, not a linger.
+        self.scale = Vec3(xz_scale, y_scale * self.dash_land_squish, xz_scale)
+        if self.dash_land_squish < 1.0:
+            self.dash_land_squish += (1.0 - self.dash_land_squish) * min(1.0, DASH_LAND_SQUISH_RECOVERY * time.dt)
+            if self.dash_land_squish > 0.998:
+                self.dash_land_squish = 1.0
 
     def set_facing_from_mouse(self, cam_pivot):
         """Point the alien toward where the mouse ray hits the ground."""
@@ -2045,6 +2063,8 @@ class Game:
         self.hit_stop_timer = 0.0
         self.kill_fov_timer = 0.0  # Camera FOV punch on kill — brief zoom-in effect
         self.current_biome = 'grass'
+        # Smoothly-interpolated biome indicator color (r,g,b floats in 0-255 range)
+        self.biome_color_current = (10.0, 180.0, 80.0)
 
         # Combo system
         self.combo_count = 0
@@ -3769,11 +3789,18 @@ class Game:
         self.biome_text.text = f'~ {biome_display} ~'
         # Color matches the biome's ground color for quick visual identification
         biome_col = BIOME_COLORS.get(self.current_biome, C_GRASS)
-        self.biome_text.color = color.rgb(
-            min(255, int(biome_col[0]) + 80),
-            min(255, int(biome_col[1]) + 80),
-            min(255, int(biome_col[2]) + 80),
-        )
+        # Target color: biome ground color brightened for readability (as before)
+        target_r = float(min(255, int(biome_col[0]) + 80))
+        target_g = float(min(255, int(biome_col[1]) + 80))
+        target_b = float(min(255, int(biome_col[2]) + 80))
+        # Smoothly lerp the biome indicator color toward the target for a polished
+        # transition instead of an abrupt color snap when crossing biome borders.
+        cr, cg, cb = self.biome_color_current
+        cr += (target_r - cr) * min(1.0, BIOME_COLOR_LERP_SPEED * time.dt)
+        cg += (target_g - cg) * min(1.0, BIOME_COLOR_LERP_SPEED * time.dt)
+        cb += (target_b - cb) * min(1.0, BIOME_COLOR_LERP_SPEED * time.dt)
+        self.biome_color_current = (cr, cg, cb)
+        self.biome_text.color = color.rgb(int(cr), int(cg), int(cb))
 
         # ── Boss Health Bar ──
         # Show a prominent health bar at the top of the screen when a boss-tier enemy is nearby
@@ -4137,6 +4164,23 @@ def game_update():
                 col.rotation_y += 300 * time.dt  # Spin items as they get vacuumed
         # FOV zoom during dash for speed feel
         camera.fov = lerp(camera.fov, DASH_FOV_ZOOM, time.dt * DASH_FOV_LERP_SPEED)
+        # ── Dash Landing Impact ── When the dash ends, trigger a satisfying
+        # squish-and-dust landing effect instead of stopping dead with no feedback.
+        if p.dash_timer <= 0:
+            p.dash_land_squish = DASH_LAND_SQUISH_AMOUNT
+            # Dust burst — biome-tinted like movement dust for cohesion
+            biome = game.current_biome
+            biome_col = BIOME_COLORS.get(biome, C_GRASS)
+            dust_r = min(255, int(biome_col[0] * 0.7 + 80))
+            dust_g = min(255, int(biome_col[1] * 0.7 + 60))
+            dust_b = min(255, int(biome_col[2] * 0.6 + 70))
+            dust_col = color.rgb(dust_r, dust_g, dust_b)
+            for _ in range(DASH_LAND_DUST_COUNT):
+                vel = Vec3(random.uniform(-3, 3), random.uniform(0.5, 2.5), random.uniform(-3, 3))
+                dust_p = Entity(model='sphere', color=dust_col, scale=random.uniform(0.1, 0.2),
+                               position=Vec3(p.x, 0.1, p.z))
+                game.particles.append((dust_p, vel, random.uniform(0.25, 0.55)))
+            game.screen_shake = max(game.screen_shake, DASH_LAND_SCREEN_SHAKE)
     elif held_keys['space'] and p.dash_cooldown <= 0 and move_dir.length() > 0:
         # Initiate dash
         p.dash_direction = move_dir.normalized()
@@ -5272,6 +5316,9 @@ def game_update():
             game.hit_ripples.remove(ripple)
 
     # ── Update Collectibles ──
+    # PERFORMANCE: cache player position once so we avoid repeated .position
+    # attribute access (and the Vec3 property overhead) on every collectible.
+    p_pos = p.position
     for col in game.collectibles[:]:
         # Handle pop animation before destruction
         if col.popping:
@@ -5312,19 +5359,24 @@ def game_update():
         # and if spawn animation is complete (spawn animation handles its own scaling)
         if col.spawn_timer <= 0:
             col.scale = 0.6
-        dist = (col.position - p.position).length()
-        # PERFORMANCE: skip expensive pull/glow updates for distant collectibles
-        near_player = dist < COLLECTIBLE_CULL_RANGE or col.popping
-        
+        # PERFORMANCE: squared-distance pre-check avoids a sqrt for the vast
+        # majority of distant collectibles. We only need the actual distance
+        # if the item is within the cull range (and thus worth animating/pulling).
+        dx = col.x - p_pos.x
+        dz = col.z - p_pos.z
+        dist_sq = dx * dx + dz * dz
+        near_player = dist_sq < COLLECTIBLE_CULL_RANGE_SQ or col.popping
+
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction
         # Level-scaled pull radius: grows with player level
         if near_player:
+            dist = math.sqrt(dist_sq)
             level_pull_bonus = (p.level - 1) * COLLECT_PULL_RADIUS_PER_LEVEL
             pull_radius = (COLLECT_PULL_RADIUS + level_pull_bonus) * (MAGNET_PULL_RADIUS_MULT if p.magnet_timer > 0 else 1.0)
             pull_speed = COLLECT_PULL_SPEED * (MAGNET_PULL_SPEED_MULT if p.magnet_timer > 0 else 1.0)
             if dist < pull_radius and dist > 0.1:
-                pull_dir = (p.position - col.position).normalized()
+                pull_dir = (p_pos - col.position).normalized()
                 # Acceleration curve: pull gets dramatically stronger as item approaches
                 # This creates a satisfying "snap" feel rather than a linear pull
                 closeness = 1.0 - (dist / pull_radius)  # 0 at edge, ~1 near center
@@ -5344,7 +5396,7 @@ def game_update():
                 # passing to color.rgba() which expects 0-255 values.
                 ir, ig, ib = _c255_color(col.item_color)
                 col.glow.color = color.rgba(ir, ig, ib, glow_alpha)
-        if dist < COLLECT_RADIUS:
+        if dist_sq < COLLECT_RADIUS * COLLECT_RADIUS:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
                 p.hp = min(p.hp + HEALTH_POTION_HEAL, p.max_hp)
@@ -5528,17 +5580,27 @@ def game_update():
             destroy(sw)
             game.spawn_warnings.remove(sw)
 
-    # Respawn collectibles
-    if len(game.collectibles) < MIN_COLLECTIBLES and random.random() < COLLECTIBLE_RESPAWN_CHANCE:
-        angle = random.uniform(0, math.pi * 2)
-        dist = random.uniform(COLLECTIBLE_RESPAWN_RANGE_MIN, COLLECTIBLE_RESPAWN_RANGE_MAX)
-        cx = p.x + math.cos(angle) * dist
-        cz = p.z + math.sin(angle) * dist
-        cx = max(2, min(cx, (WORLD_SIZE - 2) * TILE_SCALE))
-        cz = max(2, min(cz, (WORLD_SIZE - 2) * TILE_SCALE))
-        if game._is_walkable(cx, cz):
-            c = Collectible(position=Vec3(cx, 1, cz))
-            game.collectibles.append(c)
+    # Respawn collectibles — rate scales dynamically with how depleted the world is.
+    # When the collectible count drops well below MIN_COLLECTIBLES, the respawn
+    # chance ramps up (up to COLLECTIBLE_RESPAWN_CHANCE_MAX) so the world refills
+    # faster after big combat/loot explosions. Near the floor, it spawns a small
+    # batch per frame to recover quickly instead of trickling one item at a time.
+    col_count = len(game.collectibles)
+    if col_count < MIN_COLLECTIBLES:
+        depletion_ratio = max(0.0, 1.0 - col_count / MIN_COLLECTIBLES)
+        effective_chance = COLLECTIBLE_RESPAWN_CHANCE + (COLLECTIBLE_RESPAWN_CHANCE_MAX - COLLECTIBLE_RESPAWN_CHANCE) * depletion_ratio
+        spawn_batch = COLLECTIBLE_SPAWN_BATCH_SIZE if col_count < MIN_COLLECTIBLES * 0.5 else 1
+        for _ in range(spawn_batch):
+            if random.random() < effective_chance:
+                angle = random.uniform(0, math.pi * 2)
+                dist = random.uniform(COLLECTIBLE_RESPAWN_RANGE_MIN, COLLECTIBLE_RESPAWN_RANGE_MAX)
+                cx = p.x + math.cos(angle) * dist
+                cz = p.z + math.sin(angle) * dist
+                cx = max(2, min(cx, (WORLD_SIZE - 2) * TILE_SCALE))
+                cz = max(2, min(cz, (WORLD_SIZE - 2) * TILE_SCALE))
+                if game._is_walkable(cx, cz):
+                    c = Collectible(position=Vec3(cx, 1, cz))
+                    game.collectibles.append(c)
 
     # ── Portal Animation & Teleportation ──
     for portal in game.portals:
