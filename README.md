@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.13.0 — 3D!)
+## Features (v2.13.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -324,6 +324,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.13.1 — Portal Bursts, Smart Monoliths, Trader Glow & Dash Flash
+- **Portal Teleport Burst**: Stepping into a portal now triggers dramatic particle bursts at BOTH the departure point (cyan) and arrival point (purple), plus an extra ring burst at the destination. Teleporting feels like a real event instead of a silent blink — you see where you left and where you landed
+- **Smart Monolith Activation**: Monoliths no longer waste their 45-second cooldown when you already have all three buffs active (Speed Surge, Power Surge, Wisdom Aura). They wait patiently until at least one buff expires before granting a new one — no more frustrating duplicate buffs
+- **Trader Proximity Glow**: Wandering traders now pulse with a warm golden glow when you're within trade range, making it immediately obvious that interaction is available without reading the tiny trade prompt text. The glow brightens and dims rhythmically to draw your eye
+- **Dash Readiness Flash**: When the dash cooldown ends, a brief cyan pulse flashes behind the "DASH READY" text on the HUD. This draws your peripheral attention to the fact that dash is available again — no more wondering "is dash off cooldown yet?" while dodging enemies
 
 ### v2.13.0 — Overkill, HP Shake, Spawn Balance & Sparkles
 - **Overkill System**: When a kill deals 25+ more damage than the enemy's remaining HP, you trigger an OVERKILL! A red-orange "OVERKILL" damage number appears (bigger than even crit numbers), bonus XP is granted (scaled by combo and monolith multipliers), orange particles burst from the enemy, and the screen shakes harder. Makes high-damage crits and high-level shots against weak enemies feel satisfying instead of wasteful

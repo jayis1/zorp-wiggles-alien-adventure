@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.13.0"
+VERSION = "2.13.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -268,6 +268,8 @@ DASH_FOV_ZOOM = 85          # FOV during dash (wider for speed feel)
 DASH_FOV_NORMAL = 75        # Normal gameplay FOV
 DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
 DASH_INVULN_DURATION = 0.3  # Seconds of invulnerability during dash — makes dash a dodge tool
+DASH_READY_FLASH_DURATION = 0.4  # How long the dash-ready flash pulse lasts
+DASH_READY_FLASH_COLOR = color.rgba(0, 255, 255, 0)  # Brief cyan flash when dash comes off cooldown
 
 # ─── Power-Up Durations ───────────────────────────────────────────────────────
 SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
@@ -412,6 +414,9 @@ MONOLITH_ACTIVATE_RANGE = 4.5        # How close the player must be to activate
 MONOLITH_SPEED_MULT = 1.5            # Speed buff multiplier from monolith
 MONOLITH_DAMAGE_MULT = 1.4           # Damage buff multiplier from monolith
 MONOLITH_XP_MULT = 2.0               # XP multiplier from monolith
+# Smart activation: if the player already has all three monolith buffs active,
+# don't waste a cooldown — wait until at least one buff has expired.
+MONOLITH_SKIP_IF_ALL_BUFFS_ACTIVE = True
 
 # ─── Critical Hit System ──────────────────────────────────────────────────
 CRIT_CHANCE = 0.15                      # 15% chance per projectile hit
@@ -430,6 +435,9 @@ PORTAL_COUNT = 4            # Number of portal pairs (8 portals total)
 PORTAL_COOLDOWN = 3.0       # Seconds between portal uses
 PORTAL_RING_COLOR_INNER = color.rgb(0, 255, 255)
 PORTAL_RING_COLOR_OUTER = color.rgb(100, 0, 255)
+PORTAL_BURST_PARTICLE_COUNT = 20  # Particles at each portal on teleport
+PORTAL_DEPARTURE_COLOR = color.rgba(0, 255, 255, 200)    # Cyan burst at departure
+PORTAL_ARRIVAL_COLOR = color.rgba(100, 0, 255, 200)      # Purple burst at arrival
 
 # ─── Wandering Trader (NPC) ──────────────────────────────────────────────
 TRADER_NAMES = ['Zix', 'Glip', 'Orbix', 'Fweem']
@@ -438,6 +446,8 @@ TRADER_WANDER_RADIUS = 40
 TRADER_TRADE_COST = 5       # Space Gloop needed per trade
 TRADER_RESPAWN_TIME = 60     # Seconds before a new trader appears
 TRADER_INITIAL_COUNT = 2
+TRADER_GLOW_RANGE = 4          # Range at which trader starts glowing when player can trade
+TRADER_GLOW_PULSE_SPEED = 5.0  # Pulse speed of trader glow when in trade range
 
 # ─── Floating Islands Biome ──────────────────────────────────────────────
 FLOATING_ISLAND_HEIGHT_MIN = 3
@@ -2388,6 +2398,10 @@ class Game:
         # HP bar damage shake — HP bar jitters briefly when player takes damage
         self.hp_bar_shake_timer = 0.0
 
+        # Dash readiness flash — brief cyan pulse when dash comes off cooldown
+        self.dash_ready_flash_timer = 0.0
+        self._dash_was_on_cooldown = False
+
         # Rare collectible pickup flash — screen-edge color flash for rare+
         # pickups, making valuable finds feel special
         self.rare_pickup_flash = Entity(
@@ -2617,7 +2631,7 @@ class Game:
                       'danger_vignette', 'kill_flash', 'rare_pickup_flash',
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
-                      'pulse_wave_text', 'spawn_heal_text'):
+                      'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -3282,6 +3296,14 @@ class Game:
 
         # Dash cooldown indicator & power-up status
         self.dash_text = Text(text='DASH READY', position=(-0.75, 0.37), scale=0.9, color=color.cyan)
+        # Dash ready flash overlay — brief cyan pulse behind dash text when cooldown ends
+        self.dash_ready_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(0, 255, 255, 0),
+            scale=(0.2, 0.035),
+            position=(-0.65, 0.37),
+        )
         self.powerup_text = Text(text='', position=(-0.75, 0.33), scale=0.85, color=color.green)
 
         # Combo counter display
@@ -3822,6 +3844,21 @@ class Game:
             self.dash_text.text = 'DASH READY'
             self.dash_text.color = color.cyan
 
+        # ── Dash Ready Flash ── Brief cyan pulse behind the dash text when
+        # the dash cooldown ends, so the player notices it's available again
+        # without having to check the HUD constantly.
+        if self.dash_ready_flash_timer > 0:
+            self.dash_ready_flash_timer -= time.dt
+            flash_ratio = max(0, self.dash_ready_flash_timer / DASH_READY_FLASH_DURATION)
+            # Peak alpha at start, fades out smoothly
+            flash_alpha = int(120 * flash_ratio)
+            self.dash_ready_flash.color = color.rgba(0, 255, 255, flash_alpha)
+            # Scale pulses slightly outward then settles
+            scale_pulse = 1.0 + 0.15 * flash_ratio
+            self.dash_ready_flash.scale = (0.2 * scale_pulse, 0.035 * scale_pulse)
+        else:
+            self.dash_ready_flash.color = color.rgba(0, 255, 255, 0)
+
         # Power-up status
         pu_lines = []
         if p.speed_boost_timer > 0:
@@ -4311,6 +4348,12 @@ def game_update():
     # ── Dash Ability ──
     if p.dash_cooldown > 0:
         p.dash_cooldown -= time.dt
+        # Track that dash was on cooldown so we can flash when it ends
+        game._dash_was_on_cooldown = True
+    elif game._dash_was_on_cooldown:
+        # Dash just came off cooldown — trigger readiness flash
+        game._dash_was_on_cooldown = False
+        game.dash_ready_flash_timer = DASH_READY_FLASH_DURATION
     if p.dash_timer > 0:
         # Currently dashing
         p.dash_timer -= time.dt
@@ -5866,6 +5909,13 @@ def game_update():
             p.x = target.x
             p.z = target.z
             game.cam_pivot.position = Vec3(target.x, 0, target.z)
+            # ── Portal Teleport Burst ── Particle bursts at BOTH the departure
+            # and arrival points for a satisfying teleport visual. Cyan at
+            # departure (where you left), purple at arrival (where you land).
+            game._spawn_particles(portal.position + Vec3(0, 1, 0), PORTAL_DEPARTURE_COLOR, count=PORTAL_BURST_PARTICLE_COUNT)
+            game._spawn_particles(Vec3(target.x, 1, target.z), PORTAL_ARRIVAL_COLOR, count=PORTAL_BURST_PARTICLE_COUNT)
+            # Extra ring burst at arrival for a dramatic landing effect
+            game._spawn_collect_burst(Vec3(target.x, 1, target.z), PORTAL_ARRIVAL_COLOR)
             game._spawn_particles(p.position, color.rgba(0, 255, 255, 200), count=15)
             game.add_message("Portal activated!")
             game.screen_shake = max(game.screen_shake, 0.3)
@@ -5893,6 +5943,19 @@ def game_update():
 
         # Show/hide name label based on distance
         dist_to_trader = (trader.position - p.position).length()
+        # ── Trader Proximity Glow ── When the player is within trade range,
+        # the trader pulses with a warm golden glow to make it obvious that
+        # interaction is available — no need to read the tiny trade prompt.
+        if dist_to_trader < TRADER_GLOW_RANGE:
+            glow_pulse = 0.5 + 0.5 * math.sin(game.t * TRADER_GLOW_PULSE_SPEED)
+            # Blend trader's base color (warm orange) toward bright gold
+            trader.color = color.rgb(
+                min(255, int(255)),
+                min(255, int(200 + 55 * glow_pulse)),
+                min(255, int(100 + 80 * glow_pulse)),
+            )
+        else:
+            trader.color = color.rgb(255, 200, 100)  # Restore base trader color
         if dist_to_trader < 15:
             screen_pos = camera.screen_point(trader.position + Vec3(0, 2.5, 0))
             trader.name_label.position = (screen_pos[0], screen_pos[1] + 0.04)
@@ -5985,6 +6048,17 @@ def game_update():
         # Check if player is within activation range
         dist_to_monolith = math.sqrt((monolith.position.x - p.x) ** 2 + (monolith.position.z - p.z) ** 2)
         if dist_to_monolith < MONOLITH_ACTIVATE_RANGE and monolith.cooldown <= 0:
+            # ── Smart Activation ── If the player already has all three monolith
+            # buffs active, don't waste the cooldown. Wait until at least one
+            # buff has expired before granting a new one. This prevents the
+            # frustrating scenario of activating a monolith only to get a buff
+            # you already have, wasting the 45-second cooldown for nothing.
+            if MONOLITH_SKIP_IF_ALL_BUFFS_ACTIVE:
+                all_buffs_active = (p.monolith_speed_timer > 0 and
+                                    p.monolith_damage_timer > 0 and
+                                    p.monolith_xp_timer > 0)
+                if all_buffs_active:
+                    continue  # Skip activation — don't waste the cooldown
             # Activate! Grant a random buff
             buff_type = random.choice(AlienMonolith.BUFF_TYPES)
             buff_name = AlienMonolith.BUFF_NAMES[buff_type]
