@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.13.2"
+VERSION = "2.14.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -590,6 +590,28 @@ RARE_PICKUP_TIER_THRESHOLD = 'rare'  # Minimum rarity tier that triggers the fla
 # Ordered rarity tiers so we can check >= rare
 RARITY_TIER_ORDER = ['common', 'uncommon', 'rare', 'very_rare', 'legendary', 'mythic']
 
+# ─── XP Bar Gain Flash ──────────────────────────────────────────────────────────
+# When the player gains XP, the XP bar briefly flashes brighter and pulses
+# in scale, making progression feel more tangible and rewarding — you see
+# and feel each XP gain instead of the bar silently filling.
+XP_GAIN_FLASH_DURATION = 0.35    # How long the XP bar flash lasts (seconds)
+XP_GAIN_FLASH_SCALE_MULT = 1.4  # Peak scale multiplier of the XP bar during flash
+
+# ─── Boss Proximity Tension Vignette ────────────────────────────────────────────
+# When a boss (Plasma Drake) is nearby, a subtle red screen-edge tint pulses
+# to build atmospheric tension — making boss encounters feel dramatic even
+# before you see the boss HP bar. The pulse syncs with the boss HP bar.
+BOSS_TENSION_MAX_ALPHA = 35      # Peak alpha of the red tension vignette
+BOSS_TENSION_PULSE_SPEED = 3.0   # How fast the tension vignette pulses
+
+# ─── Enemy Low-HP Warning Pulse ─────────────────────────────────────────────────
+# When an enemy's HP drops below 25%, its HP bar pulses bright red with a
+# subtle scale jitter — a clear visual "finish them off" cue that helps
+# players prioritize targets and makes near-death enemies feel urgent.
+ENEMY_LOW_HP_THRESHOLD = 0.25    # HP ratio below which the warning pulse activates
+ENEMY_LOW_HP_PULSE_SPEED = 8.0   # How fast the HP bar pulses when low
+ENEMY_LOW_HP_BAR_SCALE_PULSE = 0.15  # Scale jitter amount for the low-HP pulse
+
 # ─── Enemy Attack / Contact Constants ──────────────────────────────────────────
 SHIELD_BLOCK_PARTICLE_COUNT = 10  # Particle burst count when shield absorbs a hit
 ENEMY_PROJECTILE_HIT_RADIUS = 1.5  # How close an enemy projectile must be to hit the player
@@ -794,6 +816,7 @@ class Player(Entity):
         self.facing = Vec3(0, 0, 1)
         self.level_up_pending = False
         self.damage_taken_flag = False  # Set by take_damage, checked by game_update for HP bar shake
+        self.xp_gained_flag = False      # Set by gain_xp, checked by _update_hud for XP bar flash
 
         # Dash ability
         self.dash_timer = 0
@@ -909,6 +932,7 @@ class Player(Entity):
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
+        self.xp_gained_flag = True  # Signal HUD to flash the XP bar
         while self.xp >= self.xp_to_next:
             self.xp -= self.xp_to_next
             self.level += 1
@@ -1247,7 +1271,12 @@ class Enemy(Entity):
         return False
 
     def update_hp_bar(self):
-        """Update the HP bar scale and color based on current health ratio."""
+        """Update the HP bar scale and color based on current health ratio.
+
+        When HP drops below ENEMY_LOW_HP_THRESHOLD (25%), the HP bar pulses
+        bright red with a subtle scale jitter — a clear "finish them off"
+        visual cue that helps players prioritize near-death targets.
+        """
         # Defensive: guard against division by zero if max_hp is somehow 0
         ratio = max(0, self.hp / self.max_hp) if self.max_hp > 0 else 0
         self.hp_bar.scale_x = 2 * ratio
@@ -1259,6 +1288,26 @@ class Enemy(Entity):
         else:
             t = ratio * 2  # 1.0 at half, 0.0 at empty
             self.hp_bar.color = color.rgb(255, int(255 * t), 0)
+        # ── Low-HP Warning Pulse ── When the enemy's HP drops below 25%, the HP
+        # bar pulses bright red with a subtle scale jitter. This creates a clear
+        # visual "finish them off" cue — you can instantly see which enemies
+        # are about to die, making it easier to prioritize targets and adding
+        # urgency to the final blow. The pulse uses game time (t) via id() for
+        # phase variation so multiple low-HP enemies don't pulse in sync.
+        if ratio < ENEMY_LOW_HP_THRESHOLD and ratio > 0:
+            pulse = 0.5 + 0.5 * math.sin(
+                time.t * ENEMY_LOW_HP_PULSE_SPEED + id(self) % 100 * 0.1
+            )
+            # Bright red pulse color (overrides the normal gradient)
+            self.hp_bar.color = color.rgb(255, int(30 * (1 - pulse)), int(30 * (1 - pulse)))
+            # Subtle scale jitter — bar appears to "throb"
+            scale_jitter = 1.0 + ENEMY_LOW_HP_BAR_SCALE_PULSE * pulse
+            self.hp_bar.scale_y = 0.15 * scale_jitter
+            self.hp_bar_bg.scale_y = 0.15 * scale_jitter
+        else:
+            # Reset to normal bar height when not in low-HP state
+            self.hp_bar.scale_y = 0.15
+            self.hp_bar_bg.scale_y = 0.15
 
     def update_death_animation(self, dt):
         """Animate enemy death: pop upward, shrink, flash between white and enemy color,
@@ -2421,9 +2470,23 @@ class Game:
             color=color.rgba(255, 255, 255, 0),
             scale=2.0,
             position=(0, 0),
-            z=0.5,  # Render behind UI but above vignette
+            z=0.5,  # Same layer as kill flash
         )
         self.kill_flash_timer = 0.0
+
+        # XP bar gain flash — XP bar pulses brighter and scales up briefly when XP is gained
+        self.xp_gain_flash_timer = 0.0
+
+        # Boss proximity tension vignette — subtle red screen-edge tint when a
+        # boss (Plasma Drake) is nearby, building atmospheric tension before combat
+        self.boss_tension_vignette = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(180, 0, 0, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=1.5,  # Behind most UI but above the danger vignette
+        )
 
         # HP bar damage shake — HP bar jitters briefly when player takes damage
         self.hp_bar_shake_timer = 0.0
@@ -2661,7 +2724,8 @@ class Game:
                       'danger_vignette', 'kill_flash', 'rare_pickup_flash',
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
-                      'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash'):
+                      'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
+                      'boss_tension_vignette'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -3853,6 +3917,30 @@ class Game:
         self.xp_bar.scale_x = 0.4 * xp_ratio
         self.xp_bar.x = -0.55 - 0.2 * (1 - xp_ratio)
 
+        # ── XP Bar Gain Flash ── When XP is gained, the XP bar flashes brighter
+        # and pulses in scale for a satisfying progression feedback effect.
+        # The flag is set by gain_xp() and consumed here; the flash timer then
+        # decays smoothly over XP_GAIN_FLASH_DURATION seconds.
+        if p.xp_gained_flag:
+            p.xp_gained_flag = False
+            self.xp_gain_flash_timer = XP_GAIN_FLASH_DURATION
+        if self.xp_gain_flash_timer > 0:
+            self.xp_gain_flash_timer -= time.dt
+            flash_ratio = max(0, self.xp_gain_flash_timer / XP_GAIN_FLASH_DURATION)
+            # Scale pulse: peaks at start, settles back to normal
+            scale_pulse = 1.0 + (XP_GAIN_FLASH_SCALE_MULT - 1.0) * flash_ratio
+            self.xp_bar.scale_y = 0.015 * scale_pulse
+            # Color flash: blend from bright white-cyan toward normal purple
+            flash_blend = flash_ratio * 0.7
+            self.xp_bar.color = color.rgb(
+                min(255, int(C_PURPLE[0] + (255 - C_PURPLE[0]) * flash_blend)),
+                min(255, int(C_PURPLE[1] + (255 - C_PURPLE[1]) * flash_blend)),
+                min(255, int(C_PURPLE[2] + (255 - C_PURPLE[2]) * flash_blend)),
+            )
+        else:
+            self.xp_bar.scale_y = 0.015
+            self.xp_bar.color = C_PURPLE
+
         self.level_text.text = f'Lv.{p.level}'
         self.score_text.text = f'Score: {p.score}'
         # Kill counter — shows total kills this run for progression feedback
@@ -4081,10 +4169,21 @@ class Game:
             else:
                 bt = boss_ratio * 2
                 self.boss_hp_bar.color = color.rgb(255, int(100 * bt), 0)
+            # ── Boss Proximity Tension Vignette ── A subtle red screen-edge tint
+            # pulses while a boss is nearby, building atmospheric tension. The
+            # pulse intensifies as the boss's HP drops, making low-HP bosses
+            # feel more dangerous and desperate.
+            tension_pulse = 0.5 + 0.5 * math.sin(self.t * BOSS_TENSION_PULSE_SPEED)
+            # Intensify as boss HP drops (1.0 at full → 1.6 at near death)
+            danger_boost = 1.0 + (1.0 - boss_ratio) * 0.6
+            tension_alpha = int(BOSS_TENSION_MAX_ALPHA * tension_pulse * danger_boost)
+            self.boss_tension_vignette.color = color.rgba(180, 0, 0, tension_alpha)
         else:
             self.boss_hp_bar_bg.visible = False
             self.boss_hp_bar.visible = False
             self.boss_name_text.visible = False
+            # Fade out the boss tension vignette when no boss is nearby
+            self.boss_tension_vignette.color = color.rgba(180, 0, 0, 0)
 
         # ── Pulse Wave Cooldown Indicator ──
         if self.pulse_wave_cooldown > 0:

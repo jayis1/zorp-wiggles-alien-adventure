@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.13.2 — 3D!)
+## Features (v2.14.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -145,6 +145,9 @@ python game.py
 - **HP bar damage shake** — the HP bar on the HUD jitters briefly when you take damage, providing visceral feedback that makes hits feel impactful even when you're not looking at the action
 - **Spawn density throttle** — when 8+ enemies are already within 25 units of you, enemy spawning slows down by 50%, preventing overwhelming crowds and keeping combat fair instead of swarming
 - **Rare collectible sparkle trail** — rare+ collectibles emit occasional sparkle particles that drift upward in the item's color, making valuable items more visually enticing and easier to spot from a distance
+- **XP bar gain flash** — every time Zorp gains XP, the XP bar briefly flashes brighter and pulses in scale, making progression feel tangible and rewarding. You see and feel each XP gain instead of the bar silently filling — kills, collectibles, and XP orbs all trigger a satisfying flash
+- **Boss proximity tension vignette** — a subtle red screen-edge tint pulses when a Plasma Drake is nearby, building atmospheric tension before you even see the boss HP bar. The pulse intensifies as the boss's HP drops, making wounded bosses feel more dangerous and desperate — a dramatic atmospheric cue for boss encounters
+- **Enemy low-HP warning pulse** — when an enemy's HP drops below 25%, its HP bar pulses bright red with a subtle scale jitter (throbbing effect). This creates a clear "finish them off" visual cue — you can instantly see which enemies are about to die, making it easier to prioritize targets and adding urgency to landing the final blow
 
 ## The Self-Improving Game
 
@@ -325,6 +328,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.14.0 — XP Flash, Boss Tension & Enemy Low-HP Cue
+- **XP Bar Gain Flash**: Every time Zorp gains XP — from kills, collectibles, XP Orbs, or trades — the XP bar now briefly flashes brighter (blending toward white-cyan) and pulses up in scale (1.4x peak) before settling back. This makes progression feel tangible and rewarding: you *see* and *feel* each XP gain instead of the bar silently filling. The flash decays smoothly over 0.35 seconds, and the flag-based trigger (set by `gain_xp()`, consumed by `_update_hud()`) means it fires on every XP source without modifying each call site individually
+- **Boss Proximity Tension Vignette**: A subtle red screen-edge tint now pulses while a Plasma Drake is within 40 units, building atmospheric tension before you even spot the boss HP bar. The pulse intensifies as the boss's HP drops (up to 1.6x at near-death), making wounded bosses feel more dangerous and desperate — a dramatic atmospheric cue that complements the existing boss HP bar without being intrusive (max alpha 35). The vignette fades instantly when no boss is nearby
+- **Enemy Low-HP Warning Pulse**: When an enemy's HP drops below 25%, its HP bar now pulses bright red with a subtle scale jitter (throbbing effect). This creates a clear "finish them off" visual cue — you can instantly see which enemies are about to die at a glance, making it easier to prioritize targets in crowded combat. Each enemy's pulse is phase-offset (via `id()`) so multiple low-HP enemies don't pulse in perfect sync, creating a more organic, chaotic feel. The effect resets to normal when the enemy heals or dies
 
 ### v2.13.2 — Pulse Wave Power, Damage Reaction & Spawn Sparkles
 - **Pulse Wave now actually works!** The Pulse Wave ability (Q key) was creating a visual ring but never pushed or damaged enemies — the `PULSE_WAVE_PUSH_FORCE` and `PULSE_WAVE_DAMAGE` constants were defined but unused. Now the expanding ring pushes enemies away with knockback, deals 8 damage per enemy (each hit only once per ring via the `hit_enemies` tracking set), shows hit flashes + damage numbers + teal ripples on affected enemies, and even grants XP/score/loot/combo credit on kills. The ability finally delivers on its "push enemies away and deal minor damage" promise
