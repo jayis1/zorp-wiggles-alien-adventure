@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.14.1 — 3D!)
+## Features (v2.15.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -152,6 +152,9 @@ python game.py
 - **Player idle breathing** — when standing still, Zorp gently breathes with a subtle 3% scale oscillation, making the character feel alive rather than frozen between movements
 - **Enemy materialization burst** — when enemies materialize from spawn warnings, a vertical column of red-tinted particles shoots upward, making spawns feel dramatic and giving a clear visual cue that something just appeared
 - **Rarity-scaled pickup feedback** — picking up more valuable items produces a bigger particle burst and stronger screen shake, scaled by rarity tier. Grabbing a mythic item feels dramatically more rewarding than picking up common junk
+- **Multi-Kill announcement system** — kill 2+ enemies within 1.5 seconds to trigger dramatic announcements: DOUBLE KILL!, TRIPLE KILL!, QUAD KILL!, PENTA KILL!, up to RAMPAGE! for 9+ rapid kills! A large orange-red text pops in on the HUD with a scale overshoot animation, rewarding explosive AOE plays with Fireball Scrolls and Pulse Waves. Higher multi-kills shift to bright yellow and trigger bonus particles + screen shake
+- **Adaptive enemy HP bar scaling** — enemy HP bars now scale proportionally to enemy size, so tiny Swarm Mites and huge Plasma Drakes both get readable, consistently-sized HP bars. No more gigantic bars floating above tiny enemies or tiny bars on massive bosses
+- **Healing number fix & spawn zone heal numbers** — Regen Crystal healing now correctly displays green "+N" floating numbers (previously a bug made them render white). The spawn healing zone now also shows green heal numbers so you can see exactly how much HP you're regenerating while standing in the safe zone
 
 ## The Self-Improving Game
 
@@ -332,6 +335,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.15.0 — Multi-Kill Announcements, HP Bar Scaling & Healing Fix
+- **Multi-Kill Announcement System**: When you kill 2+ enemies within a 1.5-second window, a dramatic announcement pops up on the HUD — "DOUBLE KILL!", "TRIPLE KILL!", "QUAD KILL!", "PENTA KILL!", "HEXA KILL!", "ULTRA KILL!", "MEGA KILL!", and "RAMPAGE!" for 9+ rapid kills. The text pops in with a scale overshoot animation and fades out smoothly. Higher multi-kills (5+) shift from orange-red to bright yellow and trigger bonus orange particles + screen shake. This rewards explosive AOE plays with Fireball Scrolls and Pulse Waves, giving you satisfying feedback for clearing groups of enemies rapidly. The system tracks kills across all sources (projectiles, fireball AOE, pulse wave, Void Bomber friendly fire) and is independent from the existing combo system
+- **Adaptive Enemy HP Bar Scaling**: Enemy HP bars now scale inversely proportional to the enemy's model scale, so the visual bar size stays consistent in world space regardless of enemy size. Previously, a tiny Swarm Mite (scale 0.5) had a disproportionately huge HP bar floating above it, while a massive Plasma Drake (scale 2.2) had a relatively tiny one. Now both get a readable, consistently-sized bar. The bar height and Y position also scale proportionally, keeping the bar at a consistent height above each enemy's model
+- **Healing Number Bug Fix**: Regen Crystal healing numbers were always rendered white instead of green — the `DamageNumber.update()` method overrides `text_ent.color` every frame based on `is_kill`/`is_crit`/`is_overkill` flags, all of which were `False` for heals, so the green color set after construction was immediately overridden. Fixed by adding an `is_heal` flag to `DamageNumber` that renders green "+N" text with proper alpha fading. The spawn healing zone now also displays green heal numbers so you can see exactly how much HP you're regenerating while standing in the safe zone
 
 ### v2.14.1 — Rarity Visual Polish, Idle Breathing & Spawn Impact
 - **Rarity-based bob & spin**: Collectibles now bob higher and spin faster based on their rarity tier! A mythic Plasma Core bobs 3x higher and spins 3x faster than common Space Gloop, making rare items visually distinct and more enticing from a distance. You'll *see* that legendary item dancing in the field before you even notice its glow ring

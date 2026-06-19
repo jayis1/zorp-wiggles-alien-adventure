@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.14.1"
+VERSION = "2.15.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -645,6 +645,24 @@ PLAYER_IDLE_BREATHE_AMOUNT = 0.03  # 3% scale variation — subtle but perceptib
 # the player a clear visual "something just appeared here" cue.
 ENEMY_MATERIALIZE_PARTICLE_COUNT = 8
 ENEMY_MATERIALIZE_BURST_UP_SPEED = 6.0
+
+# ─── Multi-Kill Announcement System ────────────────────────────────────────────
+# When the player kills 2+ enemies within a short time window, a dramatic
+# announcement appears on the HUD — "DOUBLE KILL!", "TRIPLE KILL!", etc.
+# This rewards explosive AOE plays (Fireball Scroll, Pulse Wave) and rapid
+# chaining, adding a layer of excitement beyond the existing combo system.
+MULTI_KILL_WINDOW = 1.5              # Seconds within which kills count toward a multi-kill
+MULTI_KILL_ANNOUNCE_DURATION = 2.0   # How long the announcement stays on screen
+MULTI_KILL_NAMES = {
+    2: 'DOUBLE KILL!',
+    3: 'TRIPLE KILL!',
+    4: 'QUAD KILL!',
+    5: 'PENTA KILL!',
+    6: 'HEXA KILL!',
+    7: 'ULTRA KILL!',
+    8: 'MEGA KILL!',
+}
+MULTI_KILL_MAX_NAME = 'RAMPAGE!'     # For 9+ kills in the window
 
 # ─── Collectible Pickup Rarity Scaling ─────────────────────────────────────────
 # More valuable items produce a more satisfying pickup pop — bigger particle
@@ -1285,9 +1303,27 @@ class Enemy(Entity):
                                position=(math.cos(rad) * 0.7, 0.7, math.sin(rad) * 0.7))
                 self.decor_entities.append(shard)
 
-        # HP bar
-        self.hp_bar_bg = Entity(model='quad', color=color.red, scale=(2, 0.15), parent=self, position=(0, 1.5, 0), billboard=True)
-        self.hp_bar = Entity(model='quad', color=color.green, scale=(2, 0.15), parent=self, position=(0, 1.5, -0.01), billboard=True)
+        # HP bar — scaled to look consistent regardless of enemy size.
+        # Since the bar is parented to the enemy (whose scale = original_scale),
+        # we divide the base width by the scale so the visual size stays ~2 units
+        # wide in world space for all enemies. Tiny Swarm Mites and huge Plasma
+        # Drakes both get a readable, same-size HP bar.
+        # Clamp to prevent absurd values for very small or very large enemies.
+        hp_bar_base_width = 2.0
+        hp_bar_base_height = 0.15
+        hp_bar_scaled_width = max(0.5, min(4.0, hp_bar_base_width / max(0.3, self.original_scale)))
+        hp_bar_scaled_height = max(0.06, min(0.3, hp_bar_base_height / max(0.3, self.original_scale)))
+        self.hp_bar_base_width = hp_bar_scaled_width  # Store for update_hp_bar
+        self.hp_bar_base_height = hp_bar_scaled_height
+        # Position the bar above the enemy, also scaled so it sits at a consistent
+        # height above the model regardless of enemy scale
+        hp_bar_y = 1.5 / max(0.3, self.original_scale)
+        self.hp_bar_bg = Entity(model='quad', color=color.red,
+                                scale=(hp_bar_scaled_width, hp_bar_scaled_height),
+                                parent=self, position=(0, hp_bar_y, 0), billboard=True)
+        self.hp_bar = Entity(model='quad', color=color.green,
+                             scale=(hp_bar_scaled_width, hp_bar_scaled_height),
+                             parent=self, position=(0, hp_bar_y, -0.01), billboard=True)
 
         # Ground shadow for spatial awareness — dark disc beneath the enemy
         self.ground_shadow = Entity(
@@ -1341,8 +1377,12 @@ class Enemy(Entity):
         """
         # Defensive: guard against division by zero if max_hp is somehow 0
         ratio = max(0, self.hp / self.max_hp) if self.max_hp > 0 else 0
-        self.hp_bar.scale_x = 2 * ratio
-        self.hp_bar.x = -1 * (1 - ratio)
+        # Use the per-enemy scaled base width so the HP bar shrinks correctly
+        # regardless of enemy size (set during __init__)
+        base_w = getattr(self, 'hp_bar_base_width', 2.0)
+        base_h = getattr(self, 'hp_bar_base_height', 0.15)
+        self.hp_bar.scale_x = base_w * ratio
+        self.hp_bar.x = -(base_w / 2) * (1 - ratio)
         # Color gradient: green → yellow → red
         if ratio > 0.5:
             t = (ratio - 0.5) * 2  # 1.0 at full, 0.0 at half
@@ -1364,12 +1404,12 @@ class Enemy(Entity):
             self.hp_bar.color = color.rgb(255, int(30 * (1 - pulse)), int(30 * (1 - pulse)))
             # Subtle scale jitter — bar appears to "throb"
             scale_jitter = 1.0 + ENEMY_LOW_HP_BAR_SCALE_PULSE * pulse
-            self.hp_bar.scale_y = 0.15 * scale_jitter
-            self.hp_bar_bg.scale_y = 0.15 * scale_jitter
+            self.hp_bar.scale_y = base_h * scale_jitter
+            self.hp_bar_bg.scale_y = base_h * scale_jitter
         else:
             # Reset to normal bar height when not in low-HP state
-            self.hp_bar.scale_y = 0.15
-            self.hp_bar_bg.scale_y = 0.15
+            self.hp_bar.scale_y = base_h
+            self.hp_bar_bg.scale_y = base_h
 
     def update_death_animation(self, dt):
         """Animate enemy death: pop upward, shrink, flash between white and enemy color,
@@ -2141,9 +2181,13 @@ class DamageNumber:
     Tracks its own lifetime and handles cleanup.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False):
-        # Color: gold for crits, yellow for kills, red-orange for overkills, white for normal hits
-        if is_overkill:
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False):
+        # Color: green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
+        if is_heal:
+            col = color.rgb(80, 255, 120)
+            text_str = f"+{amount}"
+            scale_factor = 1.1
+        elif is_overkill:
             col = color.rgb(255, 80, 0)
             text_str = f"OVERKILL {amount}!"
             scale_factor = 1.6
@@ -2192,6 +2236,7 @@ class DamageNumber:
         self.is_kill = is_kill
         self.is_crit = is_crit
         self.is_overkill = is_overkill
+        self.is_heal = is_heal
         self.alive = True
 
     def update(self, dt):
@@ -2210,7 +2255,9 @@ class DamageNumber:
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
         # NOTE: r, g, b were previously read from text_ent.color but never used —
         # the color is always overridden below with hardcoded values.
-        if self.is_overkill:
+        if self.is_heal:
+            self.text_ent.color = color.rgba(80, 255, 120, int(255 * alpha))
+        elif self.is_overkill:
             self.text_ent.color = color.rgba(255, 80, 0, int(255 * alpha))
         elif self.is_kill:
             self.text_ent.color = color.rgba(255, 255, 0, int(255 * alpha))
@@ -2316,6 +2363,14 @@ class Game:
         self.combo_timer = 0.0
         self.combo_display_timer = 0.0
         self.max_combo = 0  # Track highest combo reached in this run
+
+        # Multi-Kill system — tracks rapid kills within a short window for
+        # dramatic announcements ("DOUBLE KILL!", "TRIPLE KILL!", etc.)
+        self.multi_kill_count = 0           # Kills in the current window
+        self.multi_kill_timer = 0.0         # Time remaining in the current window
+        self.multi_kill_announce_timer = 0.0  # How long the announcement stays visible
+        self.multi_kill_announce_text = ''    # Current announcement text
+        self.multi_kill_announce_scale = 1.0  # Current announcement scale (for pop animation)
 
         # Kill feed: list of (timestamp, text) entries
         self.kill_feed = []
@@ -2791,7 +2846,7 @@ class Game:
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
-                      'boss_tension_vignette'):
+                      'boss_tension_vignette', 'multi_kill_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -3494,6 +3549,13 @@ class Game:
         self.combo_bar = Entity(model='quad', color=color.yellow, scale=(0.22, 0.012),
                                 position=(0.35, 0.255), parent=camera.ui, origin=(0, 0), visible=False, z=-0.01)
 
+        # Multi-Kill announcement — large dramatic text that pops in when you
+        # kill 2+ enemies in rapid succession (Double Kill, Triple Kill, etc.)
+        self.multi_kill_text = Text(
+            text='', position=(0, 0.12), scale=3.0, color=color.rgba(255, 100, 50, 0),
+            origin=(0, 0), visible=False,
+        )
+
         # Weapon upgrade indicator
         self.weapon_text = Text(text='', position=(-0.75, 0.29), scale=0.85, color=color.orange)
 
@@ -4141,6 +4203,41 @@ class Game:
             self.combo_bar.visible = False
             self.combo_bar_bg.visible = False
 
+        # ── Multi-Kill Announcement ── Display a dramatic announcement when
+        # the player kills 2+ enemies within a short time window. The text
+        # pops in with a scale overshoot and fades out smoothly, making AOE
+        # plays (Fireball Scroll, Pulse Wave) feel explosive and rewarding.
+        if self.multi_kill_announce_timer > 0:
+            self.multi_kill_text.visible = True
+            self.multi_kill_text.text = self.multi_kill_announce_text
+            # Pop animation: scale starts big and settles, then fades at the end
+            announce_progress = 1.0 - (self.multi_kill_announce_timer / MULTI_KILL_ANNOUNCE_DURATION)
+            if announce_progress < 0.2:
+                # Pop in with overshoot
+                pop_t = announce_progress / 0.2
+                scale = self.multi_kill_announce_scale * (0.5 + 0.5 * pop_t) * (1.0 + 0.3 * math.sin(pop_t * math.pi))
+            elif announce_progress < 0.7:
+                # Hold steady
+                scale = self.multi_kill_announce_scale
+            else:
+                # Fade out and shrink slightly
+                fade_t = (announce_progress - 0.7) / 0.3
+                scale = self.multi_kill_announce_scale * (1.0 - fade_t * 0.2)
+            self.multi_kill_text.scale = scale
+            # Alpha: full for first 70%, then fade out
+            if announce_progress < 0.7:
+                alpha = 255
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                alpha = int(255 * (1.0 - fade_t))
+            # Color shifts from orange-red to bright yellow for higher kill counts
+            if self.multi_kill_count >= 5:
+                self.multi_kill_text.color = color.rgba(255, 220, 50, alpha)
+            else:
+                self.multi_kill_text.color = color.rgba(255, 100, 50, alpha)
+        else:
+            self.multi_kill_text.visible = False
+
         # Weapon upgrade indicator
         if p.weapon_upgrade_timer > 0:
             self.weapon_text.text = f'SPREAD SHOT: {p.weapon_upgrade_timer:.1f}s'
@@ -4339,6 +4436,28 @@ class Game:
         # After pruning, all missions in the list are active (not turned_in)
         if len(self.missions) < 3:
             self._assign_missions(count=1)
+
+    def _register_kill(self):
+        """Track a kill for the Multi-Kill announcement system.
+
+        Called from every kill site (projectile, fireball AOE, pulse wave).
+        Counts kills within a MULTI_KILL_WINDOW-second window and triggers
+        a dramatic announcement when 2+ kills happen in rapid succession.
+        """
+        self.multi_kill_count += 1
+        self.multi_kill_timer = MULTI_KILL_WINDOW
+        # Only announce when we hit 2+ kills in the window
+        if self.multi_kill_count >= 2:
+            name = MULTI_KILL_NAMES.get(self.multi_kill_count, MULTI_KILL_MAX_NAME)
+            self.multi_kill_announce_text = name
+            self.multi_kill_announce_timer = MULTI_KILL_ANNOUNCE_DURATION
+            # Bigger announcements for higher kill counts
+            self.multi_kill_announce_scale = 2.5 + min(self.multi_kill_count, 8) * 0.3
+            # Bonus particles for multi-kills
+            if self.multi_kill_count >= 3:
+                self._spawn_particles(self.player.position + Vec3(0, 2, 0),
+                                      color.rgb(255, 100, 50), count=8)
+                self.screen_shake = max(self.screen_shake, 0.2)
 
     def _check_achievements(self):
         """Check all achievement conditions and unlock any that are met."""
@@ -4765,12 +4884,13 @@ def game_update():
             if heal_amount > 0:
                 p.hp += heal_amount
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(50, 255, 120), count=4)
-                game.damage_numbers.append(DamageNumber(p.position, heal_amount, is_kill=False, is_crit=False))
-                # Green text for healing — Bug fix: DamageNumber uses self.world_pos and
-                # self.text_ent, not self.position and self.text_entity. Also, float Vec3
-                # equality comparison is unreliable, so color the damage number directly.
-                heal_dn = game.damage_numbers[-1]
-                heal_dn.text_ent.color = color.green
+                # Healing number — uses is_heal=True so DamageNumber renders it green
+                # with a "+" prefix and never overrides the color during update().
+                # BUG FIX: Previously the color was set after construction but
+                # DamageNumber.update() overrides text_ent.color every frame based
+                # on is_kill/is_crit/is_overkill flags — all False for heals — so
+                # the number was always rendered white, ignoring the green override.
+                game.damage_numbers.append(DamageNumber(p.position, heal_amount, is_heal=True))
 
     # Lucky Clover timer — boost critical hit chance
     if p.crit_boost_timer > 0:
@@ -4808,6 +4928,14 @@ def game_update():
     # Now it's only decremented here in game_update().
     if game.combo_display_timer > 0:
         game.combo_display_timer -= time.dt
+
+    # Multi-Kill timer — counts down the window for chaining rapid kills
+    if game.multi_kill_timer > 0:
+        game.multi_kill_timer -= time.dt
+        if game.multi_kill_timer <= 0:
+            game.multi_kill_count = 0  # Window expired, reset the counter
+    if game.multi_kill_announce_timer > 0:
+        game.multi_kill_announce_timer -= time.dt
 
     # Track whether player is actually moving (for squish/stretch animation)
     p.is_moving = move_dir.length() > 0 and p.dash_timer <= 0
@@ -5169,6 +5297,7 @@ def game_update():
                                 if other_killed:
                                     p.add_kill(other_enemy.name)
                                     game.total_kills += 1
+                                    game._register_kill()
                                     xp_gain = BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR
                                     p.gain_xp(xp_gain)
                                     p.score += other_enemy.max_hp
@@ -5571,6 +5700,7 @@ def game_update():
                                 p.add_kill(nearby_enemy.name)
                                 game.total_kills += 1
                                 game.combo_count += 1
+                                game._register_kill()
                                 game.max_combo = max(game.max_combo, game.combo_count)
                                 game.combo_timer = COMBO_TIMEOUT
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
@@ -5600,6 +5730,7 @@ def game_update():
                     is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                     p.add_kill(enemy.name)
                     game.total_kills += 1
+                    game._register_kill()
                     # Kill flash — brief white screen flash for satisfying feedback
                     game.kill_flash_timer = KILL_FLASH_DURATION
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
@@ -5794,6 +5925,7 @@ def game_update():
                     p.add_kill(enemy.name)
                     game.total_kills += 1
                     game.combo_count += 1
+                    game._register_kill()
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
@@ -6436,6 +6568,8 @@ def game_update():
             if heal_amt > 0:
                 p.hp += heal_amt
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 100), count=3)
+                # Show a green healing number so the player sees the heal value
+                game.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
 
     # ── Spawn Heal Zone Ring Pulse ──
     if hasattr(game, 'spawn_heal_ring') and game.spawn_heal_ring:
