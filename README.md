@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.15.0 — 3D!)
+## Features (v2.15.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -53,7 +53,7 @@ python game.py
 - **Fireball Scroll** — projectiles explode on impact, dealing 50% damage to all enemies within a 4-unit blast radius for 8 seconds! Orange aura visual effect
 - **Regen Crystal** — regenerates 8 HP per second for 10 seconds! Green glow visual effect
 - **Lucky Clover** — boosts critical hit chance by +35% for 8 seconds (stacks with base 15% for 50% total)! Bright green aura ring and power-up HUD indicator
-- **Combo system** — chain kills within 4.5 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red). **Combo milestone fireworks** at x5, x10, x15... — colorful particle bursts erupt around Zorp for hitting kill streak milestones! **At x10+ combo, projectiles gain +25% damage** — a rewards skillful chains with raw firepower
+- **Combo system** — chain kills within 5.0 seconds for XP and score multipliers! +15% XP and +8% score per combo tier. **Visual combo timer bar** shows time remaining before combo resets (green → yellow → red). **Combo milestone fireworks** at x5, x10, x15... — colorful particle bursts erupt around Zorp for hitting kill streak milestones! **At x10+ combo, projectiles gain +25% damage** — a rewards skillful chains with raw firepower
 - **Portal system** — 4 pairs of linked portals scattered across the world for fast travel!
 - **Wandering Traders** — friendly alien NPCs that wander the world! Trade 5 Space Gloop for rare items
 - **Alien Monoliths** — mysterious ancient structures in crystal and snow biomes that grant random buffs when approached! Speed Surge (1.5x speed), Power Surge (1.4x damage), or Wisdom Aura (2x XP) for 10 seconds
@@ -227,7 +227,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 
 ## Combo System
 
-Chain kills within 4.5 seconds to build combos! Each combo tier grants:
+Chain kills within 5.0 seconds to build combos! Each combo tier grants:
 - **+15% XP bonus** per tier (up to 10 tiers)
 - **+8% score bonus** per tier (up to 10 tiers)
 - **+25% projectile damage** at combo x10+!
@@ -335,6 +335,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.15.1 — Ability Cooldown Bars, Combo Timing & Dash Camera
+- **Ability Cooldown Bars**: Dash and Pulse Wave now display a visual progress bar beneath their HUD text that fills left-to-right as the cooldown counts down. The bar color smoothly shifts from dim blue/teal to bright cyan as the ability nears readiness, so you can see at a glance how soon an ability will be available — no more squinting at decimal countdown numbers during intense combat. When the ability is ready, the bar disappears entirely
+- **More forgiving combo window**: The combo reset timeout has been increased from 4.5s to 5.0s, giving players slightly more breathing room to chain kills. This makes it easier to maintain combos during natural combat flow (finding the next enemy, repositioning) without the combo silently expiring, while still rewarding active engagement
+- **Tighter dash camera tracking**: The camera now uses a faster lerp speed (12.0 vs the normal 6.0) while Zorp is dashing, so the camera keeps up with the burst of speed instead of lagging behind. Combined with the existing dash FOV zoom, dashing now feels like a cohesive speed rush — you see where you're going, not where you were
 
 ### v2.15.0 — Multi-Kill Announcements, HP Bar Scaling & Healing Fix
 - **Multi-Kill Announcement System**: When you kill 2+ enemies within a 1.5-second window, a dramatic announcement pops up on the HUD — "DOUBLE KILL!", "TRIPLE KILL!", "QUAD KILL!", "PENTA KILL!", "HEXA KILL!", "ULTRA KILL!", "MEGA KILL!", and "RAMPAGE!" for 9+ rapid kills. The text pops in with a scale overshoot animation and fades out smoothly. Higher multi-kills (5+) shift from orange-red to bright yellow and trigger bonus orange particles + screen shake. This rewards explosive AOE plays with Fireball Scrolls and Pulse Waves, giving you satisfying feedback for clearing groups of enemies rapidly. The system tracks kills across all sources (projectiles, fireball AOE, pulse wave, Void Bomber friendly fire) and is independent from the existing combo system

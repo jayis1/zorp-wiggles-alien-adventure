@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.15.0"
+VERSION = "2.15.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -274,9 +274,21 @@ DASH_TRAIL_PARTICLES = 6
 DASH_FOV_ZOOM = 85          # FOV during dash (wider for speed feel)
 DASH_FOV_NORMAL = 75        # Normal gameplay FOV
 DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
+DASH_CAMERA_LERP_SPEED = 12.0  # Tighter camera follow during dash (faster than normal 6.0)
 DASH_INVULN_DURATION = 0.3  # Seconds of invulnerability during dash — makes dash a dodge tool
 DASH_READY_FLASH_DURATION = 0.4  # How long the dash-ready flash pulse lasts
 DASH_READY_FLASH_COLOR = color.rgba(0, 255, 255, 0)  # Brief cyan flash when dash comes off cooldown
+
+# ─── Ability Cooldown Bars ──────────────────────────────────────────────────────
+# Visual progress bars beneath the dash and pulse wave HUD text that fill up
+# as the ability comes off cooldown — so players can see at a glance how close
+# a cooldown is to finishing instead of only reading a number.
+ABILITY_BAR_BG_COLOR = color.rgba(60, 60, 60, 180)
+ABILITY_BAR_FILL_COLOR = color.rgba(0, 255, 255, 220)  # Cyan for dash
+ABILITY_BAR_WIDTH = 0.18
+ABILITY_BAR_HEIGHT = 0.01
+ABILITY_BAR_POS_DASH = (-0.65, 0.345)     # Beneath the dash HUD text
+ABILITY_BAR_POS_PULSE = (-0.65, 0.185)    # Beneath the pulse wave HUD text
 
 # ─── Power-Up Durations ───────────────────────────────────────────────────────
 SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
@@ -285,7 +297,7 @@ SHIELD_DURATION = 5.0                    # Longer shield — 4s was too brief to
 HEALTH_POTION_HEAL = 55                 # More healing — 50 felt underwhelming for mid-game enemies
 
 # ─── Combo System ────────────────────────────────────────────────────────────
-COMBO_TIMEOUT = 4.5        # seconds before combo resets (tightened from 5.0 for more skillful chaining)
+COMBO_TIMEOUT = 5.0        # seconds before combo resets (slightly more forgiving for smoother chaining)
 COMBO_XP_BONUS_PER_TIER = 0.15  # +15% XP per combo tier (up from 12% — rewards skillful chains)
 COMBO_SCORE_BONUS_PER_TIER = 0.08  # +8% score per combo tier (up from 6%)
 COMBO_DISPLAY_LIFETIME = 2.5
@@ -2846,7 +2858,8 @@ class Game:
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
-                      'boss_tension_vignette', 'multi_kill_text'):
+                      'boss_tension_vignette', 'multi_kill_text',
+                      'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -3539,6 +3552,31 @@ class Game:
             scale=(0.2, 0.035),
             position=(-0.65, 0.37),
         )
+
+        # Ability cooldown bars — visual progress bars beneath the dash and
+        # pulse wave HUD text. The bars fill left-to-right as the cooldown
+        # counts down so players can see at a glance how soon an ability will
+        # be ready, instead of only reading a numeric countdown.
+        self.dash_cd_bar_bg = Entity(
+            parent=camera.ui, model='quad', color=ABILITY_BAR_BG_COLOR,
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=ABILITY_BAR_POS_DASH, origin=(-0.5, 0), visible=False,
+        )
+        self.dash_cd_bar = Entity(
+            parent=camera.ui, model='quad', color=ABILITY_BAR_FILL_COLOR,
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=ABILITY_BAR_POS_DASH, origin=(-0.5, 0), visible=False, z=-0.01,
+        )
+        self.pulse_cd_bar_bg = Entity(
+            parent=camera.ui, model='quad', color=ABILITY_BAR_BG_COLOR,
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=ABILITY_BAR_POS_PULSE, origin=(-0.5, 0), visible=False,
+        )
+        self.pulse_cd_bar = Entity(
+            parent=camera.ui, model='quad', color=color.rgba(0, 255, 200, 220),
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=ABILITY_BAR_POS_PULSE, origin=(-0.5, 0), visible=False, z=-0.01,
+        )
         self.powerup_text = Text(text='', position=(-0.75, 0.33), scale=0.85, color=color.green)
 
         # Combo counter display
@@ -4106,9 +4144,21 @@ class Game:
         if p.dash_cooldown > 0:
             self.dash_text.text = f'DASH: {p.dash_cooldown:.1f}s'
             self.dash_text.color = color.gray
+            # Cooldown bar — fills left-to-right as cooldown progresses
+            cd_ratio = max(0, 1.0 - (p.dash_cooldown / DASH_COOLDOWN))
+            self.dash_cd_bar_bg.visible = True
+            self.dash_cd_bar.visible = True
+            self.dash_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
+            # Color shifts from dim blue → bright cyan as it nears ready
+            fill_r = int(0 + 0 * cd_ratio)
+            fill_g = int(120 + 135 * cd_ratio)
+            fill_b = int(160 + 95 * cd_ratio)
+            self.dash_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
         else:
             self.dash_text.text = 'DASH READY'
             self.dash_text.color = color.cyan
+            self.dash_cd_bar_bg.visible = False
+            self.dash_cd_bar.visible = False
 
         # ── Dash Ready Flash ── Brief cyan pulse behind the dash text when
         # the dash cooldown ends, so the player notices it's available again
@@ -4352,9 +4402,21 @@ class Game:
         if self.pulse_wave_cooldown > 0:
             self.pulse_wave_text.text = f'PULSE: {self.pulse_wave_cooldown:.1f}s'
             self.pulse_wave_text.color = color.gray
+            # Cooldown bar — fills left-to-right as cooldown progresses
+            cd_ratio = max(0, 1.0 - (self.pulse_wave_cooldown / PULSE_WAVE_COOLDOWN))
+            self.pulse_cd_bar_bg.visible = True
+            self.pulse_cd_bar.visible = True
+            self.pulse_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
+            # Color shifts from dim teal → bright teal-green as it nears ready
+            fill_r = int(0 + 0 * cd_ratio)
+            fill_g = int(120 + 135 * cd_ratio)
+            fill_b = int(140 + 60 * cd_ratio)
+            self.pulse_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
         else:
             self.pulse_wave_text.text = 'PULSE READY [Q]'
             self.pulse_wave_text.color = color.rgb(0, 255, 200)
+            self.pulse_cd_bar_bg.visible = False
+            self.pulse_cd_bar.visible = False
 
         # ── Spawn Healing Zone Indicator ──
         spawn_cx = WORLD_SIZE // 2 * TILE_SCALE
@@ -5101,6 +5163,9 @@ def game_update():
             game.level_up_text.visible = False
 
     # ── Camera Follow with Screen Shake ──
+    # During dash, use a tighter lerp so the camera keeps up with Zorp's burst
+    # of speed instead of lagging behind and losing sight of the action.
+    cam_lerp = DASH_CAMERA_LERP_SPEED if p.dash_timer > 0 else CAMERA_LERP_SPEED
     target_pos = p.position + Vec3(0, 0, 0)
     shake_offset = Vec3(0, 0, 0)
     if game.screen_shake > 0.01:
@@ -5112,7 +5177,7 @@ def game_update():
         game.screen_shake -= game.screen_shake * SCREEN_SHAKE_DECAY * time.dt
     else:
         game.screen_shake = 0
-    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * CAMERA_LERP_SPEED) + shake_offset
+    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset
 
     # ── Update Enemies ──
     for enemy in game.enemies[:]:
