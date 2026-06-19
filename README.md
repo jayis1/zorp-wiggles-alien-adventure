@@ -33,12 +33,12 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.15.2 — 3D!)
+## Features (v2.16.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
-- **17 collectible item types** — including **11 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!)
-- **17 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!)
+- **17 collectible item types** — including **12 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!), **Mirror Shard** (reflects enemy projectiles back at them for 6 seconds!)
+- **18 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!), **Echo Wraith** (spawns decoy clones that confuse the player!)
 - **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
@@ -338,6 +338,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.16.0 — Mirror Shard, Echo Wraith & Healing Crystal Shrines
+- **Mirror Shard (New Collectible)**: A rare collectible that reflects enemy projectiles back at the nearest enemy for 6 seconds! Spore Spitter shots and Starburst Sentinel shockwave rings bounce off Zorp's silver aura and streak back toward their senders with 150% increased damage. The silver pulsing aura around Zorp and ground powerup ring make it visually clear when the reflection is active. Added to collectible weights, rarity tiers, trader trade items, and HUD powerup displays
+- **Echo Wraith (New Enemy)**: A medium-difficulty enemy (HP 65, speed 4.5, damage 16) with a cyan diamond model and glowing aura. Every 5-9 seconds when aggroed, it spawns 2-3 semi-transparent decoy clones that drift, bob, spin, and fade out over 4 seconds. The clones have red eyes for visual mimicry, confusing the player about which wraith is the real one. Clones are visual-only (no damage or collision) but create a disorienting combat experience. Properly cleaned up on enemy death
+- **Healing Crystal Shrine (New World Feature)**: Glowing green crystal shrines found in mushroom and swamp biomes (far from spawn) that instantly heal 80 HP when the player approaches within 4.5 units. Each shrine has a 60-second cooldown between activations (won't waste a cooldown if you're at full HP). The central diamond crystal pulses vibrant green when ready and dims to gray during cooldown, with a rotating ring, ground glow, and 4 corner crystals making each shrine a distinct landmark. On activation, the crystal flashes white, emits healing particles, and shows a green healing number. Added to world generation, cleanup, and the update loop with smooth animations
 
 ### v2.15.2 — Heal Flash, Spawn Ring & Potion Priority Glow
 - **Heal Pickup Green Flash**: When you pick up a Health Potion while at low HP (below 40%), the screen edges now briefly flash green — a satisfying "you're saved!" visual cue that makes clutch heals feel rewarding and distinct from regular item pickups. The flash is a separate green overlay (distinct from the rare-item color flash) that fades smoothly over 0.4 seconds, so grabbing a heal at the last second against a Plasma Drake feels like a genuine rescue moment

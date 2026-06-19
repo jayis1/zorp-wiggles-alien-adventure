@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.15.2"
+VERSION = "2.16.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -79,6 +79,7 @@ ENEMY_LOOT_DROPS = {
     'Plasma Serpent':      (3, 5),   # Mid-hard: head splits into segments
     'Graviton':            (2, 4),   # Mid: drops moderate loot
     'Void Wisp':           (1, 3),   # Easy-mid: elusive, drops modest loot
+    'Echo Wraith':         (2, 4),   # Mid: decoy-spawning, drops moderate loot
 }
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
@@ -340,8 +341,8 @@ KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite', 'Void Wisp']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton', 'Void Wisp']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent', 'Graviton']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton', 'Void Wisp', 'Echo Wraith']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent', 'Graviton', 'Echo Wraith']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
@@ -497,6 +498,7 @@ COLLECTIBLE_WEIGHTS = {
     'Fireball Scroll': 4,   # Rare — projectiles explode on impact
     'Regen Crystal':  6,    # Uncommon — regenerates HP over time
     'Lucky Clover':   5,    # Uncommon — boosts critical hit chance
+    'Mirror Shard':   4,    # Rare — reflects enemy projectiles
 }
 
 # ─── Collectible Rarity Tiers ────────────────────────────────────────────────
@@ -518,6 +520,7 @@ RARITY_TIER = {
     'Fireball Scroll': 'rare',
     'Regen Crystal':  'uncommon',
     'Lucky Clover':   'uncommon',
+    'Mirror Shard':   'rare',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
 }
@@ -799,6 +802,33 @@ COMBO_MILESTONE_PARTICLES = 25      # Particle burst count at combo milestones
 ACHIEVEMENT_POPUP_DURATION = 4.0    # How long achievement popup stays visible
 ACHIEVEMENT_PANEL_MAX_SHOWN = 8     # Max achievements shown in panel
 
+# ─── Mirror Shard (New Collectible) ────────────────────────────────────────
+# Reflects enemy projectiles back toward the nearest enemy instead of
+# taking damage. A silver protective ring appears around Zorp while active.
+MIRROR_SHARD_DURATION = 6.0          # Duration of projectile reflection
+MIRROR_REFLECT_SPEED = 30            # Speed of reflected projectiles
+
+# ─── Echo Wraith (New Enemy) ────────────────────────────────────────────────
+# Spawns temporary decoy clones when it detects the player. Clones are
+# visual-only (no damage), fade out after a few seconds, and create
+# confusion by mimicking the wraith's appearance. Medium difficulty.
+ECHO_WRAITH_CLONE_INTERVAL_MIN = 5.0  # Min seconds between clone spawns
+ECHO_WRAITH_CLONE_INTERVAL_MAX = 9.0 # Max seconds between clone spawns
+ECHO_WRAITH_CLONE_LIFETIME = 4.0     # How long each decoy clone lives
+ECHO_WRAITH_CLONE_ALPHA = 80         # Alpha of decoy clones (semi-transparent)
+
+# ─── Healing Crystal Shrine (New World Feature) ────────────────────────────
+# Glowing crystal shrines found in mushroom and swamp biomes that heal the
+# player when approached. Unlike monoliths (which grant buffs), shrines
+# provide a substantial instant heal on a long cooldown — a safe haven
+# in dangerous biomes far from spawn.
+HEALING_SHRINE_SPAWN_CHANCE_MUSHROOM = 0.05  # Chance per mushroom tile
+HEALING_SHRINE_SPAWN_CHANCE_SWAMP = 0.04     # Chance per swamp tile
+HEALING_SHRINE_HEAL_AMOUNT = 80              # HP restored per activation
+HEALING_SHRINE_COOLDOWN = 60.0               # Seconds between activations
+HEALING_SHRINE_ACTIVATE_RANGE = 4.5           # How close the player must be
+HEALING_SHRINE_MIN_DIST_FROM_SPAWN = 50       # Min distance from spawn center
+
 BIOME_COLORS = {
     'grass':   C_GRASS,
     'desert':  C_DESERT,
@@ -960,6 +990,9 @@ class Player(Entity):
         # Lucky Clover timer — boosts critical hit chance
         self.crit_boost_timer = 0.0
 
+        # Mirror Shard timer — reflects enemy projectiles back at enemies
+        self.mirror_timer = 0.0
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -996,6 +1029,10 @@ class Player(Entity):
         # Lucky Clover crit aura visual (invisible by default)
         self.crit_visual = Entity(model='sphere', color=color.rgba(50, 255, 50, 50),
                                   scale=1.4, parent=self, visible=False)
+
+        # Mirror Shard reflective aura visual (invisible by default) — silver ring
+        self.mirror_visual = Entity(model='sphere', color=color.rgba(200, 230, 255, 50),
+                                    scale=1.7, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
         self.ground_shadow = Entity(
@@ -1191,6 +1228,7 @@ class Enemy(Entity):
         'Plasma Serpent':   {'color': color.rgb(0, 255, 200),       'hp': 120,  'speed': 3.5,'damage': 20, 'scale': 1.0,  'model': 'sphere', 'decor': 'aura', 'detect': 34},
         'Graviton':         {'color': color.rgb(180, 0, 255),       'hp': 75,   'speed': 2.8,'damage': 10, 'scale': 1.5,  'model': 'sphere', 'decor': 'aura', 'detect': 30},
         'Void Wisp':        {'color': color.rgba(100, 255, 200, 160), 'hp': 18,  'speed': 8,  'damage': 5,  'scale': 0.4,  'model': 'sphere', 'decor': 'aura', 'detect': 26},
+        'Echo Wraith':      {'color': color.rgb(120, 200, 220),       'hp': 65,  'speed': 4.5,'damage': 16, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura', 'detect': 30},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -1292,6 +1330,13 @@ class Enemy(Entity):
         self.is_void_wisp = (enemy_type == 'Void Wisp')
         self.wisp_teleport_cooldown = 0.0  # Cooldown between teleport-on-hit
         self.wisp_just_teleported = False  # Flag set by take_damage, read by game_update
+
+        # Echo Wraith: spawns decoy clones to confuse the player
+        self.is_echo_wraith = (enemy_type == 'Echo Wraith')
+        self.echo_clone_timer = random.uniform(
+            ECHO_WRAITH_CLONE_INTERVAL_MIN, ECHO_WRAITH_CLONE_INTERVAL_MAX
+        ) if self.is_echo_wraith else 0
+        self.echo_clone_entities = []  # Active decoy clone Entity objects
         # Visual indicator ring for gravity pull (hidden by default)
         if self.is_graviton:
             self.pull_ring = Entity(
@@ -1537,6 +1582,7 @@ class Collectible(Entity):
         'Fireball Scroll': {'color': color.rgb(255, 80, 20),  'value': 25,  'model': 'diamond'},
         'Regen Crystal':  {'color': color.rgb(50, 255, 120),  'value': 20,  'model': 'diamond'},
         'Lucky Clover':   {'color': color.rgb(50, 255, 50),   'value': 20,  'model': 'diamond'},
+        'Mirror Shard':   {'color': color.rgb(200, 230, 255), 'value': 25,  'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -2014,6 +2060,112 @@ class AlienMonolith:
         self.runes.clear()
 
 
+# ─── Healing Crystal Shrine (World Feature) ──────────────────────────────────
+class HealingCrystalShrine:
+    """A glowing crystal shrine that heals the player when approached.
+
+    Shrines are found in mushroom and swamp biomes — biomes that are far
+    from the spawn healing zone. When the player approaches within range,
+    the shrine instantly restores a substantial amount of HP, then enters
+    a long cooldown. A safe haven deep in dangerous territory.
+
+    Unlike Alien Monoliths (which grant temporary buffs), shrines provide
+    a direct instant heal — a different kind of reward for exploration.
+    """
+
+    def __init__(self, position):
+        self.position = position
+        self.cooldown = 0.0  # Seconds until next activation
+        self.bob_offset = random.uniform(0, math.pi * 2)
+        self.glow_phase = random.uniform(0, math.pi * 2)
+
+        # Base platform — a short stone-like cube
+        self.base = Entity(
+            model='cube',
+            color=color.rgb(60, 80, 60),
+            position=position + Vec3(0, 0.5, 0),
+            scale=(2.0, 1.0, 2.0),
+        )
+
+        # Central healing crystal — tall glowing green diamond
+        self.crystal = Entity(
+            model='diamond',
+            color=color.rgb(100, 255, 150),
+            position=position + Vec3(0, 3, 0),
+            scale=1.5,
+        )
+
+        # Floating ring around the shrine — rotates slowly
+        self.ring = Entity(
+            model='quad',
+            color=color.rgba(100, 255, 150, 60),
+            position=position + Vec3(0, 2.5, 0),
+            scale=3.5,
+            rotation_x=90,
+        )
+
+        # Ground glow disc — soft green light on the ground
+        self.ground_glow = Entity(
+            model='quad',
+            color=color.rgba(100, 255, 150, 30),
+            position=position + Vec3(0, 0.05, 0),
+            scale=5.0,
+            rotation_x=90,
+        )
+
+        # Four small corner crystals for decoration
+        self.corner_crystals = []
+        for angle_deg in [45, 135, 225, 315]:
+            rad = math.radians(angle_deg)
+            cc = Entity(
+                model='diamond',
+                color=color.rgb(120, 220, 160),
+                position=position + Vec3(math.cos(rad) * 1.5, 1.2, math.sin(rad) * 1.5),
+                scale=0.6,
+            )
+            self.corner_crystals.append(cc)
+
+    def animate(self, t):
+        """Animate shrine: pulse crystal, rotate ring, update cooldown."""
+        # Pulse the central crystal
+        pulse = 0.85 + 0.3 * math.sin(t * 2.5 + self.glow_phase)
+        self.crystal.scale = 1.5 * pulse
+
+        # Rotate ring slowly
+        self.ring.rotation_y += 60 * time.dt
+
+        # Update cooldown
+        if self.cooldown > 0:
+            self.cooldown -= time.dt
+            # Dimmed/dormant state — crystal is gray
+            dim_alpha = int(30 + 15 * math.sin(t * 1.5))
+            self.crystal.color = color.rgb(80, 100, 90)
+            self.ring.color = color.rgba(80, 100, 90, dim_alpha)
+            self.ground_glow.color = color.rgba(80, 100, 90, 12)
+            self.base.color = color.rgb(50, 60, 50)
+            for cc in self.corner_crystals:
+                cc.color = color.rgb(80, 100, 90)
+        else:
+            # Active state — vibrant green glow
+            bright_a = int(60 + 30 * math.sin(t * 3))
+            self.crystal.color = color.rgb(100, 255, 150)
+            self.ring.color = color.rgba(100, 255, 150, bright_a)
+            self.ground_glow.color = color.rgba(100, 255, 150, 35)
+            self.base.color = color.rgb(60, 80, 60)
+            for cc in self.corner_crystals:
+                cc.color = color.rgb(120, 220, 160)
+
+    def destroy_all(self):
+        """Clean up all shrine entities."""
+        destroy(self.base)
+        destroy(self.crystal)
+        destroy(self.ring)
+        destroy(self.ground_glow)
+        for cc in self.corner_crystals:
+            destroy(cc)
+        self.corner_crystals.clear()
+
+
 # ─── Wandering Trader (NPC) ──────────────────────────────────────────────────
 class Trader(Entity):
     """A friendly alien NPC that wanders the world and trades Space Gloop for rare items.
@@ -2023,7 +2175,7 @@ class Trader(Entity):
     5 Space Gloop into a random rare item.
     """
 
-    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover']
+    TRADE_ITEMS = ['Meteor Shard', 'Quantum Fuzz', 'Shield Crystal', 'Weapon Upgrade', 'Nebula Dust', 'Magnet Core', 'Time Warp', 'Star Fruit', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover', 'Mirror Shard']
 
     def __init__(self, position, name=None):
         if name is None:
@@ -2415,6 +2567,7 @@ class Game:
         self.portals = []          # Portal pairs for fast travel
         self.traders = []          # Wandering Trader NPCs
         self.monoliths = []        # Alien Monoliths — world structures granting buffs
+        self.shrines = []           # Healing Crystal Shrines — instant heal structures
         self.trader_spawn_timer = TRADER_RESPAWN_TIME / 2  # Initial spawn delay
         self.time_warp_timer = 0   # Time Warp slow-mo for enemies
         self.missions = []
@@ -2504,6 +2657,7 @@ class Game:
         self._spawn_portals()
         self._spawn_initial_traders()
         self._spawn_monoliths()
+        self._spawn_shrines()
         self._assign_missions(count=3)
 
         # Lighting — NOTE: Ursina entities use unlit_with_fog_shader by default,
@@ -2766,6 +2920,12 @@ class Game:
         if hasattr(enemy, 'pull_ring') and enemy.pull_ring is not None:
             destroy(enemy.pull_ring)
             enemy.pull_ring = None
+        # Clean up Echo Wraith decoy clones if present
+        if hasattr(enemy, 'echo_clone_entities') and enemy.echo_clone_entities:
+            for clone in enemy.echo_clone_entities:
+                if clone and hasattr(clone, 'enabled') and clone.enabled:
+                    destroy(clone)
+            enemy.echo_clone_entities.clear()
         destroy(enemy.eye_l)
         destroy(enemy.eye_r)
         destroy(enemy.hp_bar_bg)
@@ -2874,6 +3034,11 @@ class Game:
         for monolith in self.monoliths:
             monolith.destroy_all()
         self.monoliths.clear()
+
+        # Destroy healing crystal shrines
+        for shrine in self.shrines:
+            shrine.destroy_all()
+        self.shrines.clear()
 
         # Destroy terrain and decoration entities
         for t in self.terrain_entities:
@@ -3590,6 +3755,32 @@ class Game:
         if len(self.messages) > 50:
             self.messages = self.messages[-50:]
 
+    def _spawn_shrines(self):
+        """Spawn Healing Crystal Shrines in mushroom and swamp biomes.
+
+        Shrines provide an instant heal when approached (on a long cooldown),
+        serving as safe havens in dangerous biomes far from the spawn healing
+        zone. They appear less frequently than monoliths for balance.
+        """
+        spawn_center = WORLD_SIZE // 2 * TILE_SCALE
+        for gx in range(WORLD_SIZE):
+            for gz in range(WORLD_SIZE):
+                biome = self.world_grid[gz][gx]
+                if biome == 'mushroom' and random.random() < HEALING_SHRINE_SPAWN_CHANCE_MUSHROOM:
+                    wx = gx * TILE_SCALE
+                    wz = gz * TILE_SCALE
+                    dist_from_spawn = math.sqrt((wx - spawn_center) ** 2 + (wz - spawn_center) ** 2)
+                    if dist_from_spawn > HEALING_SHRINE_MIN_DIST_FROM_SPAWN and self._is_walkable(wx, wz):
+                        shrine = HealingCrystalShrine(position=Vec3(wx, 0, wz))
+                        self.shrines.append(shrine)
+                elif biome == 'swamp' and random.random() < HEALING_SHRINE_SPAWN_CHANCE_SWAMP:
+                    wx = gx * TILE_SCALE
+                    wz = gz * TILE_SCALE
+                    dist_from_spawn = math.sqrt((wx - spawn_center) ** 2 + (wz - spawn_center) ** 2)
+                    if dist_from_spawn > HEALING_SHRINE_MIN_DIST_FROM_SPAWN and self._is_walkable(wx, wz):
+                        shrine = HealingCrystalShrine(position=Vec3(wx, 0, wz))
+                        self.shrines.append(shrine)
+
     def _create_hud(self):
         """Create HUD elements as UI entities."""
         self.hp_bar_bg = Entity(parent=camera.ui, model='quad', color=color.dark_gray,
@@ -4294,6 +4485,8 @@ class Game:
             pu_lines.append(f'REGEN: {p.regen_timer:.1f}s')
         if p.crit_boost_timer > 0:
             pu_lines.append(f'LUCKY CLOVER: {p.crit_boost_timer:.1f}s')
+        if p.mirror_timer > 0:
+            pu_lines.append(f'MIRROR SHARD: {p.mirror_timer:.1f}s')
         self.powerup_text.text = '  |  '.join(pu_lines)
         self.powerup_text.color = color.green if pu_lines else color.gray
 
@@ -4401,6 +4594,8 @@ class Game:
             effect_lines.append(f'FIREBALL: {p.fireball_timer:.1f}s')
         if p.regen_timer > 0:
             effect_lines.append(f'REGEN: {p.regen_timer:.1f}s')
+        if p.mirror_timer > 0:
+            effect_lines.append(F'MIRROR: {p.mirror_timer:.1f}s')
         self.effect_text.text = '  |  '.join(effect_lines)
         if p.drain_timer > 0:
             self.effect_text.color = color.rgb(200, 0, 200)
@@ -4410,6 +4605,8 @@ class Game:
             self.effect_text.color = color.rgb(255, 80, 20)
         elif p.regen_timer > 0:
             self.effect_text.color = color.rgb(50, 255, 120)
+        elif p.mirror_timer > 0:
+            self.effect_text.color = color.rgb(200, 230, 255)
         else:
             self.effect_text.color = color.gray
 
@@ -4941,6 +5138,11 @@ def game_update():
         # Pulsing bright green glow
         p.crit_visual.scale = 1.4 + math.sin(game.t * 6) * 0.12
 
+    # Mirror Shard reflective aura visual update — silver pulsing sphere
+    p.mirror_visual.visible = p.mirror_timer > 0
+    if p.mirror_timer > 0:
+        p.mirror_visual.scale = 1.7 + math.sin(game.t * 8) * 0.15
+
     # Power-up aura ring — shows a pulsing ground ring in the color of the active buff
     # Priority: shield (cyan) > speed (green) > magnet (purple) > weapon (orange) > fireball (red)
     # The ring makes active buffs immediately visible without reading the HUD.
@@ -4959,6 +5161,8 @@ def game_update():
         powerup_ring_color = (50, 255, 120)  # Soft green for regen
     elif p.crit_boost_timer > 0:
         powerup_ring_color = (50, 255, 50)   # Bright green for Lucky Clover crit boost
+    elif p.mirror_timer > 0:
+        powerup_ring_color = (200, 230, 255)  # Silver for Mirror Shard reflection
     elif p.monolith_damage_timer > 0:
         powerup_ring_color = (255, 50, 50)  # Red for damage buff
     elif p.monolith_xp_timer > 0:
@@ -5061,6 +5265,10 @@ def game_update():
     # Lucky Clover timer — boost critical hit chance
     if p.crit_boost_timer > 0:
         p.crit_boost_timer -= time.dt
+
+    # Mirror Shard timer — reflects enemy projectiles
+    if p.mirror_timer > 0:
+        p.mirror_timer -= time.dt
 
     # Cosmic Leech drain DoT — deals damage over time
     if p.drain_timer > 0:
@@ -5761,6 +5969,72 @@ def game_update():
         if enemy.is_void_wisp and enemy.wisp_teleport_cooldown > 0:
             enemy.wisp_teleport_cooldown -= time.dt
 
+        # ── Echo Wraith: Spawn decoy clones when aggroed ──
+        # Creates semi-transparent visual-only duplicates nearby that fade
+        # out after a few seconds, confusing the player about which wraith
+        # is the real one. Clones have no collision and deal no damage.
+        if enemy.is_echo_wraith and enemy.alerted and enemy.alive and not enemy.dying:
+            if dist_to_player < AI_CULL_RANGE:
+                enemy.echo_clone_timer -= time.dt
+                if enemy.echo_clone_timer <= 0:
+                    enemy.echo_clone_timer = random.uniform(
+                        ECHO_WRAITH_CLONE_INTERVAL_MIN, ECHO_WRAITH_CLONE_INTERVAL_MAX
+                    )
+                    # Spawn 2-3 decoy clones near the wraith
+                    num_clones = random.randint(2, 3)
+                    for ci in range(num_clones):
+                        clone_angle = random.uniform(0, math.pi * 2)
+                        clone_dist = random.uniform(3, 7)
+                        cx = enemy.x + math.cos(clone_angle) * clone_dist
+                        cz = enemy.z + math.sin(clone_angle) * clone_dist
+                        cx = max(5, min(cx, (WORLD_SIZE - 5) * TILE_SCALE))
+                        cz = max(5, min(cz, (WORLD_SIZE - 5) * TILE_SCALE))
+                        if game._is_walkable(cx, cz):
+                            clone = Entity(
+                                model='diamond',
+                                color=color.rgba(120, 200, 220, ECHO_WRAITH_CLONE_ALPHA),
+                                scale=enemy.original_scale * 0.9,
+                                position=Vec3(cx, 1, cz),
+                            )
+                            clone._clone_lifetime = ECHO_WRAITH_CLONE_LIFETIME
+                            clone._clone_max_lifetime = ECHO_WRAITH_CLONE_LIFETIME
+                            clone._clone_drift_dir = Vec3(
+                                random.uniform(-1, 1), 0, random.uniform(-1, 1)
+                            ).normalized()
+                            # Small eyes on the clone for visual mimicry
+                            clone_eye_l = Entity(model='sphere', color=color.rgba(255, 0, 0, ECHO_WRAITH_CLONE_ALPHA),
+                                                  scale=0.3, parent=clone, position=(-0.25, 0.4, -0.5))
+                            clone_eye_r = Entity(model='sphere', color=color.rgba(255, 0, 0, ECHO_WRAITH_CLONE_ALPHA),
+                                                  scale=0.3, parent=clone, position=(0.25, 0.4, -0.5))
+                            enemy.echo_clone_entities.append(clone)
+                    game._spawn_particles(enemy.position, color.rgba(120, 200, 220, 150), count=8)
+            # Update active clones: drift, fade, and expire
+            expired_clones = []
+            for clone in enemy.echo_clone_entities:
+                clone._clone_lifetime -= time.dt
+                if clone._clone_lifetime <= 0 or not clone.enabled:
+                    expired_clones.append(clone)
+                    continue
+                # Drift slowly in a random direction
+                clone.position += clone._clone_drift_dir * 1.5 * time.dt
+                # Gentle bob
+                clone.y = 1 + math.sin(game.t * 3 + id(clone) % 100) * 0.2
+                # Spin slowly
+                clone.rotation_y += 60 * time.dt
+                # Fade out as lifetime decreases
+                fade_ratio = clone._clone_lifetime / clone._clone_max_lifetime
+                fade_alpha = max(0, min(255, int(ECHO_WRAITH_CLONE_ALPHA * fade_ratio)))
+                er, eg, eb = _c255_color(enemy.original_color)
+                clone.color = color.rgba(er, eg, eb, fade_alpha)
+            for clone in expired_clones:
+                if clone and hasattr(clone, 'enabled') and clone.enabled:
+                    # Destroy child eyes first
+                    for child in list(clone.children):
+                        if hasattr(child, 'enabled') and child.enabled:
+                            destroy(child)
+                    destroy(clone)
+                enemy.echo_clone_entities.remove(clone)
+
         # Hit scale punch: brief size increase on hit for satisfying impact feedback
         if enemy.hit_scale_punch > 0:
             enemy.hit_scale_punch -= time.dt * ENEMY_HIT_SCALE_RECOVERY
@@ -6014,6 +6288,41 @@ def game_update():
         # Check collision with player
         dist = (eproj.position - p.position).length()
         if dist < ENEMY_PROJECTILE_HIT_RADIUS:
+            # ── Mirror Shard Reflection ── If active, reflect the projectile
+            # back toward the nearest enemy instead of taking damage. The
+            # reflected projectile becomes a player-owned Projectile that can
+            # damage enemies, turning enemy fire against them.
+            if p.mirror_timer > 0:
+                # Find the nearest enemy to reflect the projectile toward
+                nearest_enemy = None
+                nearest_dist_sq = float('inf')
+                for e in game.enemies:
+                    if not e.alive or e.dying:
+                        continue
+                    edx = e.x - p.x
+                    edz = e.z - p.z
+                    e_dist_sq = edx * edx + edz * edz
+                    if e_dist_sq < nearest_dist_sq:
+                        nearest_dist_sq = e_dist_sq
+                        nearest_enemy = e
+                if nearest_enemy is not None:
+                    # Reflect: create a player projectile aimed at the nearest enemy
+                    reflect_dir = (nearest_enemy.position - p.position).normalized()
+                    reflect_dir.y = 0
+                    reflect_proj = Projectile(
+                        position=p.position + Vec3(0, 1, 0) + reflect_dir * 1.0,
+                        direction=reflect_dir,
+                        damage=int(eproj.damage * 1.5),  # Reflected shots deal 50% bonus
+                        speed=MIRROR_REFLECT_SPEED,
+                    )
+                    game.projectiles.append(reflect_proj)
+                    # Visual feedback — silver sparkle burst at reflection point
+                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(200, 230, 255), count=10)
+                    game.hit_ripples.append(HitRipple(p.position + Vec3(0, 0, 0), col=color.rgba(200, 230, 255, 200)))
+                    game.add_message("Reflected!")
+                    destroy(eproj)
+                    game.enemy_projectiles.remove(eproj)
+                    continue
             if p.shield_timer > 0:
                 # Shield blocks enemy projectile
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
@@ -6049,6 +6358,37 @@ def game_update():
         if abs(ring_dist - ring.current_radius) < ring_thickness:
             # Bug fix: only hit the player once per ring, not every frame
             if not ring.hit_player and p.invuln_timer <= 0:
+                # ── Mirror Shard Reflection ── If active, the shockwave ring is
+                # reflected — no damage to player, and a burst of silver particles
+                # plus a reflected projectile is fired at the nearest enemy.
+                if p.mirror_timer > 0:
+                    ring.hit_player = True  # Consume the ring
+                    # Find nearest enemy for the reflected shot
+                    nearest_enemy = None
+                    nearest_dist_sq = float('inf')
+                    for e in game.enemies:
+                        if not e.alive or e.dying:
+                            continue
+                        edx = e.x - p.x
+                        edz = e.z - p.z
+                        e_dist_sq = edx * edx + edz * edz
+                        if e_dist_sq < nearest_dist_sq:
+                            nearest_dist_sq = e_dist_sq
+                            nearest_enemy = e
+                    if nearest_enemy is not None:
+                        reflect_dir = (nearest_enemy.position - p.position).normalized()
+                        reflect_dir.y = 0
+                        reflect_proj = Projectile(
+                            position=p.position + Vec3(0, 1, 0) + reflect_dir * 1.0,
+                            direction=reflect_dir,
+                            damage=int(ring.damage * 1.5),
+                            speed=MIRROR_REFLECT_SPEED,
+                        )
+                        game.projectiles.append(reflect_proj)
+                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(200, 230, 255), count=10)
+                    game.hit_ripples.append(HitRipple(p.position + Vec3(0, 0, 0), col=color.rgba(200, 230, 255, 200)))
+                    game.add_message("Reflected!")
+                    continue
                 ring.hit_player = True
                 if p.shield_timer > 0:
                     game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
@@ -6350,6 +6690,11 @@ def game_update():
                 game.add_message(f"Lucky Clover! +{int(LUCKY_CLOVER_CRIT_BONUS * 100)}% crit for {LUCKY_CLOVER_DURATION:.0f}s!")
                 game._spawn_particles(col.position, color.rgb(50, 255, 50), count=16)
                 game.screen_shake = max(game.screen_shake, 0.15)
+            elif col.name == 'Mirror Shard':
+                p.mirror_timer = MIRROR_SHARD_DURATION
+                game.add_message(f"Mirror Shard! Reflecting projectiles for {MIRROR_SHARD_DURATION:.0f}s!")
+                game._spawn_particles(col.position, color.rgb(200, 230, 255), count=16)
+                game.screen_shake = max(game.screen_shake, 0.15)
             else:
                 p.add_item(col.name)
                 p.score += col.value
@@ -6374,7 +6719,7 @@ def game_update():
                     game.particles.append((bp, bvel, random.uniform(0.4, 1.0)))
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover', 'Mirror Shard'):
                 p.score += col.value
                 p.gain_xp(max(1, col.value // 10))
             # Start pop animation instead of immediate destroy
@@ -6760,6 +7105,29 @@ def game_update():
         p.monolith_damage_timer -= time.dt
     if p.monolith_xp_timer > 0:
         p.monolith_xp_timer -= time.dt
+
+    # ── Healing Crystal Shrine Animation & Activation ──
+    for shrine in game.shrines:
+        shrine.animate(game.t)
+        # Check if player is within activation range
+        dist_to_shrine = math.sqrt((shrine.position.x - p.x) ** 2 + (shrine.position.z - p.z) ** 2)
+        if dist_to_shrine < HEALING_SHRINE_ACTIVATE_RANGE and shrine.cooldown <= 0:
+            # Activate! Instant heal the player
+            heal_amt = min(HEALING_SHRINE_HEAL_AMOUNT, p.max_hp - p.hp)
+            if heal_amt > 0:
+                p.hp += heal_amt
+                shrine.cooldown = HEALING_SHRINE_COOLDOWN
+                game.add_message(f"Healing Shrine! +{heal_amt} HP!")
+                game._spawn_particles(shrine.position + Vec3(0, 3, 0), color.rgb(100, 255, 150), count=25)
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 150), count=15)
+                game.screen_shake = max(game.screen_shake, 0.2)
+                game.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
+                # Flash the shrine crystal bright white briefly
+                shrine.crystal.color = color.white
+                invoke(setattr, shrine.crystal, 'color', color.rgb(100, 255, 150), delay=0.3)
+            else:
+                # Player is at full HP — don't waste the cooldown
+                game.add_message("Healing Shrine ready (full HP)!")
 
     # ── Time Warp visual effect on enemies ──
     if game.time_warp_timer > 0:
