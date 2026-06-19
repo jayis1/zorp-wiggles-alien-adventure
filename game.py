@@ -2055,7 +2055,10 @@ class ProjectileTrail(Entity):
         self.scale = current_scale
         # Fade alpha out over lifetime
         alpha = max(0, int(200 * (1.0 - progress)))
-        r, g, b = int(self.color[0]), int(self.color[1]), int(self.color[2])
+        # BUG FIX: Use _c255_color() to normalize — self.color may be a named
+        # color (0-1 range) or color.rgb() (0-255 range). int() on 0-1 values
+        # gives 0 or 1, making the trail invisible. Same fix pattern as HitRipple.
+        r, g, b = _c255_color(self.color)
         self.color = color.rgba(r, g, b, alpha)
         return False
 
@@ -4150,10 +4153,10 @@ class Game:
             self.dash_cd_bar.visible = True
             self.dash_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
             # Color shifts from dim blue → bright cyan as it nears ready
-            fill_r = int(0 + 0 * cd_ratio)
+            # fill_r is always 0 (cyan has no red component)
             fill_g = int(120 + 135 * cd_ratio)
             fill_b = int(160 + 95 * cd_ratio)
-            self.dash_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
+            self.dash_cd_bar.color = color.rgb(0, fill_g, fill_b)
         else:
             self.dash_text.text = 'DASH READY'
             self.dash_text.color = color.cyan
@@ -4408,10 +4411,10 @@ class Game:
             self.pulse_cd_bar.visible = True
             self.pulse_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
             # Color shifts from dim teal → bright teal-green as it nears ready
-            fill_r = int(0 + 0 * cd_ratio)
+            # fill_r is always 0 (teal has no red component)
             fill_g = int(120 + 135 * cd_ratio)
             fill_b = int(140 + 60 * cd_ratio)
-            self.pulse_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
+            self.pulse_cd_bar.color = color.rgb(0, fill_g, fill_b)
         else:
             self.pulse_wave_text.text = 'PULSE READY [Q]'
             self.pulse_wave_text.color = color.rgb(0, 255, 200)
@@ -4660,7 +4663,11 @@ def game_update():
             game.screen_shake -= game.screen_shake * SCREEN_SHAKE_DECAY * time.dt
         else:
             game.screen_shake = 0
-        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * CAMERA_LERP_SPEED) + shake_offset
+        # BUG FIX: use dash-aware camera lerp so the camera keeps up with Zorp
+        # during a dash even while hit-stop freeze is active. Without this, a
+        # kill during a dash caused the camera to lag behind at normal speed.
+        cam_lerp = DASH_CAMERA_LERP_SPEED if p.dash_timer > 0 else CAMERA_LERP_SPEED
+        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset
         # Still update particles and damage numbers during freeze
         i = 0
         while i < len(game.particles):
@@ -4979,6 +4986,14 @@ def game_update():
     # Time Warp timer — slows all enemies
     if game.time_warp_timer > 0:
         game.time_warp_timer -= time.dt
+
+    # Pulse Wave cooldown — BUG FIX: this was never decremented, so once the
+    # player used Pulse Wave it stayed on cooldown forever and could never be
+    # used again. Now it counts down like the dash cooldown.
+    if game.pulse_wave_cooldown > 0:
+        game.pulse_wave_cooldown -= time.dt
+        if game.pulse_wave_cooldown < 0:
+            game.pulse_wave_cooldown = 0
 
     # Combo timer
     if game.combo_timer > 0:
@@ -5955,6 +5970,16 @@ def game_update():
         if ripple.update_ripple(time.dt):
             destroy(ripple)
             game.hit_ripples.remove(ripple)
+
+    # ── Pulse Wave Ring Update ── BUG FIX: ring update_ring() was only called
+    # during hit-stop freeze (a 0.08s window after kills), so in normal gameplay
+    # the rings never expanded, never faded, and never expired — making Pulse
+    # Wave completely useless and leaking entities. Now update and remove expired
+    # rings every frame in the main loop.
+    for pwr in game.pulse_wave_rings[:]:
+        if pwr.update_ring(time.dt):
+            destroy(pwr)
+            game.pulse_wave_rings.remove(pwr)
 
     # ── Pulse Wave Enemy Interaction ──
     # The expanding pulse ring pushes enemies away and deals minor damage.
