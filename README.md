@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.14.0 — 3D!)
+## Features (v2.14.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -148,6 +148,10 @@ python game.py
 - **XP bar gain flash** — every time Zorp gains XP, the XP bar briefly flashes brighter and pulses in scale, making progression feel tangible and rewarding. You see and feel each XP gain instead of the bar silently filling — kills, collectibles, and XP orbs all trigger a satisfying flash
 - **Boss proximity tension vignette** — a subtle red screen-edge tint pulses when a Plasma Drake is nearby, building atmospheric tension before you even see the boss HP bar. The pulse intensifies as the boss's HP drops, making wounded bosses feel more dangerous and desperate — a dramatic atmospheric cue for boss encounters
 - **Enemy low-HP warning pulse** — when an enemy's HP drops below 25%, its HP bar pulses bright red with a subtle scale jitter (throbbing effect). This creates a clear "finish them off" visual cue — you can instantly see which enemies are about to die, making it easier to prioritize targets and adding urgency to landing the final blow
+- **Rarity-based collectible bob & spin** — rarer collectibles bob higher and spin faster! A mythic Plasma Core bobs 3x higher and spins 3x faster than common Space Gloop, making valuable items visually distinct and enticing from a distance
+- **Player idle breathing** — when standing still, Zorp gently breathes with a subtle 3% scale oscillation, making the character feel alive rather than frozen between movements
+- **Enemy materialization burst** — when enemies materialize from spawn warnings, a vertical column of red-tinted particles shoots upward, making spawns feel dramatic and giving a clear visual cue that something just appeared
+- **Rarity-scaled pickup feedback** — picking up more valuable items produces a bigger particle burst and stronger screen shake, scaled by rarity tier. Grabbing a mythic item feels dramatically more rewarding than picking up common junk
 
 ## The Self-Improving Game
 
@@ -328,6 +332,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.14.1 — Rarity Visual Polish, Idle Breathing & Spawn Impact
+- **Rarity-based bob & spin**: Collectibles now bob higher and spin faster based on their rarity tier! A mythic Plasma Core bobs 3x higher and spins 3x faster than common Space Gloop, making rare items visually distinct and more enticing from a distance. You'll *see* that legendary item dancing in the field before you even notice its glow ring
+- **Player idle breathing**: When Zorp stands still, the model gently breathes — a subtle 3% Y-scale oscillation that makes the character feel alive rather than frozen between movements. The breathing composes cleanly with the existing squish/stretch, level-up bounce, and damage punch animations
+- **Enemy materialization burst**: When an enemy materializes from a spawn warning, a vertical column of red-tinted particles shoots upward from the ground, making the spawn feel more dramatic and giving a clear "something just appeared here" visual cue. No more enemies silently popping into existence — you see the impact of their arrival
+- **Rarity-scaled pickup feedback**: Picking up more valuable items now produces a bigger particle burst and stronger screen shake, scaled by rarity tier. Grabbing a Plasma Core (mythic) triggers a 3x particle burst and 5.5x screen shake compared to common Space Gloop — making rare finds feel viscerally more rewarding
 
 ### v2.14.0 — XP Flash, Boss Tension & Enemy Low-HP Cue
 - **XP Bar Gain Flash**: Every time Zorp gains XP — from kills, collectibles, XP Orbs, or trades — the XP bar now briefly flashes brighter (blending toward white-cyan) and pulses up in scale (1.4x peak) before settling back. This makes progression feel tangible and rewarding: you *see* and *feel* each XP gain instead of the bar silently filling. The flash decays smoothly over 0.35 seconds, and the flag-based trigger (set by `gain_xp()`, consumed by `_update_hud()`) means it fires on every XP source without modifying each call site individually

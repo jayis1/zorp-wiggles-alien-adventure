@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.14.0"
+VERSION = "2.14.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -612,6 +612,61 @@ ENEMY_LOW_HP_THRESHOLD = 0.25    # HP ratio below which the warning pulse activa
 ENEMY_LOW_HP_PULSE_SPEED = 8.0   # How fast the HP bar pulses when low
 ENEMY_LOW_HP_BAR_SCALE_PULSE = 0.15  # Scale jitter amount for the low-HP pulse
 
+# ─── Collectible Rarity Bob/Spin ──────────────────────────────────────────────
+# Rarer items bob higher and spin faster, making them visually distinct and
+# more enticing from a distance — a legendary Plasma Core should *look*
+# more exciting than common Space Gloop.
+RARITY_BOB_AMPLITUDE = {
+    'common':    0.4,   # Standard gentle bob
+    'uncommon':  0.5,   # Slightly more lively
+    'rare':      0.65,  # Noticeably higher bob
+    'very_rare': 0.8,   # Dramatic bob
+    'legendary': 1.0,   # Eye-catching high bob
+    'mythic':    1.2,   # Maximum drama — mythic items practically dance
+}
+RARITY_SPIN_SPEED = {
+    'common':    60,    # Degrees per second
+    'uncommon':  80,
+    'rare':     100,
+    'very_rare': 130,
+    'legendary': 160,
+    'mythic':    200,   # Mythic items spin fast, drawing attention
+}
+
+# ─── Player Idle Breathing ────────────────────────────────────────────────────
+# When Zorp stands still, the model gently breathes (subtle Y scale oscillation)
+# making the character feel alive rather than frozen between movements.
+PLAYER_IDLE_BREATHE_SPEED = 1.5  # How fast the breathing cycle is (slower = calmer)
+PLAYER_IDLE_BREATHE_AMOUNT = 0.03  # 3% scale variation — subtle but perceptible
+
+# ─── Enemy Materialization Burst ──────────────────────────────────────────────
+# When an enemy materializes from a spawn warning, a vertical burst of particles
+# shoots upward from the ground, making the spawn feel more dramatic and giving
+# the player a clear visual "something just appeared here" cue.
+ENEMY_MATERIALIZE_PARTICLE_COUNT = 8
+ENEMY_MATERIALIZE_BURST_UP_SPEED = 6.0
+
+# ─── Collectible Pickup Rarity Scaling ─────────────────────────────────────────
+# More valuable items produce a more satisfying pickup pop — bigger particle
+# burst and slightly stronger screen shake scale with rarity tier, so grabbing
+# a Plasma Core feels more rewarding than picking up Space Gloop.
+RARITY_PICKUP_SCREEN_SHAKE = {
+    'common':    0.08,
+    'uncommon':  0.12,
+    'rare':      0.18,
+    'very_rare': 0.25,
+    'legendary': 0.35,
+    'mythic':    0.45,
+}
+RARITY_PICKUP_PARTICLE_MULT = {
+    'common':    1.0,
+    'uncommon':  1.25,
+    'rare':      1.5,
+    'very_rare': 2.0,
+    'legendary': 2.5,
+    'mythic':    3.0,
+}
+
 # ─── Enemy Attack / Contact Constants ──────────────────────────────────────────
 SHIELD_BLOCK_PARTICLE_COUNT = 10  # Particle burst count when shield absorbs a hit
 ENEMY_PROJECTILE_HIT_RADIUS = 1.5  # How close an enemy projectile must be to hit the player
@@ -1011,6 +1066,13 @@ class Player(Entity):
         else:
             target_squish = 1.0
         self.squish_current += (target_squish - self.squish_current) * min(1.0, PLAYER_SQUISH_SPEED * time.dt)
+        # ── Idle Breathing ── When not moving, Zorp gently breathes — a subtle
+        # Y scale oscillation that makes the character feel alive rather than
+        # frozen between movements. Applied as a small multiplier on top of the
+        # normal scale so it composes cleanly with level-up bounce and damage punch.
+        breathe_mult = 1.0
+        if not self.is_moving:
+            breathe_mult = 1.0 + math.sin(t * PLAYER_IDLE_BREATHE_SPEED) * PLAYER_IDLE_BREATHE_AMOUNT
         # Level-up bounce: exponential decay scale multiplier for satisfying pop
         bounce_mult = 1.0
         if self.level_up_scale_timer > 0:
@@ -1019,7 +1081,7 @@ class Player(Entity):
             # Elastic ease-out: starts big, overshoots, then settles to 1.0
             bounce_mult = 1.0 + (LEVEL_UP_SCALE_BOUNCE_FACTOR - 1.0) * math.exp(-5.0 * progress) * math.cos(progress * math.pi * 1.5)
             bounce_mult = max(1.0, bounce_mult)
-        y_scale = 1.2 * self.squish_current * bounce_mult
+        y_scale = 1.2 * self.squish_current * bounce_mult * breathe_mult
         xz_scale = 1.0 / self.squish_current  # Inverse for XZ to preserve volume
         # Apply dash landing squish on top of the normal animation.
         # Recovers exponentially so it's a quick pop-then-fade, not a linger.
@@ -1426,6 +1488,10 @@ class Collectible(Entity):
         self.glow_pulse_speed = glow_cfg['pulse_speed']
         self.glow_min_scale = glow_cfg['min_scale']
         self.glow_max_scale = glow_cfg['max_scale']
+        # Rarity-based bob amplitude and spin speed — rarer items bob higher
+        # and spin faster, making them visually distinct and more enticing.
+        self.bob_amplitude = RARITY_BOB_AMPLITUDE.get(self.rarity, 0.4)
+        self.spin_speed = RARITY_SPIN_SPEED.get(self.rarity, 60)
         # Glow ring — alpha scales with rarity
         # BUG FIX: Use _c255_color() to normalize — info['color'] may be a named
         # color (0-1 range, e.g. color.orange) or color.rgb() (0-255 range).
@@ -1468,8 +1534,8 @@ class Collectible(Entity):
             self.glow.visible = True
             self.spawn_timer = -1  # Mark as done
             self.spawn_just_finished = True  # Signal game loop to emit spawn sparkle
-        self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * 0.4
-        self.rotation_y += 60 * time.dt
+        self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * self.bob_amplitude
+        self.rotation_y += self.spin_speed * time.dt
         # Rarity-scaled glow pulse — faster pulse and wider range for rarer items
         pulse = self.glow_min_scale + (self.glow_max_scale - self.glow_min_scale) * (0.5 + 0.5 * math.sin(t * self.glow_pulse_speed + self.bob_offset))
         self.glow.scale = pulse
@@ -5931,7 +5997,24 @@ def game_update():
                 p.add_item(col.name)
                 p.score += col.value
                 p.gain_xp(max(1, col.value // 10))
-                game._spawn_collect_burst(col.position, col.item_color)
+                # ── Rarity-Scaled Pickup Burst ── More valuable items produce a
+                # bigger particle burst — grabbing a Plasma Core should feel
+                # more rewarding than picking up Space Gloop.
+                particle_mult = RARITY_PICKUP_PARTICLE_MULT.get(col.rarity, 1.0)
+                burst_count = max(1, int(PARTICLE_COLLECT_COUNT * particle_mult))
+                # Spawn the burst directly for fine control over count
+                burst_count_capped = min(burst_count, MAX_PARTICLES - len(game.particles))
+                cr, cg, cb = _c255_color(col.item_color)
+                for bi in range(burst_count_capped):
+                    angle = (bi / max(1, burst_count_capped)) * math.pi * 2
+                    spread = random.uniform(1.5, 3.5)
+                    bvel = Vec3(math.cos(angle) * spread, random.uniform(2, 5), math.sin(angle) * spread)
+                    r_var = max(0, min(255, int(cr * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+                    g_var = max(0, min(255, int(cg * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+                    b_var = max(0, min(255, int(cb * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
+                    bp = Entity(model='sphere', color=color.rgb(r_var, g_var, b_var),
+                                scale=random.uniform(0.15, 0.35), position=col.position)
+                    game.particles.append((bp, bvel, random.uniform(0.4, 1.0)))
                 game.add_message(f"Found {col.name}! +{col.value} pts")
             # For power-ups, also give points
             if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover'):
@@ -5941,8 +6024,12 @@ def game_update():
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
             game.total_items_collected += 1
-            # Brief screen flash on pickup for satisfying feedback
-            game.screen_shake = max(game.screen_shake, 0.08)
+            # ── Rarity-Scaled Screen Shake ── The base screen shake on pickup now
+            # scales with rarity tier: common items get a tiny 0.08 shake, while
+            # mythic items get a dramatic 0.45 shake. This makes grabbing a Plasma
+            # Core feel viscerally more rewarding than picking up Space Gloop.
+            rarity_shake = RARITY_PICKUP_SCREEN_SHAKE.get(col.rarity, 0.08)
+            game.screen_shake = max(game.screen_shake, rarity_shake)
             # ── Rare Collectible Pickup Flash ── For rare-or-better items, flash
             # the screen edges with the item's color so valuable finds feel
             # special instead of identical to common junk.
@@ -5952,8 +6039,8 @@ def game_update():
                 ir, ig, ib = _c255_color(col.item_color)
                 game.rare_pickup_flash_color = (ir, ig, ib)
                 game.rare_pickup_flash_timer = RARE_PICKUP_FLASH_DURATION
-                # Slightly stronger screen shake for rare pickups
-                game.screen_shake = max(game.screen_shake, 0.15)
+                # The rarity-scaled shake above already handles this — no need
+                # for an additional hardcoded shake here.
 
     # ── Update Particles ──
     # Bug fix: must update the tuple in-place; Python tuple unpacking creates local copies
@@ -6076,6 +6163,24 @@ def game_update():
             game.enemies.append(e)
             # Spawn flash particles at the materialization point
             game._spawn_particles(Vec3(ex, 1, ez), color.rgb(255, 100, 100), count=6)
+            # ── Materialization Burst ── A vertical column of particles shoots
+            # upward from the ground when the enemy materializes, making the
+            # spawn feel dramatic and giving a clear "something appeared here"
+            # visual cue. Uses red-tinted particles to match the spawn warning.
+            mat_count = min(ENEMY_MATERIALIZE_PARTICLE_COUNT, MAX_PARTICLES - len(game.particles))
+            for _ in range(mat_count):
+                mat_vel = Vec3(
+                    random.uniform(-2, 2),
+                    random.uniform(2, ENEMY_MATERIALIZE_BURST_UP_SPEED),
+                    random.uniform(-2, 2),
+                )
+                mat_p = Entity(
+                    model='sphere',
+                    color=color.rgb(255, random.randint(80, 140), random.randint(40, 80)),
+                    scale=random.uniform(0.1, 0.25),
+                    position=Vec3(ex, 0.5, ez),
+                )
+                game.particles.append((mat_p, mat_vel, random.uniform(0.3, 0.6)))
             destroy(sw)
             game.spawn_warnings.remove(sw)
 
