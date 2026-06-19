@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.15.1"
+VERSION = "2.15.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -599,6 +599,31 @@ SPARKLE_SCALE = 0.08              # Size of sparkle particles
 RARE_PICKUP_FLASH_DURATION = 0.35   # Seconds the pickup flash stays visible
 RARE_PICKUP_FLASH_MAX_ALPHA = 55     # Peak alpha of the pickup flash overlay
 RARE_PICKUP_TIER_THRESHOLD = 'rare'  # Minimum rarity tier that triggers the flash
+
+# ─── Heal Pickup Green Flash ──────────────────────────────────────────────────
+# When the player picks up a Health Potion while at low HP (below 40%), the
+# screen edges flash green briefly — a clear "you're saved!" feedback that
+# makes clutch heals feel rewarding and distinct from regular pickups.
+HEAL_FLASH_DURATION = 0.40          # Seconds the heal flash stays visible
+HEAL_FLASH_MAX_ALPHA = 70           # Peak alpha of the green heal flash overlay
+HEAL_FLASH_HP_THRESHOLD = 0.40      # HP ratio below which a heal flash triggers
+
+# ─── Collectible Spawn Ground Ring ────────────────────────────────────────────
+# When a collectible finishes its spawn-in animation, a brief expanding ground
+# ring in the item's color radiates outward — complementing the sparkle burst
+# with a ground-level visual that's visible even when looking down at the world.
+COLLECT_SPAWN_RING_DURATION = 0.45  # How long the spawn ring expands
+COLLECT_SPAWN_RING_START_SCALE = 0.5  # Starting scale of the spawn ring
+COLLECT_SPAWN_RING_MAX_SCALE = 2.5    # Max scale the spawn ring reaches
+COLLECT_SPAWN_RING_ALPHA = 140        # Starting alpha of the spawn ring
+
+# ─── Low-HP Health Potion Proximity Glow ──────────────────────────────────────
+# When the player is at low HP and a Health Potion is nearby, the potion's
+# glow ring pulses brighter and faster so it stands out as a priority target —
+# a subtle UX nudge that draws the player's eye toward the heal they need.
+LOW_HP_POTION_PROX_RADIUS = 12.0     # How close a Health Potion must be to glow
+LOW_HP_POTION_GLOW_BOOST = 1.8       # Brightness multiplier on the glow ring
+LOW_HP_POTION_PULSE_BOOST = 2.0      # Pulse speed multiplier when prioritized
 # Ordered rarity tiers so we can check >= rare
 RARITY_TIER_ORDER = ['common', 'uncommon', 'rare', 'very_rare', 'legendary', 'mythic']
 
@@ -1665,6 +1690,43 @@ class SpawnWarningRing(Entity):
         return False
 
 
+# ─── Collectible Spawn Ring ────────────────────────────────────────────────
+class CollectibleSpawnRing(Entity):
+    """A brief expanding ground ring that radiates outward when a collectible
+    finishes its spawn-in animation, in the item's color.
+
+    Complements the sparkle burst with a ground-level visual that's visible
+    even when looking down at the world from the third-person camera, making
+    respawned items feel more alive and polished.
+    """
+
+    def __init__(self, position, col):
+        cr, cg, cb = _c255_color(col)
+        super().__init__(
+            model='quad',
+            color=color.rgba(cr, cg, cb, COLLECT_SPAWN_RING_ALPHA),
+            scale=COLLECT_SPAWN_RING_START_SCALE,
+            position=position + Vec3(0, 0.1, 0),
+            rotation_x=90,
+        )
+        self.lifetime = COLLECT_SPAWN_RING_DURATION
+        self.max_lifetime = COLLECT_SPAWN_RING_DURATION
+        self._r, self._g, self._b = cr, cg, cb
+
+    def update_ring(self, dt):
+        """Expand and fade the ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to max scale
+        self.scale = COLLECT_SPAWN_RING_START_SCALE + (COLLECT_SPAWN_RING_MAX_SCALE - COLLECT_SPAWN_RING_START_SCALE) * progress
+        # Fade alpha out smoothly
+        alpha = max(0, int(COLLECT_SPAWN_RING_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(self._r, self._g, self._b, alpha)
+        return False
+
+
 # ─── Achievement ──────────────────────────────────────────────────────────
 class Achievement:
     """A milestone that unlocks when the player reaches a specific goal.
@@ -2394,6 +2456,7 @@ class Game:
         self.pulse_wave_cooldown = 0.0
         self.pulse_wave_rings = []
         self.spawn_warnings = []  # Enemy spawn warning rings
+        self.collect_spawn_rings = []  # Collectible spawn ground rings
 
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
@@ -2644,6 +2707,18 @@ class Game:
         self.rare_pickup_flash_timer = 0.0
         self.rare_pickup_flash_color = (255, 255, 255)
 
+        # Heal pickup green flash — screen-edge green flash when a Health Potion
+        # is picked up while at low HP, giving a clear "you're saved!" feedback
+        self.heal_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(80, 255, 120, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.5,
+        )
+        self.heal_flash_timer = 0.0
+
         # Damage direction indicator — red arrow pointing toward the source of damage
         self.damage_indicators = []  # List of (Entity, direction_vec, remaining_time) tuples
         self.damage_indicator_entities = []  # Arrow entities on the HUD
@@ -2762,6 +2837,12 @@ class Game:
                 destroy(sw)
         self.spawn_warnings.clear()
 
+        # Destroy collectible spawn rings
+        for csr in self.collect_spawn_rings:
+            if csr and hasattr(csr, 'enabled') and csr.enabled:
+                destroy(csr)
+        self.collect_spawn_rings.clear()
+
         # Destroy spawn healing zone ring
         if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
             destroy(self.spawn_heal_ring)
@@ -2862,7 +2943,8 @@ class Game:
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
                       'boss_tension_vignette', 'multi_kill_text',
-                      'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar'):
+                      'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
+                      'heal_flash'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -4081,6 +4163,16 @@ class Game:
         else:
             self.rare_pickup_flash.color = color.rgba(255, 255, 255, 0)
 
+        # Heal pickup green flash — fades smoothly when a Health Potion is
+        # picked up at low HP, giving a satisfying "saved!" visual cue
+        if self.heal_flash_timer > 0:
+            self.heal_flash_timer -= time.dt
+            flash_ratio = max(0, self.heal_flash_timer / HEAL_FLASH_DURATION)
+            flash_alpha = int(HEAL_FLASH_MAX_ALPHA * flash_ratio)
+            self.heal_flash.color = color.rgba(80, 255, 120, flash_alpha)
+        else:
+            self.heal_flash.color = color.rgba(80, 255, 120, 0)
+
         # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
         self.xp_bar.scale_x = 0.4 * xp_ratio
@@ -4696,6 +4788,11 @@ def game_update():
             if ripple.update_ripple(time.dt):
                 destroy(ripple)
                 game.hit_ripples.remove(ripple)
+        # Update collectible spawn rings during freeze (visual only)
+        for csr in game.collect_spawn_rings[:]:
+            if csr.update_ring(time.dt):
+                destroy(csr)
+                game.collect_spawn_rings.remove(csr)
         # Update pulse wave rings during freeze (visual only)
         for pwr in game.pulse_wave_rings[:]:
             if pwr.update_ring(time.dt):
@@ -5971,6 +6068,12 @@ def game_update():
             destroy(ripple)
             game.hit_ripples.remove(ripple)
 
+    # ── Update Collectible Spawn Rings ──
+    for csr in game.collect_spawn_rings[:]:
+        if csr.update_ring(time.dt):
+            destroy(csr)
+            game.collect_spawn_rings.remove(csr)
+
     # ── Pulse Wave Ring Update ── BUG FIX: ring update_ring() was only called
     # during hit-stop freeze (a 0.08s window after kills), so in normal gameplay
     # the rings never expanded, never faded, and never expired — making Pulse
@@ -6103,6 +6206,12 @@ def game_update():
                                    scale=random.uniform(0.06, 0.14),
                                    position=Vec3(col.x, col.y, col.z))
                     game.particles.append((spark, spark_vel, random.uniform(0.2, 0.4)))
+                # ── Collectible Spawn Ground Ring ── A brief expanding ring
+                # radiates outward from the item on the ground in the item's
+                # color, complementing the sparkle burst with a ground-level
+                # visual that's visible even when looking down at the world.
+                ring = CollectibleSpawnRing(position=Vec3(col.x, 0, col.z), col=col.item_color)
+                game.collect_spawn_rings.append(ring)
 
         # ── Rare Collectible Sparkle Trail ── Rare+ collectibles emit occasional
         # sparkle particles that drift upward, making valuable items more
@@ -6123,6 +6232,23 @@ def game_update():
                                      scale=SPARKLE_SCALE, position=spark_pos)
                     spark_vel = Vec3(random.uniform(-0.5, 0.5), SPARKLE_RISE_SPEED, random.uniform(-0.5, 0.5))
                     game.particles.append((sparkle, spark_vel, SPARKLE_LIFETIME))
+
+        # ── Low-HP Health Potion Proximity Glow ── When the player is at low HP
+        # and a Health Potion is nearby, boost the potion's glow ring brightness
+        # and pulse speed so it stands out as a priority target — a subtle UX
+        # nudge that draws the player's eye toward the heal they need.
+        if (near_player and col.name == 'Health Potion' and col.spawn_timer <= 0
+                and not col.popping
+                and p.hp < p.max_hp * LOW_HP_VIGNETTE_THRESHOLD
+                and dist_sq < LOW_HP_POTION_PROX_RADIUS * LOW_HP_POTION_PROX_RADIUS):
+            glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
+            boosted_pulse_speed = col.glow_pulse_speed * LOW_HP_POTION_PULSE_BOOST
+            pulse = col.glow_min_scale + (col.glow_max_scale - col.glow_min_scale) * (
+                0.5 + 0.5 * math.sin(game.t * boosted_pulse_speed + col.bob_offset))
+            col.glow.scale = pulse
+            boosted_alpha = min(255, int(glow_cfg['glow_alpha'] * LOW_HP_POTION_GLOW_BOOST))
+            ir, ig, ib = _c255_color(col.item_color)
+            col.glow.color = color.rgba(ir, ig, ib, boosted_alpha)
 
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction
@@ -6160,9 +6286,18 @@ def game_update():
         if dist_sq < effective_collect_radius * effective_collect_radius:
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
+                # Track HP ratio before heal for the low-HP heal flash trigger
+                hp_ratio_before = p.hp / p.max_hp if p.max_hp > 0 else 0
                 p.hp = min(p.hp + HEALTH_POTION_HEAL, p.max_hp)
                 game.add_message(f"Health Potion! +{HEALTH_POTION_HEAL} HP")
                 game._spawn_particles(col.position, color.rgb(255, 50, 50), count=12)
+                # ── Heal Pickup Green Flash ── If the player was at low HP when
+                # they grabbed the potion, flash the screen edges green — a
+                # satisfying "you're saved!" cue that makes clutch heals feel
+                # rewarding and distinct from regular pickups.
+                if hp_ratio_before < HEAL_FLASH_HP_THRESHOLD:
+                    game.heal_flash_timer = HEAL_FLASH_DURATION
+                    game.heal_flash.color = color.rgba(80, 255, 120, HEAL_FLASH_MAX_ALPHA)
             elif col.name == 'Speed Boost':
                 p.speed_boost_timer = SPEED_BOOST_DURATION
                 game.add_message(f"Speed Boost! {SPEED_BOOST_DURATION}s of speed!")

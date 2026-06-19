@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.15.1 — 3D!)
+## Features (v2.15.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -155,6 +155,9 @@ python game.py
 - **Multi-Kill announcement system** — kill 2+ enemies within 1.5 seconds to trigger dramatic announcements: DOUBLE KILL!, TRIPLE KILL!, QUAD KILL!, PENTA KILL!, up to RAMPAGE! for 9+ rapid kills! A large orange-red text pops in on the HUD with a scale overshoot animation, rewarding explosive AOE plays with Fireball Scrolls and Pulse Waves. Higher multi-kills shift to bright yellow and trigger bonus particles + screen shake
 - **Adaptive enemy HP bar scaling** — enemy HP bars now scale proportionally to enemy size, so tiny Swarm Mites and huge Plasma Drakes both get readable, consistently-sized HP bars. No more gigantic bars floating above tiny enemies or tiny bars on massive bosses
 - **Healing number fix & spawn zone heal numbers** — Regen Crystal healing now correctly displays green "+N" floating numbers (previously a bug made them render white). The spawn healing zone now also shows green heal numbers so you can see exactly how much HP you're regenerating while standing in the safe zone
+- **Heal pickup green flash** — when you grab a Health Potion while at low HP (below 40%), the screen edges briefly flash green — a satisfying "you're saved!" visual cue that makes clutch heals feel rewarding and distinct from regular item pickups
+- **Collectible spawn ground ring** — when a collectible finishes its spawn-in animation, a brief expanding ground ring in the item's color radiates outward, complementing the sparkle burst with a ground-level visual that's visible even when looking down at the world from the third-person camera
+- **Low-HP Health Potion proximity glow** — when your HP is critical and a Health Potion is nearby, the potion's glow ring pulses brighter and faster, drawing your eye toward the heal you need — a subtle UX nudge that makes prioritizing survival instinctive
 
 ## The Self-Improving Game
 
@@ -335,6 +338,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.15.2 — Heal Flash, Spawn Ring & Potion Priority Glow
+- **Heal Pickup Green Flash**: When you pick up a Health Potion while at low HP (below 40%), the screen edges now briefly flash green — a satisfying "you're saved!" visual cue that makes clutch heals feel rewarding and distinct from regular item pickups. The flash is a separate green overlay (distinct from the rare-item color flash) that fades smoothly over 0.4 seconds, so grabbing a heal at the last second against a Plasma Drake feels like a genuine rescue moment
+- **Collectible Spawn Ground Ring**: When a collectible finishes its spawn-in animation, a brief expanding ground ring in the item's color now radiates outward from the spawn point. This complements the existing sparkle burst with a ground-level visual that's visible even when looking down at the world from the third-person camera — so you notice items appearing beneath you instead of only spotting the upward sparkles. The ring expands over 0.45 seconds and fades smoothly
+- **Low-HP Health Potion Proximity Glow**: When your HP is critical (below 30%) and a Health Potion is nearby (within 12 units), the potion's glow ring now pulses 2x faster and 1.8x brighter than normal, drawing your eye toward the heal you need. This is a subtle UX nudge — instead of all items glowing identically when you're in danger, the Health Potion becomes visually prioritized, making survival instinctive rather than requiring you to scan every item's color
 
 ### v2.15.1 — Ability Cooldown Bars, Combo Timing & Dash Camera
 - **Ability Cooldown Bars**: Dash and Pulse Wave now display a visual progress bar beneath their HUD text that fills left-to-right as the cooldown counts down. The bar color smoothly shifts from dim blue/teal to bright cyan as the ability nears readiness, so you can see at a glance how soon an ability will be available — no more squinting at decimal countdown numbers during intense combat. When the ability is ready, the bar disappears entirely
