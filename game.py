@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.17.1"
+VERSION = "2.17.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -152,6 +152,14 @@ MUZZLE_FLASH_PLAYER_TINT_COLOR = color.rgb(180, 255, 255)  # Bright cyan-white
 # ─── Projectile Glow Aura ──────────────────────────────────────────────────────
 PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
 PROJECTILE_AURA_SCALE = 1.8                           # Aura sphere scale multiplier (relative to projectile)
+# Combo-scaling aura: as the combo grows, the projectile aura pulses faster and
+# brighter — the laser visually "charges up" during kill streaks, making high
+# combos feel more powerful and giving immediate visual feedback that you're on
+# a roll. The effect is subtle at low combos and dramatic at high combos.
+PROJECTILE_AURA_COMBO_TIER = 5          # Combo count needed to start scaling the aura
+PROJECTILE_AURA_PULSE_SPEED_BASE = 12.0  # Base aura pulse speed (low combo)
+PROJECTILE_AURA_PULSE_SPEED_MAX = 28.0    # Max aura pulse speed (high combo)
+PROJECTILE_AURA_SCALE_MAX = 2.6          # Max aura scale multiplier (high combo)
 
 # ─── Projectile Trail ────────────────────────────────────────────────────────
 PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
@@ -315,6 +323,8 @@ ABILITY_BAR_POS_PULSE = (-0.65, 0.185)    # Beneath the pulse wave HUD text
 SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
 SPEED_BOOST_MULTIPLIER = 1.8
 SHIELD_DURATION = 5.0                    # Longer shield — 4s was too brief to enjoy
+SHIELD_PULSE_WARNING_THRESHOLD = 1.5     # Seconds remaining before shield pulses warm/red
+SHIELD_PULSE_WARNING_SPEED = 14.0        # How fast the warning pulse accelerates near expiry
 HEALTH_POTION_HEAL = 55                 # More healing — 50 felt underwhelming for mid-game enemies
 
 # ─── Combo System ────────────────────────────────────────────────────────────
@@ -2450,20 +2460,29 @@ class Projectile(Entity):
         # Trail spawning timer
         self.trail_timer = 0.0
 
-    def move(self, dt):
+    def move(self, dt, combo_count=0):
         """Move the projectile forward. Returns False when lifetime expires.
 
         Also pulses the glow aura's alpha for a living energy-ball effect
-        rather than a static translucent sphere.
+        rather than a static translucent sphere. The pulse speed and aura
+        scale scale up with the player's combo count — at high combos the
+        laser visibly "charges up", pulsing faster and glowing larger so
+        kill streaks feel more powerful and give immediate visual feedback.
         """
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
-        # Pulse aura alpha for a subtle living glow
-        self._aura_phase += dt * 12.0
+        # Combo-scaling aura: pulse faster and grow larger at high combos
+        combo_t = max(0.0, min(1.0, (combo_count - PROJECTILE_AURA_COMBO_TIER) / 10.0))
+        pulse_speed = lerp(PROJECTILE_AURA_PULSE_SPEED_BASE, PROJECTILE_AURA_PULSE_SPEED_MAX, combo_t)
+        aura_scale_mult = lerp(1.0, PROJECTILE_AURA_SCALE_MAX / PROJECTILE_AURA_SCALE, combo_t)
+        self._aura_phase += dt * pulse_speed
         pulse = 0.5 + 0.5 * math.sin(self._aura_phase)
-        a = max(20, min(255, int(self.aura_base_alpha * (0.6 + 0.4 * pulse))))
+        # Brighten the aura as combo rises too — higher base alpha at high combos
+        alpha_floor = 0.6 + 0.3 * combo_t
+        a = max(20, min(255, int(self.aura_base_alpha * (alpha_floor + (1.0 - alpha_floor) * pulse))))
         r, g, b = _c255_color(PROJECTILE_AURA_COLOR)
         self.aura.color = color.rgba(r, g, b, a)
+        self.aura.scale = PROJECTILE_AURA_SCALE * aura_scale_mult
         return self.lifetime > 0
 
 
@@ -5378,8 +5397,26 @@ def game_update():
     p.shield_visual.visible = p.shield_timer > 0
     if p.shield_timer > 0:
         p.shield_timer -= time.dt
-        # Pulsing shield effect
-        p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
+        # ── Shield Expiry Warning Pulse ── When the shield is about to drop
+        # (below SHIELD_PULSE_WARNING_THRESHOLD seconds), the bubble pulses
+        # faster and shifts from cool cyan toward warm orange-red — a clear
+        # "protection is ending!" cue so the player can prepare instead of
+        # being caught off-guard when the shield suddenly disappears.
+        if p.shield_timer < SHIELD_PULSE_WARNING_THRESHOLD:
+            # Urgency scales with how close to expiry
+            urgency = 1.0 - (p.shield_timer / SHIELD_PULSE_WARNING_THRESHOLD)
+            pulse_speed = 8.0 + (SHIELD_PULSE_WARNING_SPEED - 8.0) * urgency
+            pulse = 0.5 + 0.5 * math.sin(game.t * pulse_speed)
+            # Blend shield color from cyan (100,200,255) toward warm red (255,100,60)
+            sr = int(100 + (255 - 100) * urgency * pulse)
+            sg = int(200 + (100 - 200) * urgency * pulse)
+            sb = int(255 + (60 - 255) * urgency * pulse)
+            sa = int(60 + 40 * pulse * urgency)
+            p.shield_visual.color = color.rgba(sr, sg, sb, sa)
+            p.shield_visual.scale = 1.6 + pulse * (0.1 + 0.2 * urgency)
+        else:
+            # Normal calm cyan pulse
+            p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
 
     # Fireball aura visual update
     p.fireball_visual.visible = p.fireball_timer > 0
@@ -6436,7 +6473,7 @@ def game_update():
 
     # ── Update Projectiles ──
     for proj in game.projectiles[:]:
-        alive = proj.move(time.dt)
+        alive = proj.move(time.dt, combo_count=game.combo_count)
         if not alive:
             # ── Projectile Expiry Fizz ── When a shot's lifetime expires without
             # hitting an enemy (a missed shot), emit a small cyan fizz particle
@@ -6490,10 +6527,22 @@ def game_update():
                     # Golden ripple for critical hits
                     game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 220, 80, 200)))
                 else:
-                    game._spawn_particles(enemy.position, color.yellow, count=PARTICLE_HIT_COUNT)
+                    # ── Enemy-Tinted Hit Particles ── Normal hits blend the
+                    # classic yellow impact color with the enemy's own color,
+                    # producing richer, more cohesive burst tones — hitting a
+                    # Lava Crawler yields orange-yellow sparks, hitting a Crystal
+                    # Guardian yields cyan-yellow, etc. This makes each impact
+                    # feel tailored to the target instead of generic yellow.
+                    er, eg, eb = _c255_color(enemy.original_color)
+                    blended = color.rgb(
+                        min(255, (er + 255) // 2),
+                        min(255, (eg + 200) // 2),
+                        (eb + 0) // 2,
+                    )
+                    game._spawn_particles(enemy.position, blended, count=PARTICLE_HIT_COUNT)
                     game.screen_shake = max(game.screen_shake, 0.15)
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
-                # White ripple for normal hits
+                    # White ripple for normal hits
                     game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 255, 220, 160)))
                 # Void Wisp teleport-on-hit: after taking damage, blink to a new position
                 if enemy.is_void_wisp and enemy.alive and enemy.wisp_just_teleported:

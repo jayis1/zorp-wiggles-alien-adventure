@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.17.1 — 3D!)
+## Features (v2.17.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -346,6 +346,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.17.2 — Combo-Charged Laser, Shield Warning Pulse & Enemy-Tinted Hit Particles
+- **Combo-charged projectile aura**: The tentacle laser's glow aura now scales with your combo count — at low combos it's the familiar calm cyan pulse, but as your kill streak grows past 5x the aura pulses faster (up to 28 Hz), grows larger (up to 2.6x scale), and brightens. The laser visually "charges up" during kill streaks, giving immediate visual feedback that you're on a roll and making high combos feel more powerful and electric. The effect is subtle at low combos (no visual change) and dramatic at high combos, so it rewards skilled play without distracting during normal combat
+- **Shield expiry warning pulse**: When the Shield Crystal power-up is about to expire (below 1.5 seconds remaining), the shield bubble now pulses faster (accelerating up to 14 Hz as it nears zero) and smoothly shifts color from cool cyan toward warm orange-red. This gives the player a clear "protection is ending!" visual cue so they can prepare — reposition, grab another Shield Crystal, or brace for damage — instead of being caught off-guard when the shield silently disappears. The urgency ramps with how close the timer is to zero, so the final second is a vivid red strobe
+- **Enemy-tinted hit particles**: Normal (non-crit) projectile hits now spawn impact particles that are a blend of the classic yellow impact color and the enemy's own color — hitting a Lava Crawler (orange) yields orange-yellow sparks, hitting a Crystal Guardian (cyan) yields cyan-yellow, hitting a Slime Blob (lime) yields green-yellow. This makes each impact feel tailored to the target instead of every hit producing identical generic yellow particles, adding visual variety and cohesion to combat feedback. Critical hits keep their distinctive gold particles
 
 ### v2.17.1 — Muzzle Flash Tint, Projectile Fizz & Enemy Alert Indicator
 - **Muzzle flash player tint**: Zorp's model now briefly flashes bright cyan-white on every shot, giving a visceral "firing" reaction on the character itself — not just a detached flash sphere. The tint lasts 0.06 seconds and is driven by a timer (`muzzle_tint_timer`) that the per-frame color logic respects, so it isn't immediately overridden by the normal green color or the low-HP danger pulse. It's automatically suppressed while invulnerable (blink) or under Cosmic Leech drain (purple pulse) so it never fights higher-priority color states. Combined with the existing crosshair recoil, every shot now feels punchier on both the HUD and the character model
