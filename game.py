@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.17.0"
+VERSION = "2.17.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -42,6 +42,14 @@ ENEMY_ATTACK_RANGE = 2.0            # Tighter melee range — more dodge room fo
 ENEMY_ATTACK_COOLDOWN = 1.2         # Slower enemy attacks — more readable patterns
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 ENEMY_SPAWN_GRACE_PERIOD = 2.0     # Seconds after spawn before enemies detect the player — prevents instant-aggro
+# ─── Enemy Alert Indicator ──────────────────────────────────────────────────────
+# When an enemy first detects the player, a brief "!" exclamation mark pops up
+# above its head (billboard text) so the player immediately knows they've been
+# spotted — complementing the existing body-color alert flash with a clear,
+# readable "aggroed!" cue that's visible even at distance or in crowded combat.
+ENEMY_ALERT_INDICATOR_DURATION = 0.6   # How long the "!" stays visible
+ENEMY_ALERT_INDICATOR_COLOR = color.rgb(255, 220, 40)  # Bright warning yellow
+ENEMY_ALERT_INDICATOR_SCALE = 1.4      # Text scale (world-space billboard)
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
 ENEMY_WANDER_SPEED_FACTOR = 0.20
@@ -135,6 +143,11 @@ PARTICLE_COLOR_VARIATION = 0.20      # ±20% random hue shift on each particle f
 MUZZLE_FLASH_DURATION = 0.08            # How long the muzzle flash is visible
 MUZZLE_FLASH_SCALE = 0.6                 # Size of the flash sphere
 MUZZLE_FLASH_PARTICLES = 4               # Extra particles on each shot
+# Muzzle flash player tint — Zorp's model briefly flashes brighter cyan on each
+# shot, giving a visceral "firing" reaction on the character itself (not just a
+# detached flash sphere). Complements the crosshair recoil for punchier shooting.
+MUZZLE_FLASH_PLAYER_TINT_DURATION = 0.06  # How long the player tint lasts
+MUZZLE_FLASH_PLAYER_TINT_COLOR = color.rgb(180, 255, 255)  # Bright cyan-white
 
 # ─── Projectile Glow Aura ──────────────────────────────────────────────────────
 PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
@@ -145,6 +158,13 @@ PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
 PROJECTILE_TRAIL_LIFETIME = 0.25  # How long each trail dot lives
 PROJECTILE_TRAIL_START_SCALE = 0.22  # Initial scale of trail dot
 PROJECTILE_TRAIL_END_SCALE = 0.02   # Scale at end of trail dot life (shrinks away)
+# ─── Projectile Expiry Fizz ──────────────────────────────────────────────────
+# When a player projectile's lifetime expires without hitting an enemy (a missed
+# shot), a small fizz particle burst emits at the expiry point so the shot has
+# visual closure instead of silently vanishing. Makes long-range misses feel less
+# empty and communicates the projectile's max range to the player.
+PROJECTILE_FIZZ_PARTICLE_COUNT = 4   # Particles on expiry
+PROJECTILE_FIZZ_COLOR = color.rgba(0, 255, 255, 180)  # Cyan fizz matching the laser
 
 # ─── Player Squish/Stretch ───────────────────────────────────────────────────
 PLAYER_SQUISH_AMOUNT = 0.18   # How much the player squishes on landing/moving
@@ -1119,6 +1139,10 @@ class Player(Entity):
         # Damage scale punch — brief squish reaction when the player takes damage,
         # making hits feel visceral (similar to enemy hit_scale_punch)
         self.damage_scale_punch = 0.0
+        # Muzzle flash tint timer — when > 0, the per-frame color logic keeps Zorp
+        # tinted bright cyan-white (firing reaction) instead of overriding to the
+        # normal alien green or low-HP danger pulse. Set by Game.shoot().
+        self.muzzle_tint_timer = 0.0
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
@@ -1306,6 +1330,8 @@ class Enemy(Entity):
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
         self.alerted = False                  # Whether enemy has detected the player (for alert flash)
         self.alert_flash_timer = 0.0          # Timer for the detection alert flash
+        self.alert_indicator = None           # Billboard "!" Text entity shown on first detection
+        self.alert_indicator_timer = 0.0      # How long the alert "!" stays visible
         self.spawn_time = 0.0                  # Set by game_update when spawned — tracks spawn age for grace period
 
         # Type-specific special behaviors
@@ -2988,6 +3014,11 @@ class Game:
                 if clone and hasattr(clone, 'enabled') and clone.enabled:
                     destroy(clone)
             enemy.echo_clone_entities.clear()
+        # Clean up alert "!" indicator if present
+        if hasattr(enemy, 'alert_indicator') and enemy.alert_indicator is not None:
+            if getattr(enemy.alert_indicator, 'enabled', False):
+                destroy(enemy.alert_indicator)
+            enemy.alert_indicator = None
         destroy(enemy.eye_l)
         destroy(enemy.eye_r)
         destroy(enemy.hp_bar_bg)
@@ -4331,6 +4362,16 @@ class Game:
         flash = Entity(model='sphere', color=color.rgba(200, 255, 255, 220),
                         scale=MUZZLE_FLASH_SCALE, position=flash_pos)
         destroy(flash, delay=MUZZLE_FLASH_DURATION)
+        # ── Muzzle Flash Player Tint ── Zorp's model briefly flashes brighter
+        # cyan-white on each shot, giving a visceral "firing" reaction on the
+        # character itself. Uses a timer (muzzle_tint_timer) that the per-frame
+        # color logic in game_update respects, so the tint isn't immediately
+        # overridden by the normal C_ALIEN assignment or low-HP danger pulse.
+        # Skipped while invulnerable (blink) or draining (purple pulse) so it
+        # doesn't fight those higher-priority color states.
+        if self.player.invuln_timer <= 0 and self.player.drain_timer <= 0:
+            self.player.muzzle_tint_timer = MUZZLE_FLASH_PLAYER_TINT_DURATION
+            self.player.color = MUZZLE_FLASH_PLAYER_TINT_COLOR
 
         if self.player.weapon_upgrade_timer > 0:
             # Spread shot: fire 3 projectiles in a fan pattern
@@ -5662,9 +5703,21 @@ def game_update():
         p.visible = True
     else:
         p.visible = True
+        # ── Muzzle Flash Player Tint ── When the muzzle tint timer is active
+        # (set by shoot()), keep Zorp tinted bright cyan-white as a firing
+        # reaction. This takes priority over the normal green and low-HP danger
+        # pulse so each shot produces a visible flash on the model. The timer
+        # decays here; once it hits zero the normal color logic resumes.
+        if p.muzzle_tint_timer > 0:
+            p.muzzle_tint_timer -= time.dt
+            if p.muzzle_tint_timer <= 0:
+                p.muzzle_tint_timer = 0
+                p.color = C_ALIEN
+            else:
+                p.color = MUZZLE_FLASH_PLAYER_TINT_COLOR
         # ── Low-HP Danger Pulse ── When below 30% HP, the player model pulses red
         # as an additional visual warning (complements the screen vignette)
-        if p.hp < p.max_hp * LOW_HP_VIGNETTE_THRESHOLD:
+        elif p.hp < p.max_hp * LOW_HP_VIGNETTE_THRESHOLD:
             danger_ratio = 1.0 - (p.hp / (p.max_hp * LOW_HP_VIGNETTE_THRESHOLD))
             heartbeat_speed = LOW_HP_HEARTBEAT_SPEED + (LOW_HP_HEARTBEAT_SPEED_MAX - LOW_HP_HEARTBEAT_SPEED) * danger_ratio
             pulse = 0.5 + 0.5 * math.sin(game.t * heartbeat_speed)
@@ -5817,6 +5870,21 @@ def game_update():
                 enemy.alert_flash_timer = ENEMY_ALERT_FLASH_DURATION
                 enemy.color = color.yellow
                 invoke(setattr, enemy, 'color', enemy.original_color, delay=ENEMY_ALERT_FLASH_DURATION)
+                # ── Alert "!" Indicator ── Spawn a brief billboard "!" above the
+                # enemy's head so the player clearly sees they've been spotted.
+                # Complements the body-color flash with a readable, distance-
+                # independent cue. Positioned in world space above the HP bar.
+                if enemy.alert_indicator is None or not getattr(enemy.alert_indicator, 'enabled', False):
+                    indicator_y = (1.5 / max(0.3, enemy.original_scale)) + 0.7
+                    enemy.alert_indicator = Text(
+                        text='!',
+                        position=Vec3(enemy.x, enemy.y + indicator_y, enemy.z),
+                        scale=ENEMY_ALERT_INDICATOR_SCALE / max(0.5, enemy.original_scale),
+                        color=ENEMY_ALERT_INDICATOR_COLOR,
+                        origin=(0, 0),
+                        billboard=True,
+                    )
+                    enemy.alert_indicator_timer = ENEMY_ALERT_INDICATOR_DURATION
             # Chase player
             # Time Warp slows all enemies
             speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
@@ -6293,6 +6361,40 @@ def game_update():
             breath = 1.0 + 0.04 * math.sin(game.t * 1.8 + id(enemy) % 100 * 0.01)
             enemy.scale = enemy.original_scale * breath
 
+        # ── Alert "!" Indicator Update ── Track the enemy's position and fade
+        # out the billboard "!" over ENEMY_ALERT_INDICATOR_DURATION. The indicator
+        # pops in at full size/alpha, holds briefly, then shrinks and fades for a
+        # satisfying "spotted!" cue that doesn't linger or clutter the screen.
+        if enemy.alert_indicator is not None and getattr(enemy.alert_indicator, 'enabled', False):
+            enemy.alert_indicator_timer -= time.dt
+            if enemy.alert_indicator_timer <= 0:
+                destroy(enemy.alert_indicator)
+                enemy.alert_indicator = None
+                enemy.alert_indicator_timer = 0
+            else:
+                # Keep the "!" floating above the enemy's head as it moves
+                indicator_y = (1.5 / max(0.3, enemy.original_scale)) + 0.7
+                enemy.alert_indicator.position = Vec3(enemy.x, enemy.y + indicator_y, enemy.z)
+                # Pop-in then fade: full alpha for first 60%, then fade + shrink
+                progress = 1.0 - (enemy.alert_indicator_timer / ENEMY_ALERT_INDICATOR_DURATION)
+                if progress < 0.6:
+                    alpha = 255
+                    # Slight pop overshoot at the very start
+                    pop_t = progress / 0.6
+                    scale_mult = 1.0 + 0.25 * math.sin(pop_t * math.pi)
+                else:
+                    fade_t = (progress - 0.6) / 0.4
+                    alpha = int(255 * (1.0 - fade_t))
+                    scale_mult = 1.0 - fade_t * 0.3
+                base_scale = ENEMY_ALERT_INDICATOR_SCALE / max(0.5, enemy.original_scale)
+                enemy.alert_indicator.scale = base_scale * scale_mult
+                enemy.alert_indicator.color = color.rgba(
+                    int(ENEMY_ALERT_INDICATOR_COLOR[0]),
+                    int(ENEMY_ALERT_INDICATOR_COLOR[1]),
+                    int(ENEMY_ALERT_INDICATOR_COLOR[2]),
+                    alpha,
+                )
+
         # Update ground shadow position to follow enemy (world-space, on ground plane)
         # PERFORMANCE: only update shadows/HP bars for nearby enemies
         if dist_to_player < VISUAL_CULL_RANGE:
@@ -6305,6 +6407,12 @@ def game_update():
     for proj in game.projectiles[:]:
         alive = proj.move(time.dt)
         if not alive:
+            # ── Projectile Expiry Fizz ── When a shot's lifetime expires without
+            # hitting an enemy (a missed shot), emit a small cyan fizz particle
+            # burst at the expiry point so the shot has visual closure instead
+            # of silently vanishing. This makes long-range misses feel less empty
+            # and subtly communicates the projectile's max range to the player.
+            game._spawn_particles(proj.position, PROJECTILE_FIZZ_COLOR, count=PROJECTILE_FIZZ_PARTICLE_COUNT)
             destroy(proj)
             game.projectiles.remove(proj)
             continue

@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.17.0 — 3D!)
+## Features (v2.17.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -346,6 +346,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.17.1 — Muzzle Flash Tint, Projectile Fizz & Enemy Alert Indicator
+- **Muzzle flash player tint**: Zorp's model now briefly flashes bright cyan-white on every shot, giving a visceral "firing" reaction on the character itself — not just a detached flash sphere. The tint lasts 0.06 seconds and is driven by a timer (`muzzle_tint_timer`) that the per-frame color logic respects, so it isn't immediately overridden by the normal green color or the low-HP danger pulse. It's automatically suppressed while invulnerable (blink) or under Cosmic Leech drain (purple pulse) so it never fights higher-priority color states. Combined with the existing crosshair recoil, every shot now feels punchier on both the HUD and the character model
+- **Projectile expiry fizz**: When a tentacle laser's lifetime expires without hitting an enemy (a missed or out-of-range shot), a small 4-particle cyan fizz burst now emits at the expiry point instead of the projectile silently vanishing. This gives missed shots visual closure, makes long-range misses feel less empty, and subtly communicates the projectile's max range to the player — you *see* where your shots die instead of them just disappearing
+- **Enemy alert "!" indicator**: When an enemy first detects the player, a brief bright-yellow "!" exclamation mark now pops up above its head (billboard text) and fades out over 0.6 seconds. This complements the existing body-color alert flash with a clear, readable "spotted!" cue that's visible even at distance or in crowded combat where a color flash on a small enemy can be hard to notice. The indicator pops in with a slight scale overshoot, holds, then shrinks and fades — and it scales inversely with enemy size so it stays a consistent readable size above both tiny Swarm Mites and huge Plasma Drakes. Properly cleaned up on enemy death
 
 ### v2.17.0 — Auto-Fire, Vacuum Pulse & Idle Regen
 - **Auto-Fire Toggle (X key)**: Press X to toggle continuous auto-fire — Zorp fires his tentacle laser automatically without needing to hold the left mouse button! This is a massive quality-of-life improvement for a game where you're shooting constantly. A pulsing magenta "⚡ AUTO-FIRE [X]" indicator appears on the HUD when active. Press X again to toggle it off. Eliminates finger fatigue during long play sessions while still letting you click-to-shoot when you want manual control
