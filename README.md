@@ -33,7 +33,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.16.0 — 3D!)
+## Features (v2.16.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -158,6 +158,9 @@ python game.py
 - **Heal pickup green flash** — when you grab a Health Potion while at low HP (below 40%), the screen edges briefly flash green — a satisfying "you're saved!" visual cue that makes clutch heals feel rewarding and distinct from regular item pickups
 - **Collectible spawn ground ring** — when a collectible finishes its spawn-in animation, a brief expanding ground ring in the item's color radiates outward, complementing the sparkle burst with a ground-level visual that's visible even when looking down at the world from the third-person camera
 - **Low-HP Health Potion proximity glow** — when your HP is critical and a Health Potion is nearby, the potion's glow ring pulses brighter and faster, drawing your eye toward the heal you need — a subtle UX nudge that makes prioritizing survival instinctive
+- **Crosshair dynamic recoil** — the crosshair expands briefly when you fire and smoothly contracts back to normal when idle, simulating weapon recoil and making aiming feel more alive — you can feel each shot fire instead of staring at a static reticle
+- **Score roll-up animation** — the score counter smoothly counts up to the new value instead of snapping instantly, making every kill, collectible, and mission reward feel tangible and rewarding as you watch the number climb
+- **Power-up expiry warning pulse** — when any active power-up or monolith buff timer drops below 3 seconds, the HUD text pulses red to warn you it's about to expire, giving you time to prepare instead of being caught off-guard mid-combat
 
 ## The Self-Improving Game
 
@@ -338,6 +341,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.16.1 — Crosshair Recoil, Score Roll-Up & Power-Up Expiry Warning
+- **Crosshair dynamic recoil**: The crosshair now expands briefly when you fire (simulating weapon recoil) and smoothly contracts back to its normal size when idle. This makes aiming feel more alive and communicates weapon state at a glance — you can *feel* each shot fire instead of staring at a static reticle. The expansion scales with the recoil intensity and recovers smoothly over a fraction of a second, so rapid fire keeps the crosshair wide while careful single shots feel crisp
+- **Score roll-up animation**: The score counter on the HUD now smoothly counts up to the new value instead of snapping instantly. Every kill, collectible, and mission reward triggers a satisfying numeric roll-up that makes point gains feel tangible and rewarding — you *see* the number climbing instead of it teleporting to the new total
+- **Power-up expiry warning pulse**: When any active power-up or monolith buff timer drops below 3 seconds remaining, the power-up HUD text now pulses red to warn you that the buff is about to expire. This gives you time to prepare — pop another Shield Crystal, grab a fresh Speed Boost, or reposition before the buff runs out — instead of being caught off-guard when a buff silently disappears mid-combat
 
 ### v2.16.0 — Mirror Shard, Echo Wraith & Healing Crystal Shrines
 - **Mirror Shard (New Collectible)**: A rare collectible that reflects enemy projectiles back at the nearest enemy for 6 seconds! Spore Spitter shots and Starburst Sentinel shockwave rings bounce off Zorp's silver aura and streak back toward their senders with 150% increased damage. The silver pulsing aura around Zorp and ground powerup ring make it visually clear when the reflection is active. Added to collectible weights, rarity tiers, trader trade items, and HUD powerup displays

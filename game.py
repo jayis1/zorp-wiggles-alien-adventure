@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.16.0"
+VERSION = "2.16.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -828,6 +828,26 @@ HEALING_SHRINE_HEAL_AMOUNT = 80              # HP restored per activation
 HEALING_SHRINE_COOLDOWN = 60.0               # Seconds between activations
 HEALING_SHRINE_ACTIVATE_RANGE = 4.5           # How close the player must be
 HEALING_SHRINE_MIN_DIST_FROM_SPAWN = 50       # Min distance from spawn center
+
+# ─── Crosshair Dynamic Feedback ──────────────────────────────────────────────
+# The crosshair expands briefly when shooting (recoil feel) and contracts
+# smoothly back to normal when idle, making aiming feel more alive and
+# communicating weapon state at a glance.
+CROSSHAIR_RECOIL_EXPAND = 2.2           # Scale multiplier on shoot
+CROSSHAIR_RECOIL_RECOVERY = 10.0        # How fast crosshair returns to normal
+CROSSHAIR_IDLE_SCALE_X = 0.003          # Normal crosshair horizontal scale
+CROSSHAIR_IDLE_SCALE_Y = 0.04           # Normal crosshair vertical scale
+
+# ─── Score Roll-Up Animation ─────────────────────────────────────────────────
+# The score counter smoothly counts up to the new value instead of snapping
+# instantly, making point gains feel rewarding and tangible.
+SCORE_ROLLUP_SPEED = 12.0               # Lerp speed for score number roll-up
+
+# ─── Power-Up Expiry Warning ─────────────────────────────────────────────────
+# Active power-up HUD timers pulse red when below this threshold, warning the
+# player that the buff is about to expire so they can prepare.
+POWERUP_EXPIRY_WARNING_THRESHOLD = 3.0  # Seconds remaining before pulse warning
+POWERUP_EXPIRY_PULSE_SPEED = 10.0       # How fast the warning text pulses
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -2873,6 +2893,12 @@ class Game:
         )
         self.heal_flash_timer = 0.0
 
+        # Crosshair recoil — expands briefly on each shot for a dynamic aim feel
+        self.crosshair_recoil = 0.0  # 1.0 = just fired, decays to 0
+
+        # Score roll-up — displayed score smoothly lerps toward the real score
+        self.displayed_score = 0
+
         # Damage direction indicator — red arrow pointing toward the source of damage
         self.damage_indicators = []  # List of (Entity, direction_vec, remaining_time) tuples
         self.damage_indicator_entities = []  # Arrow entities on the HUD
@@ -4228,6 +4254,9 @@ class Game:
             return
         self.player.shoot_timer = SHOOT_COOLDOWN
 
+        # Crosshair recoil — expand the crosshair briefly for a dynamic feel
+        self.crosshair_recoil = 1.0
+
         # Get shooting direction from mouse world point
         hit = mouse.world_point
         if hit:
@@ -4394,7 +4423,17 @@ class Game:
             self.xp_bar.color = C_PURPLE
 
         self.level_text.text = f'Lv.{p.level}'
-        self.score_text.text = f'Score: {p.score}'
+
+        # ── Score Roll-Up Animation ── The displayed score smoothly counts up
+        # toward the real score instead of snapping instantly, making point
+        # gains feel rewarding and tangible. The lerp is framerate-independent
+        # and skips the animation when the difference is negligible.
+        if abs(p.score - self.displayed_score) > 0.5:
+            self.displayed_score = lerp(self.displayed_score, p.score,
+                                        min(1.0, SCORE_ROLLUP_SPEED * time.dt))
+        else:
+            self.displayed_score = p.score
+        self.score_text.text = f'Score: {int(self.displayed_score)}'
         # Kill counter — shows total kills this run for progression feedback
         total_kills_hud = sum(p.kills.values())
         self.kills_text.text = f'Kills: {total_kills_hud}'
@@ -4462,33 +4501,64 @@ class Game:
             self.dash_ready_flash.color = color.rgba(0, 255, 255, 0)
 
         # Power-up status
+        # ── Power-Up Expiry Warning ── When any active power-up timer drops
+        # below POWERUP_EXPIRY_WARNING_THRESHOLD seconds, the HUD text pulses
+        # red to warn the player that the buff is about to expire, so they
+        # can prepare instead of being caught off-guard when it runs out.
         pu_lines = []
+        pu_timers = []  # Track remaining times for expiry warning
         if p.speed_boost_timer > 0:
             pu_lines.append(f'SPEED BOOST: {p.speed_boost_timer:.1f}s')
+            pu_timers.append(p.speed_boost_timer)
         if p.shield_timer > 0:
             pu_lines.append(f'SHIELD: {p.shield_timer:.1f}s')
+            pu_timers.append(p.shield_timer)
         if p.magnet_timer > 0:
             pu_lines.append(f'MAGNET: {p.magnet_timer:.1f}s')
+            pu_timers.append(p.magnet_timer)
         if self.time_warp_timer > 0:
             pu_lines.append(f'TIME WARP: {self.time_warp_timer:.1f}s')
+            pu_timers.append(self.time_warp_timer)
         if p.float_timer > 0:
             pu_lines.append(f'STAR FRUIT: {p.float_timer:.1f}s')
+            pu_timers.append(p.float_timer)
         if p.monolith_speed_timer > 0:
             pu_lines.append(f'SPEED SURGE: {p.monolith_speed_timer:.1f}s')
+            pu_timers.append(p.monolith_speed_timer)
         if p.monolith_damage_timer > 0:
             pu_lines.append(f'POWER SURGE: {p.monolith_damage_timer:.1f}s')
+            pu_timers.append(p.monolith_damage_timer)
         if p.monolith_xp_timer > 0:
             pu_lines.append(f'WISDOM AURA: {p.monolith_xp_timer:.1f}s')
+            pu_timers.append(p.monolith_xp_timer)
         if p.fireball_timer > 0:
             pu_lines.append(f'FIREBALL: {p.fireball_timer:.1f}s')
+            pu_timers.append(p.fireball_timer)
         if p.regen_timer > 0:
             pu_lines.append(f'REGEN: {p.regen_timer:.1f}s')
+            pu_timers.append(p.regen_timer)
         if p.crit_boost_timer > 0:
             pu_lines.append(f'LUCKY CLOVER: {p.crit_boost_timer:.1f}s')
+            pu_timers.append(p.crit_boost_timer)
         if p.mirror_timer > 0:
             pu_lines.append(f'MIRROR SHARD: {p.mirror_timer:.1f}s')
+            pu_timers.append(p.mirror_timer)
         self.powerup_text.text = '  |  '.join(pu_lines)
-        self.powerup_text.color = color.green if pu_lines else color.gray
+        if pu_lines:
+            # Check if any active buff is about to expire — if so, pulse red
+            min_timer = min(pu_timers)
+            if min_timer < POWERUP_EXPIRY_WARNING_THRESHOLD:
+                pulse = 0.5 + 0.5 * math.sin(self.t * POWERUP_EXPIRY_PULSE_SPEED)
+                # Blend between green (normal) and red (warning)
+                self.powerup_text.color = color.rgb(
+                    int(50 + 205 * pulse),
+                    int(255 * (1 - pulse * 0.7)),
+                    int(50 * (1 - pulse * 0.7)),
+                )
+            else:
+                self.powerup_text.color = color.green
+        else:
+            self.powerup_text.color = color.gray
 
         # Combo display — BUG FIX: _update_hud no longer decrements combo_display_timer
         # here; that was causing a double-decrement since game_update() also
@@ -4754,6 +4824,20 @@ class Game:
         else:
             self.achievement_popup_text.visible = False
             self.achievement_popup_sub.visible = False
+
+        # ── Crosshair Dynamic Recoil ── The crosshair expands briefly when
+        # shooting (simulating weapon recoil) and smoothly contracts back to
+        # its normal size when idle. This makes aiming feel more alive and
+        # communicates weapon state at a glance — you can feel each shot.
+        if self.crosshair_recoil > 0:
+            self.crosshair_recoil -= time.dt * CROSSHAIR_RECOIL_RECOVERY
+            if self.crosshair_recoil < 0:
+                self.crosshair_recoil = 0
+        recoil_mult = 1.0 + (CROSSHAIR_RECOIL_EXPAND - 1.0) * self.crosshair_recoil
+        self.crosshair.scale = (CROSSHAIR_IDLE_SCALE_X * recoil_mult,
+                                CROSSHAIR_IDLE_SCALE_Y * recoil_mult)
+        self.crosshair2.scale = (CROSSHAIR_IDLE_SCALE_Y * recoil_mult,
+                                 CROSSHAIR_IDLE_SCALE_X * recoil_mult)
 
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
