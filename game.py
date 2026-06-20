@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.17.2"
+VERSION = "2.18.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -902,6 +902,34 @@ VACUUM_PULSE_RING_COLOR = color.rgb(255, 220, 80)  # Gold ring for the vacuum pu
 IDLE_REGEN_DELAY = 3.0                # Seconds of inactivity before regen starts
 IDLE_REGEN_HP_PER_SECOND = 4           # HP restored per second while idle
 IDLE_REGEN_PARTICLE_INTERVAL = 1.0    # Seconds between idle regen heal particles
+
+# ─── Combo Screen Edge Glow ──────────────────────────────────────────────────
+# At combo x5+, a colored screen-edge vignette appears and intensifies as the
+# combo grows. The color shifts from warm yellow (x5) to orange (x7) to red
+# (x10+), and at x10+ it pulses rapidly — making high kill streaks feel
+# electric and dangerous, a visceral escalation of "you're on fire!" feedback
+# that complements the existing combo counter, timer bar, and milestone
+# fireworks without being intrusive.
+COMBO_EDGE_GLOW_MIN_TIER = 5           # Combo count needed to start the edge glow
+COMBO_EDGE_GLOW_MAX_ALPHA = 45         # Peak alpha at max combo tier
+COMBO_EDGE_GLOW_PULSE_SPEED = 10.0     # Pulse speed when combo is at x10+ (rapid fire glow)
+
+# ─── Nearby Enemy Threat Counter ────────────────────────────────────────────
+# A HUD element showing how many enemies are currently near the player (within
+# 30 units), with a color-coded threat level: green (1-3), yellow (4-6),
+# orange (7-9), red (10+). This gives the player a constant situational
+# awareness readout — you know at a glance if you're in a safe zone or about
+# to be swarmed, without needing to check the minimap.
+THREAT_COUNTER_RADIUS = 30              # How far to count enemies for the threat counter
+THREAT_COUNTER_UPDATE_INTERVAL = 0.3   # How often to recount (seconds) — avoids per-frame iteration
+THREAT_COUNTER_POSITION = (-0.75, 0.09) # HUD position for the threat text
+
+# ─── Level-Up Golden Screen Flash ────────────────────────────────────────────
+# A brief golden screen-edge flash on level-up, complementing the existing
+# level-up text, scale bounce, particle burst, and screen shake — making
+# level-ups feel like a celebratory moment with full-screen visual impact.
+LEVEL_UP_FLASH_DURATION = 0.6           # How long the golden flash lasts
+LEVEL_UP_FLASH_MAX_ALPHA = 60           # Peak alpha of the golden flash
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -3237,7 +3265,8 @@ class Game:
                       'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
                       'boss_tension_vignette', 'multi_kill_text',
                       'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
-                      'heal_flash'):
+                      'heal_flash', 'combo_edge_glow', 'threat_counter_text',
+                      'level_up_flash'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -4078,6 +4107,40 @@ class Game:
             text='', position=(-0.3, 0.3), scale=0.8, color=color.white,
             origin=(-0.5, 0.5), visible=False,
         )
+
+        # ── Combo Screen Edge Glow ── A colored screen-edge vignette that
+        # appears at combo x5+ and intensifies/shifts color as the combo grows.
+        # Invisible by default; alpha is driven by _update_hud based on combo tier.
+        self.combo_edge_glow = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 255, 0, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=1.8,  # Above most other overlays but below the death screen
+        )
+
+        # ── Nearby Enemy Threat Counter ── HUD text showing how many enemies
+        # are near the player, with color-coded threat level. Positioned below
+        # the auto-fire indicator on the left HUD column.
+        self.threat_counter_text = Text(
+            text='', position=THREAT_COUNTER_POSITION, scale=0.85,
+            color=color.rgba(200, 200, 200, 0),
+        )
+        self.threat_counter_timer = 0.0  # Recount interval accumulator
+
+        # ── Level-Up Golden Screen Flash ── Brief golden screen-edge flash
+        # on level-up. Triggered by game_update when level_up_pending fires,
+        # decays smoothly in _update_hud.
+        self.level_up_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 220, 50, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.5,  # Same layer as other flash overlays
+        )
+        self.level_up_flash_timer = 0.0
 
     def _build_minimap(self):
         """Create a minimap with terrain-color texture and enemy dot tracking.
@@ -4991,6 +5054,86 @@ class Game:
             self.achievement_popup_text.visible = False
             self.achievement_popup_sub.visible = False
 
+        # ── Combo Screen Edge Glow ── At combo x5+, a colored screen-edge
+        # vignette appears and intensifies as the combo grows. The color shifts
+        # from warm yellow (x5) → orange (x7) → red (x10+), and at x10+ it
+        # pulses rapidly — making high kill streaks feel electric and dangerous.
+        # This is a full-screen overlay (like the danger vignette) that
+        # communicates "you're on fire!" without being intrusive.
+        if self.combo_count >= COMBO_EDGE_GLOW_MIN_TIER and self.combo_display_timer > 0:
+            # Normalize combo to 0-1 range above the minimum tier (cap at x15)
+            combo_t = min(1.0, (self.combo_count - COMBO_EDGE_GLOW_MIN_TIER) / 10.0)
+            # Color interpolation: yellow (255,255,0) → orange (255,150,0) → red (255,50,50)
+            if combo_t < 0.4:
+                # Yellow → Orange
+                blend = combo_t / 0.4
+                glow_r = 255
+                glow_g = int(255 - (255 - 150) * blend)
+                glow_b = 0
+            else:
+                # Orange → Red
+                blend = (combo_t - 0.4) / 0.6
+                glow_r = 255
+                glow_g = int(150 - (150 - 50) * blend)
+                glow_b = int(0 + 50 * blend)
+            # Base alpha scales with combo intensity
+            base_alpha = int(COMBO_EDGE_GLOW_MAX_ALPHA * combo_t)
+            # At x10+, add a rapid pulse for extra urgency
+            if self.combo_count >= COMBO_DAMAGE_TIER:
+                pulse = 0.5 + 0.5 * math.sin(self.t * COMBO_EDGE_GLOW_PULSE_SPEED)
+                glow_alpha = int(base_alpha * (0.6 + 0.4 * pulse))
+            else:
+                # Gentle breathing pulse at mid combos
+                pulse = 0.5 + 0.5 * math.sin(self.t * 4)
+                glow_alpha = int(base_alpha * (0.7 + 0.3 * pulse))
+            self.combo_edge_glow.color = color.rgba(glow_r, glow_g, glow_b, glow_alpha)
+        else:
+            # Fade out when combo drops below threshold
+            self.combo_edge_glow.color = color.rgba(255, 255, 0, 0)
+
+        # ── Nearby Enemy Threat Counter ── Shows how many enemies are near
+        # the player, color-coded by threat level. Re-counts at an interval
+        # to avoid iterating the enemy list every frame.
+        self.threat_counter_timer -= time.dt
+        if self.threat_counter_timer <= 0:
+            self.threat_counter_timer = THREAT_COUNTER_UPDATE_INTERVAL
+            nearby = 0
+            for e in self.enemies:
+                if not e.alive or e.dying:
+                    continue
+                dx = e.x - p.x
+                dz = e.z - p.z
+                if dx * dx + dz * dz < THREAT_COUNTER_RADIUS * THREAT_COUNTER_RADIUS:
+                    nearby += 1
+            self._threat_count = nearby
+            # Color-code by threat level
+            if nearby == 0:
+                self.threat_counter_text.text = ''
+                self.threat_counter_text.color = color.rgba(200, 200, 200, 0)
+            elif nearby <= 3:
+                self.threat_counter_text.text = f'⚔ Nearby: {nearby}'
+                self.threat_counter_text.color = color.rgb(100, 255, 100)
+            elif nearby <= 6:
+                self.threat_counter_text.text = f'⚔ Nearby: {nearby}'
+                self.threat_counter_text.color = color.rgb(255, 255, 80)
+            elif nearby <= 9:
+                self.threat_counter_text.text = f'⚠ Nearby: {nearby}'
+                self.threat_counter_text.color = color.rgb(255, 160, 40)
+            else:
+                self.threat_counter_text.text = f'☠ Nearby: {nearby}'
+                self.threat_counter_text.color = color.rgb(255, 50, 50)
+
+        # ── Level-Up Golden Screen Flash ── Decays smoothly after being
+        # triggered by the level-up event in game_update. A brief golden
+        # screen-edge flash that makes level-ups feel celebratory.
+        if self.level_up_flash_timer > 0:
+            self.level_up_flash_timer -= time.dt
+            flash_ratio = max(0, self.level_up_flash_timer / LEVEL_UP_FLASH_DURATION)
+            flash_alpha = int(LEVEL_UP_FLASH_MAX_ALPHA * flash_ratio)
+            self.level_up_flash.color = color.rgba(255, 220, 50, flash_alpha)
+        else:
+            self.level_up_flash.color = color.rgba(255, 220, 50, 0)
+
         # ── Crosshair Dynamic Recoil ── The crosshair expands briefly when
         # shooting (simulating weapon recoil) and smoothly contracts back to
         # its normal size when idle. This makes aiming feel more alive and
@@ -5817,6 +5960,10 @@ def game_update():
         # Yellow flash on player model
         p.color = color.yellow
         invoke(setattr, p, 'color', C_ALIEN, delay=LEVEL_UP_COLOR_FLASH_DURATION)
+        # ── Level-Up Golden Screen Flash ── Trigger the golden screen-edge
+        # flash for a celebratory full-screen visual impact on level-up.
+        game.level_up_flash_timer = LEVEL_UP_FLASH_DURATION
+        game.level_up_flash.color = color.rgba(255, 220, 50, LEVEL_UP_FLASH_MAX_ALPHA)
         game.add_message(f"Level Up! Now Lv.{p.level}!")
         # ── Level-Up Magnet Burst ── Pull all nearby collectibles toward the player
         # A satisfying "vortex" effect that rewards leveling up by vacuuming items

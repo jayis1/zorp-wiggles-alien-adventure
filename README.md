@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.17.2 — 3D!)
+## Features (v2.18.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -166,6 +166,9 @@ python game.py
 - **Auto-Fire toggle (X key)** — press X to toggle continuous auto-fire! When enabled, Zorp fires his tentacle laser automatically without needing to hold the left mouse button — a massive QoL improvement for a game where you shoot constantly. A pulsing magenta [AUTO-FIRE] indicator appears on the HUD when active. Press X again to turn it off
 - **Collectible Vacuum Pulse (V key)** — press V to unleash a vacuum pulse that pulls ALL collectibles within 15 units toward you at high speed! 12-second cooldown. Perfect for harvesting dense loot fields after a big combat engagement or when standing in the middle of a collectible-rich area. An expanding gold ring visual + particle burst makes the activation satisfying. A cooldown bar on the HUD shows when it's ready
 - **Idle HP Regeneration** — stand still for 3 seconds without moving or taking damage and Zorp slowly regenerates HP (4 HP/sec). Taking damage or moving resets the idle timer, so it rewards tactical pauses and reduces frustration from chip damage in long fights. A green "♥ RESTING (+HP)" indicator appears on the HUD when idle regen is active
+- **Combo screen edge glow** — at combo x5+, a colored screen-edge vignette appears and intensifies as your kill streak grows, shifting from warm yellow (x5) → orange (x7) → red (x10+). At x10+ it pulses rapidly for maximum urgency. Makes high combos feel electric and dangerous — you *feel* the heat of your kill streak across the entire screen, not just in the corner counter
+- **Nearby enemy threat counter** — a HUD indicator showing how many enemies are currently within 30 units, color-coded by threat level: green (1-3, safe), yellow (4-6, caution), orange (7-9, danger), red (10+, critical!). Gives you constant situational awareness at a glance — you know when you're in a safe zone vs about to be swarmed without needing to check the minimap. Updates every 0.3 seconds for smooth performance
+- **Level-up golden screen flash** — leveling up now triggers a brief golden screen-edge flash across the whole screen, complementing the existing level-up text, scale bounce, particle burst, screen shake, and magnet vacuum. Makes every level-up feel like a full-screen celebratory moment instead of just a text popup — you *see* the golden glow of progression
 
 ## The Self-Improving Game
 
@@ -346,6 +349,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.18.0 — Combo Edge Glow, Threat Counter & Level-Up Flash
+- **Combo screen edge glow**: At combo x5+, a colored screen-edge vignette now appears and intensifies as your kill streak grows. The color smoothly shifts from warm yellow (x5) → orange (x7) → red (x10+), and at x10+ it pulses rapidly (10 Hz) for maximum urgency. This makes high combos feel electric and dangerous — you *feel* the heat of your kill streak across the entire screen, not just in the corner counter. The glow is subtle at low tiers (barely visible at x5) and dramatic at high tiers (vivid red strobe at x10+), so it rewards skilled play without being distracting during normal combat. It fades instantly when the combo drops below x5 or expires, and is layered above other HUD overlays but below the death screen. Complements the existing combo counter, timer bar, milestone fireworks, and combo-charged projectile aura for a cohesive "you're on fire!" feedback system
+- **Nearby enemy threat counter**: A new HUD indicator shows how many enemies are currently within 30 units of Zorp, color-coded by threat level: green (1-3, "⚔ Nearby: N"), yellow (4-6, "⚔ Nearby: N"), orange (7-9, "⚠ Nearby: N"), and red (10+, "☠ Nearby: N"). This gives you constant situational awareness at a glance — you know when you're in a safe zone vs about to be swarmed without needing to check the minimap. The counter updates every 0.3 seconds (not every frame) for smooth performance, using squared-distance checks to avoid expensive sqrt calls. The icon escalates from sword (⚔) to warning (⚠) to skull (☠) as the threat level rises, making the urgency immediately readable even in your peripheral vision
+- **Level-up golden screen flash**: Leveling up now triggers a brief golden screen-edge flash that sweeps across the whole screen over 0.6 seconds before fading smoothly. This complements the existing level-up text popup, scale bounce, particle burst, screen shake, yellow model flash, and magnet vacuum — making every level-up feel like a full-screen celebratory moment instead of just a corner notification. You *see* the golden glow of progression wash over your screen, reinforcing the satisfaction of each level gained. The flash is properly cleaned up on restart and layered with the other screen flash overlays
 
 ### v2.17.2 — Combo-Charged Laser, Shield Warning Pulse & Enemy-Tinted Hit Particles
 - **Combo-charged projectile aura**: The tentacle laser's glow aura now scales with your combo count — at low combos it's the familiar calm cyan pulse, but as your kill streak grows past 5x the aura pulses faster (up to 28 Hz), grows larger (up to 2.6x scale), and brightens. The laser visually "charges up" during kill streaks, giving immediate visual feedback that you're on a roll and making high combos feel more powerful and electric. The effect is subtle at low combos (no visual change) and dramatic at high combos, so it rewards skilled play without distracting during normal combat
