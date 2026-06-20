@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.18.0 — 3D!)
+## Features (v2.18.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -349,6 +349,13 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.18.1 — Fireball AOE Rewards, Pulse Wave Buff, Vacuum Duration & Combo Bar Flash
+- **Fireball AOE kills now grant XP and score**: Previously, enemies killed by the Fireball Scroll's explosion blast (not the direct hit, but the AOE splash damage) granted combo credit and loot drops but no XP or score — making the power-up less rewarding for multi-kills. Now AOE kills grant full XP (with combo and monolith multipliers applied), score (with combo multiplier), kill burst particles, and kill feed entries, matching the rewards from direct projectile kills. This makes the Fireball Scroll feel properly powerful for clearing groups — every AOE kill counts toward progression
+- **Void Bomber friendly-fire kills now grant combo credit and proper rewards**: Enemies killed by a Void Bomber's explosion (friendly fire) were also missing `combo_count += 1` and combo/monolith XP multipliers. Now these kills correctly increment the combo, apply XP and score multipliers, and trigger the combo bar refresh flash — making Void Bomber explosions a satisfying chain opportunity instead of a rewardless side effect
+- **Pulse Wave damage increased from 8 to 10**: The Pulse Wave ability (Q key) dealt only 8 damage, making it primarily a knockback tool with negligible killing power. Bumping to 10 makes it more viable as a finisher for weakened enemies, giving the ability more versatility in combat — you can now reliably finish off low-HP enemies caught in the wave instead of just pushing them away
+- **Vacuum Pulse active duration increased from 0.5s to 0.8s**: The Collectible Vacuum Pulse (V key) pulled items for only 0.5 seconds, which was too short to reliably vacuum items at the edge of its 15-unit radius — the pull speed (40 u/s) needs ~0.37s to cross the full radius, leaving almost no margin. Increasing to 0.8s gives a comfortable window so edge items actually reach the player, making the 12-second cooldown feel worth it
+- **Combo timer bar refresh flash**: When a kill extends your combo, the combo timer bar now briefly flashes bright green (regardless of its current color ratio) over a 0.25-second decay. This gives immediate positive feedback that your combo was refreshed — you *see* the bar pulse green with each kill, making it easier to track combo momentum in your peripheral vision without reading the number. The flash applies to all kill sources (direct hits, Fireball AOE, Pulse Wave, Void Bomber friendly fire) and decays smoothly back to the normal green/yellow/red color gradient
 
 ### v2.18.0 — Combo Edge Glow, Threat Counter & Level-Up Flash
 - **Combo screen edge glow**: At combo x5+, a colored screen-edge vignette now appears and intensifies as your kill streak grows. The color smoothly shifts from warm yellow (x5) → orange (x7) → red (x10+), and at x10+ it pulses rapidly (10 Hz) for maximum urgency. This makes high combos feel electric and dangerous — you *feel* the heat of your kill streak across the entire screen, not just in the corner counter. The glow is subtle at low tiers (barely visible at x5) and dramatic at high tiers (vivid red strobe at x10+), so it rewards skilled play without being distracting during normal combat. It fades instantly when the combo drops below x5 or expires, and is layered above other HUD overlays but below the death screen. Complements the existing combo counter, timer bar, milestone fireworks, and combo-charged projectile aura for a cohesive "you're on fire!" feedback system

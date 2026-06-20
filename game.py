@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.18.0"
+VERSION = "2.18.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -332,6 +332,7 @@ COMBO_TIMEOUT = 5.0        # seconds before combo resets (slightly more forgivin
 COMBO_XP_BONUS_PER_TIER = 0.15  # +15% XP per combo tier (up from 12% — rewards skillful chains)
 COMBO_SCORE_BONUS_PER_TIER = 0.08  # +8% score per combo tier (up from 6%)
 COMBO_DISPLAY_LIFETIME = 2.5
+COMBO_BAR_REFRESH_FLASH_DURATION = 0.25  # How long the combo timer bar flashes green on each kill that extends the combo
 
 # ─── Weapon Upgrade (Spread Shot) ────────────────────────────────────────────
 WEAPON_UPGRADE_DURATION = 8.0
@@ -800,7 +801,7 @@ PULSE_WAVE_COOLDOWN = 8.0            # Cooldown between pulse wave uses
 PULSE_WAVE_RADIUS = 10.0             # How far the shockwave reaches
 PULSE_WAVE_EXPAND_SPEED = 25.0       # How fast the ring expands outward
 PULSE_WAVE_PUSH_FORCE = 18.0        # How strongly enemies are pushed away
-PULSE_WAVE_DAMAGE = 8               # Small damage dealt by the wave
+PULSE_WAVE_DAMAGE = 10              # Moderate damage dealt by the wave — rewards using it as a finisher
 PULSE_WAVE_RING_LIFETIME = 0.5      # How long the visual ring lasts
 PULSE_WAVE_RING_START_SCALE = 0.5   # Starting scale of the ring visual
 PULSE_WAVE_RING_MAX_SCALE = 10.0    # Final scale of the ring visual
@@ -892,6 +893,7 @@ POWERUP_EXPIRY_PULSE_SPEED = 10.0       # How fast the warning text pulses
 VACUUM_PULSE_COOLDOWN = 12.0           # Seconds between vacuum pulse uses
 VACUUM_PULSE_RADIUS = 15.0             # How far the vacuum pulse reaches
 VACUUM_PULSE_PULL_SPEED = 40.0        # How fast items are vacuumed in
+VACUUM_PULSE_ACTIVE_DURATION = 0.8    # How long the pull lasts — long enough to vacuum edge items
 VACUUM_PULSE_PARTICLE_COUNT = 20      # Particles on activation
 VACUUM_PULSE_RING_COLOR = color.rgb(255, 220, 80)  # Gold ring for the vacuum pulse
 
@@ -2726,6 +2728,7 @@ class Game:
         self.combo_timer = 0.0
         self.combo_display_timer = 0.0
         self.max_combo = 0  # Track highest combo reached in this run
+        self.combo_bar_refresh_flash = 0.0  # Timer for combo bar green flash on each kill
 
         # Multi-Kill system — tracks rapid kills within a short window for
         # dramatic announcements ("DOUBLE KILL!", "TRIPLE KILL!", etc.)
@@ -4796,7 +4799,15 @@ class Game:
             self.combo_bar.visible = True
             self.combo_bar_bg.visible = True
             # Color shifts: green when full, yellow mid, red when almost empty
-            if ratio > 0.5:
+            # ── Combo Bar Refresh Flash ── When a kill extends the combo, the
+            # timer bar briefly flashes bright green regardless of the normal
+            # color ratio, giving immediate positive feedback that the combo
+            # was refreshed. The flash decays smoothly over COMBO_BAR_REFRESH_FLASH_DURATION.
+            if self.combo_bar_refresh_flash > 0:
+                self.combo_bar_refresh_flash -= time.dt
+                flash_ratio = max(0, self.combo_bar_refresh_flash / COMBO_BAR_REFRESH_FLASH_DURATION)
+                self.combo_bar.color = color.rgba(50, 255, 50, int(220 * (0.7 + 0.3 * flash_ratio)))
+            elif ratio > 0.5:
                 self.combo_bar.color = color.rgba(50, 255, 50, 220)
             elif ratio > 0.25:
                 self.combo_bar.color = color.rgba(255, 255, 0, 220)
@@ -5296,7 +5307,7 @@ class Game:
             return
         p = self.player
         self.vacuum_pulse_cooldown = VACUUM_PULSE_COOLDOWN
-        self.vacuum_pulse_active_timer = 0.5  # Pull lasts half a second
+        self.vacuum_pulse_active_timer = VACUUM_PULSE_ACTIVE_DURATION  # Pull lasts long enough to reach edge items
         # Visual: expanding gold ring
         # BUG FIX: Pass the vacuum pulse color directly to the constructor instead
         # of setting it afterward. The old approach (ring.color = ...) was
@@ -6200,10 +6211,18 @@ def game_update():
                                 if other_killed:
                                     p.add_kill(other_enemy.name)
                                     game.total_kills += 1
+                                    game.combo_count += 1
                                     game._register_kill()
-                                    xp_gain = BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR
+                                    game.max_combo = max(game.max_combo, game.combo_count)
+                                    game.combo_timer = COMBO_TIMEOUT
+                                    game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                                    game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
+                                    combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
+                                    combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                                    monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                    xp_gain = int((BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                                     p.gain_xp(xp_gain)
-                                    p.score += other_enemy.max_hp
+                                    p.score += int(other_enemy.max_hp * combo_score_mult)
                                     game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True))
                         # Kill the bomber
                         enemy.alive = False
@@ -6731,7 +6750,20 @@ def game_update():
                                 game.max_combo = max(game.max_combo, game.combo_count)
                                 game.combo_timer = COMBO_TIMEOUT
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                                game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
+                                # AOE kills now grant XP and score (previously missing —
+                                # made Fireball Scroll's AOE kills unrewarded, making
+                                # the power-up less satisfying for multi-kills)
+                                combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
+                                combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                                monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                aoe_xp_gain = int((BASE_KILL_XP + nearby_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                                p.gain_xp(aoe_xp_gain)
+                                p.score += int(nearby_enemy.max_hp * combo_score_mult)
                                 game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
+                                game._spawn_particles(nearby_enemy.position, nearby_enemy.original_color, count=PARTICLE_KILL_COUNT)
+                                game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color)
+                                game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 loot_range = ENEMY_LOOT_DROPS.get(nearby_enemy.name, (2, 4))
                                 for _ in range(random.randint(loot_range[0], loot_range[1])):
                                     lx = nearby_enemy.x + random.uniform(-2, 2)
@@ -6766,6 +6798,7 @@ def game_update():
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                     # ── Combo Milestone Fireworks ── Celebrate every 5x combo with a burst
                     if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
                         # Burst of colorful particles around the player
@@ -7038,6 +7071,7 @@ def game_update():
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                     xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) *
                                   (1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER) *
                                   (MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0))
