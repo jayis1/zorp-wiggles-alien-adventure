@@ -1742,10 +1742,18 @@ class PulseWaveRing(Entity):
     It fades as it expands, then disappears when it reaches max radius.
     """
 
-    def __init__(self, position):
+    def __init__(self, position, base_color=(0, 255, 200)):
+        """Initialize the pulse wave ring.
+
+        Args:
+            position: World position for the ring center.
+            base_color: (r, g, b) tuple in 0-255 range for the ring's color.
+                        Defaults to teal (0, 255, 200) for the Pulse Wave ability.
+                        Pass gold (255, 220, 80) for the Vacuum Pulse ability.
+        """
         super().__init__(
             model='quad',
-            color=color.rgba(0, 255, 200, 200),
+            color=color.rgba(base_color[0], base_color[1], base_color[2], 200),
             scale=PULSE_WAVE_RING_START_SCALE,
             position=position + Vec3(0, 0.15, 0),
             rotation_x=90,
@@ -1754,6 +1762,11 @@ class PulseWaveRing(Entity):
         self.max_lifetime = PULSE_WAVE_RING_LIFETIME
         self.current_radius = PULSE_WAVE_RING_START_SCALE
         self.hit_enemies = set()  # Track which enemies were already hit
+        # BUG FIX: Store the base color so update_ring() can fade alpha without
+        # overriding the ring's intended color. Previously update_ring() hardcoded
+        # teal, which meant Vacuum Pulse rings (set to gold after construction)
+        # were immediately overwritten back to teal on the next update frame.
+        self._base_r, self._base_g, self._base_b = base_color
 
     def update_ring(self, dt):
         """Expand the ring. Returns True when expired."""
@@ -1762,7 +1775,10 @@ class PulseWaveRing(Entity):
         self.lifetime -= dt
         progress = 1.0 - (self.lifetime / self.max_lifetime)
         alpha = max(0, int(200 * (1.0 - progress)))
-        self.color = color.rgba(0, 255, 200, alpha)
+        # BUG FIX: Use the stored base color instead of hardcoded teal. This
+        # allows vacuum pulse rings to appear gold (their intended color)
+        # instead of being overridden to teal every frame.
+        self.color = color.rgba(self._base_r, self._base_g, self._base_b, alpha)
         return self.lifetime <= 0 or self.current_radius >= PULSE_WAVE_RING_MAX_SCALE
 
 
@@ -5099,7 +5115,10 @@ class Game:
             return
         p = self.player
         self.pulse_wave_cooldown = PULSE_WAVE_COOLDOWN
-        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z))
+        # BUG FIX: Pass teal base color explicitly to the constructor for clarity.
+        # The default is already teal, but being explicit documents the intent
+        # and keeps the call site consistent with the vacuum pulse variant.
+        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z), base_color=(0, 255, 200))
         self.pulse_wave_rings.append(ring)
         self._spawn_particles(p.position + Vec3(0, 0.5, 0), PULSE_WAVE_RING_COLOR, count=10)
         self.add_message("PULSE WAVE!")
@@ -5117,8 +5136,14 @@ class Game:
         self.vacuum_pulse_cooldown = VACUUM_PULSE_COOLDOWN
         self.vacuum_pulse_active_timer = 0.5  # Pull lasts half a second
         # Visual: expanding gold ring
-        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z))
-        ring.color = VACUUM_PULSE_RING_COLOR
+        # BUG FIX: Pass the vacuum pulse color directly to the constructor instead
+        # of setting it afterward. The old approach (ring.color = ...) was
+        # immediately overridden back to teal by update_ring() which hardcoded
+        # the color every frame. Now update_ring() uses the stored base color.
+        # NOTE: Extract RGB tuple from the Ursina Color so the ring stores plain
+        # ints, avoiding any ambiguity with Color's __getitem__ indexing.
+        _vr, _vg, _vb = _c255_color(VACUUM_PULSE_RING_COLOR)
+        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z), base_color=(_vr, _vg, _vb))
         self.vacuum_pulse_rings.append(ring)
         # Particle burst
         self._spawn_particles(p.position + Vec3(0, 0.5, 0), VACUUM_PULSE_RING_COLOR,
@@ -6135,8 +6160,14 @@ def game_update():
                         seg.x = lerp(seg.x, target.x, time.dt * 10)
                         seg.z = lerp(seg.z, target.z, time.dt * 10)
                         seg.y = 1 + math.sin(game.t * 2.5 + i * 0.8) * 0.15
-                # Sinuous movement: add a lateral sway to the serpent's chase
+                # Sinuous movement: add a lateral sway to the serpent's chase.
+                # BUG FIX: sway was computed but never applied — the serpent
+                # moved in straight lines like every other enemy instead of
+                # slithering like a snake. Now we add the sway as a small
+                # perpendicular offset to the serpent's Y rotation so the
+                # body visibly undulates as it chases the player.
                 sway = math.sin(game.t * 4 + id(enemy) % 100) * 0.3
+                enemy.rotation_y += sway * time.dt * 60  # Subtle body wiggle
 
             # ── Graviton: Periodically activates gravity pull toward itself ──
             # PERFORMANCE: skip complex pull AI for distant gravitons
