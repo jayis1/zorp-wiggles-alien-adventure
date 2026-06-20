@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.16.1"
+VERSION = "2.17.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -848,6 +848,30 @@ SCORE_ROLLUP_SPEED = 12.0               # Lerp speed for score number roll-up
 # player that the buff is about to expire so they can prepare.
 POWERUP_EXPIRY_WARNING_THRESHOLD = 3.0  # Seconds remaining before pulse warning
 POWERUP_EXPIRY_PULSE_SPEED = 10.0       # How fast the warning text pulses
+
+# ─── Auto-Fire Toggle (X key) ─────────────────────────────────────────────────
+# Press X to toggle continuous auto-fire. When enabled, Zorp fires
+# continuously without needing to hold the left mouse button — a major QoL
+# improvement for a game where you shoot constantly. A small [AUTO] indicator
+# appears on the HUD when active.
+
+# ─── Collectible Vacuum Pulse (V key) ─────────────────────────────────────────
+# Active ability that pulls ALL collectibles within a large radius toward the
+# player in a single burst — great for harvesting dense loot fields after a big
+# combat engagement or when standing in the middle of a collectible-rich area.
+VACUUM_PULSE_COOLDOWN = 12.0           # Seconds between vacuum pulse uses
+VACUUM_PULSE_RADIUS = 15.0             # How far the vacuum pulse reaches
+VACUUM_PULSE_PULL_SPEED = 40.0        # How fast items are vacuumed in
+VACUUM_PULSE_PARTICLE_COUNT = 20      # Particles on activation
+VACUUM_PULSE_RING_COLOR = color.rgb(255, 220, 80)  # Gold ring for the vacuum pulse
+
+# ─── Idle HP Regeneration ──────────────────────────────────────────────────────
+# When Zorp stands still for a few seconds without taking damage, HP slowly
+# regenerates — rewarding tactical pauses and reducing frustration from chip
+# damage in long fights. Encourages hit-and-run playstyle.
+IDLE_REGEN_DELAY = 3.0                # Seconds of inactivity before regen starts
+IDLE_REGEN_HP_PER_SECOND = 4           # HP restored per second while idle
+IDLE_REGEN_PARTICLE_INTERVAL = 1.0    # Seconds between idle regen heal particles
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -2628,6 +2652,18 @@ class Game:
         # Pulse Wave ability (Q key)
         self.pulse_wave_cooldown = 0.0
         self.pulse_wave_rings = []
+
+        # Collectible Vacuum Pulse (V key) — pulls all nearby collectibles
+        self.vacuum_pulse_cooldown = 0.0
+        self.vacuum_pulse_active_timer = 0.0  # >0 while the pulse is pulling
+        self.vacuum_pulse_rings = []           # Visual ring entities
+
+        # Auto-fire toggle (X key) — continuous shooting without holding mouse
+        self.auto_fire_enabled = False
+
+        # Idle HP regeneration — rewards standing still with slow HP regen
+        self.idle_timer = 0.0        # How long the player has been idle
+        self.idle_regen_tick = 0.0   # Accumulator for idle regen healing
         self.spawn_warnings = []  # Enemy spawn warning rings
         self.collect_spawn_rings = []  # Collectible spawn ground rings
 
@@ -3832,7 +3868,7 @@ class Game:
         self.mission_panel_shown = False
         self.mission_text = Text(text='', position=(-0.15, 0.35), scale=1.0, color=color.cyan, visible=False)
         self.controls_text = Text(
-            text='WASD:Move | RClick:Look | Click:Shoot | Space:Dash | E:Trade | M:Minimap | Tab:Missions | P:Pause',
+            text='WASD:Move | RClick:Look | Click:Shoot | X:AutoFire | Space:Dash | Q:Pulse | V:Vacuum | E:Trade | M:Minimap | Tab:Missions | P:Pause',
             position=(0, -0.47), origin=(0, 0), scale=0.8, color=color.gray
         )
         self.version_text = Text(text=f'v{VERSION}', position=(0.88, -0.47), scale=0.7, color=color.gray)
@@ -3939,6 +3975,26 @@ class Game:
         self.pulse_wave_text = Text(
             text='PULSE READY [Q]', position=(-0.75, 0.21), scale=0.85,
             color=color.rgb(0, 255, 200),
+        )
+        # Vacuum Pulse ability (V key) — collectible vacuum HUD
+        self.vacuum_pulse_text = Text(
+            text='VACUUM READY [V]', position=(-0.75, 0.17), scale=0.85,
+            color=color.rgb(255, 220, 80),
+        )
+        self.vacuum_cd_bar_bg = Entity(
+            parent=camera.ui, model='quad', color=ABILITY_BAR_BG_COLOR,
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=(-0.65, 0.155), origin=(-0.5, 0), visible=False,
+        )
+        self.vacuum_cd_bar = Entity(
+            parent=camera.ui, model='quad', color=color.rgba(255, 220, 80, 220),
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=(-0.65, 0.155), origin=(-0.5, 0), visible=False, z=-0.01,
+        )
+        # Auto-fire indicator — small text showing [AUTO] when auto-fire is on
+        self.auto_fire_text = Text(
+            text='', position=(-0.75, 0.13), scale=0.75,
+            color=color.rgba(255, 100, 255, 0),
         )
         self.spawn_heal_text = Text(
             text='', position=(0, -0.35), scale=1.0, color=color.rgb(100, 255, 100),
@@ -4780,6 +4836,35 @@ class Game:
             self.pulse_cd_bar_bg.visible = False
             self.pulse_cd_bar.visible = False
 
+        # ── Vacuum Pulse Cooldown Indicator ── Shows the collectible vacuum
+        # ability cooldown with a progress bar, matching the dash/pulse style.
+        if self.vacuum_pulse_cooldown > 0:
+            self.vacuum_pulse_text.text = f'VACUUM: {self.vacuum_pulse_cooldown:.1f}s'
+            self.vacuum_pulse_text.color = color.gray
+            cd_ratio = max(0, 1.0 - (self.vacuum_pulse_cooldown / VACUUM_PULSE_COOLDOWN))
+            self.vacuum_cd_bar_bg.visible = True
+            self.vacuum_cd_bar.visible = True
+            self.vacuum_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
+            # Color shifts from dim amber → bright gold as it nears ready
+            fill_r = int(140 + 115 * cd_ratio)
+            fill_g = int(100 + 120 * cd_ratio)
+            fill_b = int(30 + 50 * cd_ratio)
+            self.vacuum_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
+        else:
+            self.vacuum_pulse_text.text = 'VACUUM READY [V]'
+            self.vacuum_pulse_text.color = color.rgb(255, 220, 80)
+            self.vacuum_cd_bar_bg.visible = False
+            self.vacuum_cd_bar.visible = False
+
+        # ── Auto-Fire Indicator ── Shows [AUTO] in magenta when auto-fire is on
+        if self.auto_fire_enabled:
+            self.auto_fire_text.text = '⚡ AUTO-FIRE [X]'
+            # Gentle pulse so it's visible but not distracting
+            auto_pulse = 0.6 + 0.4 * math.sin(self.t * 3)
+            self.auto_fire_text.color = color.rgba(255, 100, 255, int(200 * auto_pulse))
+        else:
+            self.auto_fire_text.text = ''
+
         # ── Spawn Healing Zone Indicator ──
         spawn_cx = WORLD_SIZE // 2 * TILE_SCALE
         spawn_cz = WORLD_SIZE // 2 * TILE_SCALE
@@ -4787,6 +4872,11 @@ class Game:
         if hud_dist_spawn < SPAWN_HEAL_RADIUS:
             self.spawn_heal_text.text = '♥ HEALING ZONE'
             self.spawn_heal_text.color = color.rgb(100, 255, 100)
+        elif self.idle_timer >= IDLE_REGEN_DELAY and p.hp < p.max_hp:
+            # ── Idle Regen Indicator ── Show a "RESTING" hint when idle regen
+            # is active so the player understands why their HP is going up.
+            self.spawn_heal_text.text = '♥ RESTING (+HP)'
+            self.spawn_heal_text.color = color.rgb(150, 255, 180)
         else:
             self.spawn_heal_text.text = ''
 
@@ -4973,6 +5063,27 @@ class Game:
         self._spawn_particles(p.position + Vec3(0, 0.5, 0), PULSE_WAVE_RING_COLOR, count=10)
         self.add_message("PULSE WAVE!")
         self.screen_shake = max(self.screen_shake, 0.15)
+
+    def _activate_vacuum_pulse(self):
+        """Activate a collectible vacuum pulse that pulls all nearby items toward the player.
+
+        Creates an expanding gold ring visual and pulls all collectibles within
+        VACUUM_PULSE_RADIUS toward the player over a short duration.
+        """
+        if self.vacuum_pulse_cooldown > 0:
+            return
+        p = self.player
+        self.vacuum_pulse_cooldown = VACUUM_PULSE_COOLDOWN
+        self.vacuum_pulse_active_timer = 0.5  # Pull lasts half a second
+        # Visual: expanding gold ring
+        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z))
+        ring.color = VACUUM_PULSE_RING_COLOR
+        self.vacuum_pulse_rings.append(ring)
+        # Particle burst
+        self._spawn_particles(p.position + Vec3(0, 0.5, 0), VACUUM_PULSE_RING_COLOR,
+                              count=VACUUM_PULSE_PARTICLE_COUNT)
+        self.add_message("VACUUM PULSE!")
+        self.screen_shake = max(self.screen_shake, 0.1)
 
 
 def game_update():
@@ -5384,6 +5495,31 @@ def game_update():
         if game.pulse_wave_cooldown < 0:
             game.pulse_wave_cooldown = 0
 
+    # Vacuum Pulse cooldown — counts down like other ability cooldowns
+    if game.vacuum_pulse_cooldown > 0:
+        game.vacuum_pulse_cooldown -= time.dt
+        if game.vacuum_pulse_cooldown < 0:
+            game.vacuum_pulse_cooldown = 0
+
+    # ── Vacuum Pulse Active ── While the vacuum pulse is active, pull ALL
+    # collectibles within range toward the player at high speed.
+    if game.vacuum_pulse_active_timer > 0:
+        game.vacuum_pulse_active_timer -= time.dt
+        for col in game.collectibles:
+            if col.popping or col.spawn_timer > 0:
+                continue
+            col_dist = (col.position - p.position).length()
+            if col_dist < VACUUM_PULSE_RADIUS and col_dist > 0.5:
+                vacuum_dir = (p.position - col.position).normalized()
+                col.position += vacuum_dir * VACUUM_PULSE_PULL_SPEED * time.dt
+                col.rotation_y += 400 * time.dt  # Spin items as they get vacuumed
+
+    # Update vacuum pulse visual rings (reuse PulseWaveRing update logic)
+    for vpr in game.vacuum_pulse_rings[:]:
+        if vpr.update_ring(time.dt):
+            destroy(vpr)
+            game.vacuum_pulse_rings.remove(vpr)
+
     # Combo timer
     if game.combo_timer > 0:
         game.combo_timer -= time.dt
@@ -5405,6 +5541,27 @@ def game_update():
 
     # Track whether player is actually moving (for squish/stretch animation)
     p.is_moving = move_dir.length() > 0 and p.dash_timer <= 0
+
+    # ── Idle HP Regeneration ── When Zorp stands still (no movement input)
+    # for IDLE_REGEN_DELAY seconds, slowly regenerate HP. Taking damage or
+    # moving resets the idle timer. This rewards tactical pauses and reduces
+    # frustration from chip damage in long fights.
+    if p.is_moving or p.invuln_timer > 0:
+        game.idle_timer = 0.0
+    else:
+        game.idle_timer += time.dt
+
+    if game.idle_timer >= IDLE_REGEN_DELAY and p.hp < p.max_hp:
+        game.idle_regen_tick += time.dt
+        if game.idle_regen_tick >= 1.0:
+            game.idle_regen_tick = 0.0
+            heal_amt = min(IDLE_REGEN_HP_PER_SECOND, p.max_hp - p.hp)
+            if heal_amt > 0:
+                p.hp += heal_amt
+                game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                      color.rgb(100, 255, 150), count=3)
+    else:
+        game.idle_regen_tick = 0.0
 
     # ── Movement Dust ── Subtle dust puffs beneath the player while moving
     if p.is_moving:
@@ -5526,7 +5683,7 @@ def game_update():
         p.shoot_timer -= time.dt
 
     # Shooting
-    if mouse.left and not game.game_over:
+    if (mouse.left or game.auto_fire_enabled) and not game.game_over:
         game.shoot()
 
     # ── Level-up visual feedback ──
@@ -7128,6 +7285,27 @@ def game_update():
             game.achievement_panel_text.text = '\n'.join(lines)
     elif not held_keys['f']:
         game._f_held = False
+
+    # ── Auto-Fire Toggle (X key) ──
+    # Press X to toggle continuous auto-fire. When enabled, Zorp fires
+    # continuously without needing to hold the left mouse button — a major
+    # QoL improvement for a game where you shoot constantly.
+    if held_keys['x'] and not getattr(game, '_x_held', False):
+        game._x_held = True
+        game.auto_fire_enabled = not game.auto_fire_enabled
+        if game.auto_fire_enabled:
+            game.add_message("Auto-Fire ON")
+        else:
+            game.add_message("Auto-Fire OFF")
+    elif not held_keys['x']:
+        game._x_held = False
+
+    # ── Vacuum Pulse (V key) ──
+    if held_keys['v'] and not getattr(game, '_v_held', False):
+        game._v_held = True
+        game._activate_vacuum_pulse()
+    elif not held_keys['v']:
+        game._v_held = False
 
     # ── Trader respawn timer ──
     game.trader_spawn_timer -= time.dt

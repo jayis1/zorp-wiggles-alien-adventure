@@ -23,8 +23,10 @@ python game.py
 | **Right Click + Mouse** | Orbit camera / Look around |
 | **Mouse** | Aim at ground |
 | **Left Click** | Shoot tentacle laser |
+| **X** | Toggle auto-fire |
 | **Space** | Dash (dodge in movement direction) |
 | **Q** | Pulse Wave (push enemies away!) |
+| **V** | Vacuum Pulse (pull all nearby collectibles!) |
 | **F** | Toggle achievements panel |
 | **E** | Trade with Wandering Trader |
 | **M** | Toggle minimap |
@@ -33,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.16.1 — 3D!)
+## Features (v2.17.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -161,6 +163,9 @@ python game.py
 - **Crosshair dynamic recoil** — the crosshair expands briefly when you fire and smoothly contracts back to normal when idle, simulating weapon recoil and making aiming feel more alive — you can feel each shot fire instead of staring at a static reticle
 - **Score roll-up animation** — the score counter smoothly counts up to the new value instead of snapping instantly, making every kill, collectible, and mission reward feel tangible and rewarding as you watch the number climb
 - **Power-up expiry warning pulse** — when any active power-up or monolith buff timer drops below 3 seconds, the HUD text pulses red to warn you it's about to expire, giving you time to prepare instead of being caught off-guard mid-combat
+- **Auto-Fire toggle (X key)** — press X to toggle continuous auto-fire! When enabled, Zorp fires his tentacle laser automatically without needing to hold the left mouse button — a massive QoL improvement for a game where you shoot constantly. A pulsing magenta [AUTO-FIRE] indicator appears on the HUD when active. Press X again to turn it off
+- **Collectible Vacuum Pulse (V key)** — press V to unleash a vacuum pulse that pulls ALL collectibles within 15 units toward you at high speed! 12-second cooldown. Perfect for harvesting dense loot fields after a big combat engagement or when standing in the middle of a collectible-rich area. An expanding gold ring visual + particle burst makes the activation satisfying. A cooldown bar on the HUD shows when it's ready
+- **Idle HP Regeneration** — stand still for 3 seconds without moving or taking damage and Zorp slowly regenerates HP (4 HP/sec). Taking damage or moving resets the idle timer, so it rewards tactical pauses and reduces frustration from chip damage in long fights. A green "♥ RESTING (+HP)" indicator appears on the HUD when idle regen is active
 
 ## The Self-Improving Game
 
@@ -341,6 +346,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.17.0 — Auto-Fire, Vacuum Pulse & Idle Regen
+- **Auto-Fire Toggle (X key)**: Press X to toggle continuous auto-fire — Zorp fires his tentacle laser automatically without needing to hold the left mouse button! This is a massive quality-of-life improvement for a game where you're shooting constantly. A pulsing magenta "⚡ AUTO-FIRE [X]" indicator appears on the HUD when active. Press X again to toggle it off. Eliminates finger fatigue during long play sessions while still letting you click-to-shoot when you want manual control
+- **Collectible Vacuum Pulse (V key)**: A new active ability that pulls ALL collectibles within a 15-unit radius toward Zorp at high speed! 12-second cooldown. Perfect for harvesting dense loot fields after a big combat engagement or when standing in the middle of a collectible-rich area. An expanding gold ring visual + particle burst makes the activation satisfying, and a cooldown progress bar on the HUD (matching the dash/pulse wave bar style) shows when it's ready. Reuses the PulseWaveRing visual system for consistency
+- **Idle HP Regeneration**: When Zorp stands still (no movement input) for 3 seconds without taking damage, HP slowly regenerates at 4 HP/sec. Taking damage (which sets invuln_timer) or moving resets the idle timer. This rewards tactical pauses and reduces frustration from chip damage in long fights — you can retreat, catch your breath, and recover. A green "♥ RESTING (+HP)" indicator appears on the HUD when idle regen is active (integrated into the spawn healing zone text slot so it doesn't clutter the UI)
 
 ### v2.16.1 — Crosshair Recoil, Score Roll-Up & Power-Up Expiry Warning
 - **Crosshair dynamic recoil**: The crosshair now expands briefly when you fire (simulating weapon recoil) and smoothly contracts back to its normal size when idle. This makes aiming feel more alive and communicates weapon state at a glance — you can *feel* each shot fire instead of staring at a static reticle. The expansion scales with the recoil intensity and recovers smoothly over a fraction of a second, so rapid fire keeps the crosshair wide while careful single shots feel crisp
