@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.3"
+VERSION = "2.19.4"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -948,6 +948,36 @@ SCORE_ROLLUP_SPEED = 12.0               # Lerp speed for score number roll-up
 # player that the buff is about to expire so they can prepare.
 POWERUP_EXPIRY_WARNING_THRESHOLD = 3.0  # Seconds remaining before pulse warning
 POWERUP_EXPIRY_PULSE_SPEED = 10.0       # How fast the warning text pulses
+
+# ─── XP Bar Level-Up Anticipation Glow ──────────────────────────────────────
+# When the player is close to leveling up (XP bar nearly full), the XP bar
+# subtly glows brighter and pulses faster — building anticipation for the
+# imminent level-up. This makes progression feel more exciting in the final
+# stretch before each level, rewarding the player's effort with a visual
+# "almost there!" cue that complements the existing XP gain flash.
+XP_BAR_ANTICIPATION_THRESHOLD = 0.80   # XP ratio above which the anticipation glow starts
+XP_BAR_ANTICIPATION_PULSE_SPEED = 6.0  # Pulse speed at the threshold
+XP_BAR_ANTICIPATION_PULSE_SPEED_MAX = 14.0  # Pulse speed when nearly full (urgency)
+XP_BAR_ANTICIPATION_GLOW_ALPHA = 80    # Max extra alpha glow added to the bar
+
+# ─── Enemy Death Explosion Scale ─────────────────────────────────────────────
+# The kill particle burst size scales with the enemy's max HP — tougher
+# enemies produce bigger, more dramatic death explosions. A Swarm Mite pops
+# with a tiny puff while a Plasma Drake erupts in a massive particle storm,
+# making hard-fought kills feel proportionally more rewarding.
+DEATH_BURST_HP_BASE = 50           # HP at which the base particle count applies
+DEATH_BURST_SCALE_MIN = 0.6        # Multiplier for the weakest enemies
+DEATH_BURST_SCALE_MAX = 2.0        # Multiplier for the toughest enemies
+DEATH_BURST_SPREAD_MULT = 1.5      # How much farther big-enemy burst particles fly
+
+# ─── Dash Landing Impact Ring ────────────────────────────────────────────────
+# When the dash ends, an expanding ground ring radiates from Zorp's landing
+# point in addition to the existing dust burst — a clear visual "impact" cue
+# that makes dash landings feel weighty and dramatic instead of just stopping.
+DASH_LAND_RING_DURATION = 0.4       # How long the ring expands
+DASH_LAND_RING_START_SCALE = 0.5    # Starting scale of the ring
+DASH_LAND_RING_MAX_SCALE = 4.0      # Max scale the ring reaches
+DASH_LAND_RING_ALPHA = 130          # Starting alpha of the ring
 
 # ─── Auto-Fire Toggle (X key) ─────────────────────────────────────────────────
 # Press X to toggle continuous auto-fire. When enabled, Zorp fires
@@ -2170,6 +2200,43 @@ class HealPulseRing(Entity):
         return False
 
 
+# ─── Dash Landing Impact Ring ──────────────────────────────────────────────
+class DashLandRing(Entity):
+    """A brief expanding ring that radiates from Zorp's landing point when a dash ends.
+
+    Complements the existing dust burst and screen shake with a clear ground-level
+    visual that makes dash landings feel weighty and dramatic — you see and feel
+    the impact point instead of just stopping. The ring is biome-tinted to match
+    the environment for visual cohesion.
+    """
+
+    def __init__(self, position, col):
+        cr, cg, cb = _c255_color(col)
+        super().__init__(
+            model='quad',
+            color=color.rgba(cr, cg, cb, DASH_LAND_RING_ALPHA),
+            scale=DASH_LAND_RING_START_SCALE,
+            position=position + Vec3(0, 0.08, 0),
+            rotation_x=90,
+        )
+        self.lifetime = DASH_LAND_RING_DURATION
+        self.max_lifetime = DASH_LAND_RING_DURATION
+        self._r, self._g, self._b = cr, cg, cb
+
+    def update_ring(self, dt):
+        """Expand and fade the ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to max scale
+        self.scale = DASH_LAND_RING_START_SCALE + (DASH_LAND_RING_MAX_SCALE - DASH_LAND_RING_START_SCALE) * progress
+        # Fade alpha out smoothly
+        alpha = max(0, int(DASH_LAND_RING_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(self._r, self._g, self._b, alpha)
+        return False
+
+
 # ─── Collectible Spawn Ring ────────────────────────────────────────────────
 class CollectibleSpawnRing(Entity):
     """A brief expanding ground ring that radiates outward when a collectible
@@ -3087,6 +3154,7 @@ class Game:
         self.spawn_vortices = []  # Enemy spawn portal vortex discs
         self.heal_pulse_rings = []  # Healing pulse ring effects
         self.collect_spawn_rings = []  # Collectible spawn ground rings
+        self.dash_land_rings = []  # Dash landing impact rings
 
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
@@ -3520,6 +3588,12 @@ class Game:
             if csr and hasattr(csr, 'enabled') and csr.enabled:
                 destroy(csr)
         self.collect_spawn_rings.clear()
+
+        # Destroy dash landing rings
+        for dlr in self.dash_land_rings:
+            if dlr and hasattr(dlr, 'enabled') and dlr.enabled:
+                destroy(dlr)
+        self.dash_land_rings.clear()
 
         # Destroy spawn healing zone ring
         if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
@@ -4096,7 +4170,7 @@ class Game:
         self.game_over_text.visible = True
         self.game_over_text.text = 'GAME OVER'
         self.game_over_sub.visible = True
-        self.game_over_sub.text = f'Score: {p.score}  Level: {p.level}'
+        self.game_over_sub.text = f'Score: {p.score:,}  Level: {p.level}'
         total_kills = sum(p.kills.values())
         total_items = sum(p.inventory.values())
         time_alive = int(self.t)
@@ -4807,23 +4881,39 @@ class Game:
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
-    def _spawn_kill_burst(self, pos, col):
+    def _spawn_kill_burst(self, pos, col, enemy_max_hp=None):
         """Spawn a radial ring burst effect on enemy kills for more satisfying, explosive feedback.
 
         Unlike _spawn_collect_burst which is a flat ring, this creates particles that
         fly outward AND upward in a dramatic fountain pattern — making kills feel
         punchier and more impactful.
+
+        When enemy_max_hp is provided, the burst size and spread scale with the
+        enemy's toughness — a Swarm Mite produces a small puff while a Plasma Drake
+        erupts in a massive particle storm, making hard-fought kills feel
+        proportionally more rewarding.
         """
-        count = min(KILL_BURST_PARTICLE_COUNT, MAX_PARTICLES - len(self.particles))
+        # ── Death Explosion Scale ── Scale particle count and spread with the
+        # enemy's max HP. Tougher enemies produce bigger, more dramatic death
+        # explosions — a Swarm Mite (12 HP) gets a tiny puff while a Plasma
+        # Drake (350 HP) gets a massive particle storm.
+        scale_mult = 1.0
+        spread_mult = 1.0
+        if enemy_max_hp is not None and enemy_max_hp > 0:
+            # Logarithmic scaling: smooth ramp from weak to tough enemies
+            hp_ratio = enemy_max_hp / DEATH_BURST_HP_BASE
+            scale_mult = max(DEATH_BURST_SCALE_MIN, min(DEATH_BURST_SCALE_MAX, 0.5 + 0.5 * math.log2(max(1.0, hp_ratio))))
+            spread_mult = 1.0 + (scale_mult - 1.0) * (DEATH_BURST_SPREAD_MULT - 1.0) / (DEATH_BURST_SCALE_MAX - 1.0) if scale_mult > 1.0 else 1.0
+        count = min(int(KILL_BURST_PARTICLE_COUNT * scale_mult), MAX_PARTICLES - len(self.particles))
         if count <= 0:
             return
         cr, cg, cb = _c255_color(col)
         for i in range(count):
             angle = (i / count) * math.pi * 2 + random.uniform(-0.2, 0.2)
-            spread = random.uniform(KILL_BURST_SPREAD * 0.7, KILL_BURST_SPREAD)
+            spread = random.uniform(KILL_BURST_SPREAD * 0.7, KILL_BURST_SPREAD) * spread_mult
             vel = Vec3(
                 math.cos(angle) * spread,
-                random.uniform(KILL_BURST_UP_SPEED * 0.5, KILL_BURST_UP_SPEED * 1.5),
+                random.uniform(KILL_BURST_UP_SPEED * 0.5, KILL_BURST_UP_SPEED * 1.5) * scale_mult,
                 math.sin(angle) * spread,
             )
             # Color variation: shift RGB ±20% for natural, vibrant burst
@@ -4831,9 +4921,11 @@ class Game:
             g_var = max(0, min(255, int(cg * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
             b_var = max(0, min(255, int(cb * (1.0 + random.uniform(-PARTICLE_COLOR_VARIATION, PARTICLE_COLOR_VARIATION)))))
             varied_col = color.rgb(r_var, g_var, b_var)
-            p = Entity(model='sphere', color=varied_col, scale=random.uniform(0.15, 0.4),
+            # Particle size also scales with enemy toughness for bigger explosions
+            p_scale = random.uniform(0.15, 0.4) * (0.8 + 0.4 * min(1.5, scale_mult))
+            p = Entity(model='sphere', color=varied_col, scale=p_scale,
                        position=pos)
-            self.particles.append((p, vel, random.uniform(0.4, 0.9)))
+            self.particles.append((p, vel, random.uniform(0.4, 0.9) * min(1.5, scale_mult)))
 
     def _spawn_heal_pulse(self, position):
         """Spawn a healing pulse ring at the given position.
@@ -5083,7 +5175,30 @@ class Game:
             )
         else:
             self.xp_bar.scale_y = 0.015
-            self.xp_bar.color = C_PURPLE
+            # ── XP Bar Level-Up Anticipation Glow ── When the player is close
+            # to leveling up (XP bar nearly full), the bar subtly glows
+            # brighter and pulses faster — building anticipation for the
+            # imminent level-up. The glow intensity and pulse speed both
+            # increase as the bar fills closer to 100%, making the final
+            # stretch before each level feel exciting and rewarding.
+            if xp_ratio >= XP_BAR_ANTICIPATION_THRESHOLD:
+                # How close to full (0 at threshold, 1 at completely full)
+                anticipation_t = (xp_ratio - XP_BAR_ANTICIPATION_THRESHOLD) / (1.0 - XP_BAR_ANTICIPATION_THRESHOLD)
+                # Pulse speed ramps up with anticipation
+                pulse_speed = lerp(XP_BAR_ANTICIPATION_PULSE_SPEED, XP_BAR_ANTICIPATION_PULSE_SPEED_MAX, anticipation_t)
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+                # Scale the bar height slightly with the pulse for a "breathing" effect
+                self.xp_bar.scale_y = 0.015 * (1.0 + 0.15 * pulse * anticipation_t)
+                # Blend toward bright gold-white for a glowing anticipation effect
+                glow_amount = anticipation_t * pulse
+                pr, pg, pb = _c255_color(C_PURPLE)
+                self.xp_bar.color = color.rgb(
+                    min(255, int(pr + (255 - pr) * glow_amount * 0.8)),
+                    min(255, int(pg + (220 - pg) * glow_amount * 0.8)),
+                    min(255, int(pb + (80 - pb) * glow_amount * 0.8)),
+                )
+            else:
+                self.xp_bar.color = C_PURPLE
 
         self.level_text.text = f'Lv.{p.level}'
 
@@ -5096,7 +5211,7 @@ class Game:
                                         min(1.0, SCORE_ROLLUP_SPEED * time.dt))
         else:
             self.displayed_score = p.score
-        self.score_text.text = f'Score: {int(self.displayed_score)}'
+        self.score_text.text = f'Score: {int(self.displayed_score):,}'
         # Kill counter — shows total kills this run for progression feedback
         total_kills_hud = sum(p.kills.values())
         self.kills_text.text = f'Kills: {total_kills_hud}'
@@ -5994,6 +6109,11 @@ def game_update():
             if csr.update_ring(time.dt):
                 destroy(csr)
                 game.collect_spawn_rings.remove(csr)
+        # Update dash landing rings during freeze (visual only)
+        for dlr in game.dash_land_rings[:]:
+            if dlr.update_ring(time.dt):
+                destroy(dlr)
+                game.dash_land_rings.remove(dlr)
         # Update pulse wave rings during freeze (visual only)
         for pwr in game.pulse_wave_rings[:]:
             if pwr.update_ring(time.dt):
@@ -6123,6 +6243,12 @@ def game_update():
                                position=Vec3(p.x, 0.1, p.z))
                 game.particles.append((dust_p, vel, random.uniform(0.25, 0.55)))
             game.screen_shake = max(game.screen_shake, DASH_LAND_SCREEN_SHAKE)
+            # ── Dash Landing Impact Ring ── An expanding ground ring radiates
+            # from Zorp's landing point, complementing the dust burst and
+            # screen shake with a clear visual "impact" cue. Biome-tinted for
+            # visual cohesion with the environment.
+            ring_col = game._biome_dust_color(game.current_biome)
+            game.dash_land_rings.append(DashLandRing(position=Vec3(p.x, 0, p.z), col=ring_col))
     elif held_keys['space'] and p.dash_cooldown <= 0 and move_dir.length() > 0:
         # Initiate dash
         p.dash_direction = move_dir.normalized()
@@ -7512,7 +7638,7 @@ def game_update():
                                 p.score += int(nearby_enemy.max_hp * combo_score_mult)
                                 game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
                                 game._spawn_particles(nearby_enemy.position, nearby_enemy.original_color, count=PARTICLE_KILL_COUNT)
-                                game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color)
+                                game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color, enemy_max_hp=nearby_enemy.max_hp)
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 loot_range = ENEMY_LOOT_DROPS.get(nearby_enemy.name, (2, 4))
                                 for _ in range(random.randint(loot_range[0], loot_range[1])):
@@ -7600,7 +7726,8 @@ def game_update():
                             game.collectibles.append(c)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     # Kill burst: radial ring of particles for satisfying, explosive kill feedback
-                    game._spawn_kill_burst(enemy.position, enemy.original_color)
+                    # Scaled with enemy max HP — tougher enemies produce bigger death explosions
+                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
                     game.add_message(f"Defeated {enemy.name}!")
                     # Add to kill feed
                     game.kill_feed.append((game.t, f"✦ {enemy.name}"))
@@ -7773,6 +7900,13 @@ def game_update():
             destroy(csr)
             game.collect_spawn_rings.remove(csr)
 
+    # ── Update Dash Landing Impact Rings ── Expanding rings from dash landings
+    # are updated and removed when expired, providing a visual impact cue.
+    for dlr in game.dash_land_rings[:]:
+        if dlr.update_ring(time.dt):
+            destroy(dlr)
+            game.dash_land_rings.remove(dlr)
+
     # ── Update Heal Pulse Rings ── Expanding green rings from healing events
     # are updated and removed when expired. These are spawned by all heal sources
     # (Health Potion, Regen Crystal, Spawn Healing Zone, Healing Shrine, Idle
@@ -7846,7 +7980,7 @@ def game_update():
                             c = Collectible(position=drop_pos)
                             game.collectibles.append(c)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
-                    game._spawn_kill_burst(enemy.position, enemy.original_color)
+                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
                     game.add_message(f"Pulse Wave defeated {enemy.name}!")
                     game.kill_feed.append((game.t, f"🌀 {enemy.name}"))
 

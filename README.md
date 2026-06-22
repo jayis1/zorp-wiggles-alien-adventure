@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.19.3 — 3D!)
+## Features (v2.19.4 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -359,6 +359,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.19.4 — Death Explosion Scale, Dash Impact Ring, XP Anticipation & Score Formatting
+- **Enemy death explosion scale**: The kill particle burst now scales with the enemy's max HP — a Swarm Mite (12 HP) produces a small puff while a Plasma Drake (350 HP) erupts in a massive particle storm! Particle count, spread distance, upward velocity, particle size, and lifetime all scale logarithmically with enemy toughness, making hard-fought kills against tough enemies feel proportionally more rewarding and dramatic. A 350 HP boss produces 2x as many particles flying 1.5x farther than a standard kill
+- **Dash landing impact ring**: When a dash ends, an expanding biome-tinted ground ring radiates from Zorp's landing point in addition to the existing dust burst and screen shake — a clear visual "impact" cue that makes dash landings feel weighty and grounded instead of just stopping. The ring matches the current biome's dust color for visual cohesion (green on grass, tan on desert, etc.)
+- **XP bar level-up anticipation glow**: When the XP bar fills past 80%, it starts subtly glowing brighter and pulsing faster, building anticipation for the imminent level-up! The glow intensity and pulse speed both increase as the bar fills closer to 100%, with the color shifting from purple toward bright gold-white. The bar also gently "breathes" in height. This makes the final stretch before each level feel exciting — a visual "almost there!" cue that complements the existing XP gain flash
+- **Score number comma formatting**: The score counter (both in-game HUD and death screen) now displays large numbers with comma separators (e.g., "12,500" instead of "12500"), making high scores much easier to read at a glance
 
 ### v2.19.1 — Enemy Separation, Pull Trail & Spawn Bounce
 - **Enemy separation behavior**: Aggroed enemies now gently push apart when they get too close to each other, preventing the frustrating "ball of enemies" clumping problem where all chasing enemies stack into a single unreadable point. Enemies now naturally spread into a ring around the player, making combat more readable and tactical — you can actually see individual enemies to target instead of a single writhing mass. The separation force is proportional to proximity (stronger push when closer), only applies to aggroed enemies within visual range, and respects walkability so enemies don't push each other into water/lava
