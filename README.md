@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.19.0 — 3D!)
+## Features (v2.19.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -353,6 +353,16 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.19.1 — Enemy Separation, Pull Trail & Spawn Bounce
+- **Enemy separation behavior**: Aggroed enemies now gently push apart when they get too close to each other, preventing the frustrating "ball of enemies" clumping problem where all chasing enemies stack into a single unreadable point. Enemies now naturally spread into a ring around the player, making combat more readable and tactical — you can actually see individual enemies to target instead of a single writhing mass. The separation force is proportional to proximity (stronger push when closer), only applies to aggroed enemies within visual range, and respects walkability so enemies don't push each other into water/lava
+- **Collectible pull motion trail**: When collectibles are being magnetically pulled toward the player, they now leave a brief fading trail dot in the item's color behind them. This makes the magnetic pull feel fast and fluid — you see the streak of the item's path as it zips toward you, making pickups feel more visually satisfying instead of items appearing to teleport frame by frame. The trail dots spawn every 0.045 seconds during active pull and fade over 0.2 seconds, creating a smooth comet-tail effect
+- **Enemy spawn bounce**: The enemy spawn fade-in animation now ends with a subtle scale overshoot — a bouncy "pop in" instead of a linear ramp to full size. During the final 15% of the spawn animation, the enemy briefly scales to 108% before settling to 100%, making enemies feel more alive and impactful when they materialize. Combined with the existing materialization burst particles and color flash, enemy spawns now have a complete satisfying arc from warning ring to bounce-in
+
+### v2.19.0 — Overheal Barrier, Adrenaline Rush, Treasure Compass
+- **Overheal Barrier**: When you pick up a Health Potion at full HP, the excess healing converts into a temporary overheal barrier (up to 60 HP) that absorbs damage before your real HP is reduced! The barrier decays over time (6 HP/sec after a 3-second delay), so it's a temporary combat buffer — not a permanent HP increase. A golden HP bar extension and pulsing golden ring around Zorp visualize the barrier. Makes Health Potions valuable even in late-game when you're often at full HP!
+- **Adrenaline Rush**: When Zorp's HP drops below 20%, a burst of adrenaline triggers: **+35% movement speed** and **+50% fire rate** for 4 seconds! A red-orange screen-edge vignette pulses with urgency, and an orange glow ring appears around the player. This creates dramatic clutch moments — a "fight or flight" last chance to turn the tide. Re-triggers after HP recovers above the threshold and drops again
+- **Treasure Compass**: Stand still for 2 seconds and a golden directional arrow appears on the HUD, pointing toward the nearest rare-or-better collectible within 80 units! The arrow rotates in real-time and pulses bigger as you get closer to the target. Fades out smoothly when you start moving again. Makes downtime useful and encourages exploration — no more wandering aimlessly looking for valuable loot!
 
 ### v2.18.2 — Tentacle Recoil, Dash Afterimage Trail & Pickup Snap
 - **Tentacle recoil on shoot**: All four of Zorp's tentacles now physically whip backward on every shot and spring back to normal, simulating weapon recoil on the character model. The recoil decays exponentially over 0.12 seconds for a quick snap-then-spring-back feel — you see and feel each shot through the tentacles, not just the muzzle flash and crosshair. The whip angle (55° max) is applied as an additive rotation on top of the normal sinusoidal wave animation, so the tentacles stay alive and waving while still reacting to each trigger pull. Combined with the existing muzzle flash player tint and crosshair recoil, every shot now has three layers of physical feedback on the character model and HUD

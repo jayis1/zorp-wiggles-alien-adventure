@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.0"
+VERSION = "2.19.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -42,6 +42,12 @@ ENEMY_ATTACK_RANGE = 2.0            # Tighter melee range — more dodge room fo
 ENEMY_ATTACK_COOLDOWN = 1.2         # Slower enemy attacks — more readable patterns
 ENEMY_ALERT_FLASH_DURATION = 0.3   # How long enemies flash when they first detect the player
 ENEMY_SPAWN_GRACE_PERIOD = 2.0     # Seconds after spawn before enemies detect the player — prevents instant-aggro
+# ─── Enemy Spawn Bounce ──────────────────────────────────────────────────────
+# The spawn fade-in animation gets a slight scale overshoot at the end — a
+# bouncy "pop in" instead of a linear ramp to full size. Makes enemies feel
+# more alive and impactful when they materialize.
+ENEMY_SPAWN_BOUNCE_START = 0.85   # Progress point where bounce begins (0-1)
+ENEMY_SPAWN_BOUNCE_PEAK = 1.08    # Peak scale multiplier during bounce
 # ─── Enemy Alert Indicator ──────────────────────────────────────────────────────
 # When an enemy first detects the player, a brief "!" exclamation mark pops up
 # above its head (billboard text) so the player immediately knows they've been
@@ -56,6 +62,13 @@ ENEMY_WANDER_SPEED_FACTOR = 0.20
 ENEMY_WANDER_INTERVAL_MIN = 2.0
 ENEMY_WANDER_INTERVAL_MAX = 5.0
 ENEMY_WANDER_DIR_JITTER = 1.0
+
+# ─── Enemy Separation ──────────────────────────────────────────────────────────
+# Enemies gently push apart when too close, preventing the "ball of enemies"
+# clumping problem. This makes combat more readable — enemies form a natural
+# ring around the player instead of stacking into a single point.
+ENEMY_SEPARATION_RADIUS = 2.5  # How close enemies get before pushing apart
+ENEMY_SEPARATION_FORCE = 5.0   # Push strength when enemies are too close
 
 # ─── Spawning ─────────────────────────────────────────────────────────────────
 MAX_ACTIVE_ENEMIES = 40
@@ -238,6 +251,16 @@ TENTACLE_RECOIL_RECOVERY = 14.0    # How fast tentacles spring back to normal
 # speed that makes pickups feel snappy and responsive.
 COLLECT_SNAP_RADIUS = 1.5          # Within this distance, snap boost activates
 COLLECT_SNAP_STRENGTH = 2.5        # Pull strength multiplier during the final snap
+
+# ─── Collectible Pull Motion Trail ──────────────────────────────────────────
+# When a collectible is being magnetically pulled toward the player, it leaves a
+# brief fading trail dot behind so items in motion feel fast and fluid — the
+# trail communicates speed and direction, making the magnetic pull more visually
+# satisfying instead of items appearing to teleport frame by frame.
+COLLECT_PULL_TRAIL_INTERVAL = 0.045  # Seconds between trail dot spawns while pulling
+COLLECT_PULL_TRAIL_LIFETIME = 0.20    # How long each trail dot lives
+COLLECT_PULL_TRAIL_START_SCALE = 0.20  # Initial scale of trail dot
+COLLECT_PULL_TRAIL_END_SCALE = 0.02    # Scale at end of trail dot life
 
 # ─── Movement Dust ──────────────────────────────────────────────────────────
 MOVEMENT_DUST_INTERVAL = 0.12       # Seconds between dust puffs while moving
@@ -1844,6 +1867,9 @@ class Collectible(Entity):
         # Spawn-finished flag — set True for one frame when the spawn animation
         # completes, so the game loop can emit a spawn sparkle burst
         self.spawn_just_finished = False
+        # Pull trail timer — tracks time between trail dot spawns while the
+        # collectible is being magnetically pulled toward the player
+        self.pull_trail_timer = 0.0
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
@@ -6406,11 +6432,23 @@ def game_update():
 
         # ── Spawn Fade-In ── Newly spawned enemies fade in over the grace period
         # for a polished "materializing" effect instead of popping in instantly.
+        # The final 15% of the animation adds a slight scale overshoot (bounce)
+        # so the enemy "pops" into existence rather than linearly growing.
         spawn_age = game.t - enemy.spawn_time if hasattr(enemy, 'spawn_time') and enemy.spawn_time > 0 else 999
         if spawn_age < ENEMY_SPAWN_GRACE_PERIOD:
             fade_t = min(1.0, spawn_age / ENEMY_SPAWN_GRACE_PERIOD)
-            # Scale up from small to full size during fade-in
-            enemy.scale = enemy.original_scale * max(0.3, fade_t)
+            # Scale up from small to full size during fade-in, with a bouncy
+            # overshoot at the end for a more satisfying "pop in" effect
+            if fade_t < ENEMY_SPAWN_BOUNCE_START:
+                # Linear ramp from 0.3 to 1.0 during the main phase
+                ramp_t = fade_t / ENEMY_SPAWN_BOUNCE_START
+                enemy.scale = enemy.original_scale * max(0.3, ramp_t)
+            else:
+                # Bounce phase: overshoot to ENEMY_SPAWN_BOUNCE_PEAK then settle
+                bounce_t = (fade_t - ENEMY_SPAWN_BOUNCE_START) / (1.0 - ENEMY_SPAWN_BOUNCE_START)
+                # Sine-based overshoot: peaks at bounce_t=0.5, settles to 1.0
+                bounce_mult = 1.0 + (ENEMY_SPAWN_BOUNCE_PEAK - 1.0) * math.sin(bounce_t * math.pi)
+                enemy.scale = enemy.original_scale * bounce_mult
             # Tint toward white then settle to original color
             if fade_t < 0.5:
                 # Flash bright white/cyan at spawn, then settle
@@ -6491,6 +6529,31 @@ def game_update():
                     enemy.z += move_step.z
             # Smooth rotation toward player instead of snap-rotate
             game._smooth_rotate_toward(enemy, p.position, ENEMY_TURN_SPEED, time.dt)
+
+            # ── Enemy Separation ── Push apart from nearby enemies to prevent
+            # clumping. When multiple enemies chase the player they tend to
+            # stack into a single point, making combat confusing and hard to
+            # read. This simple separation force makes them naturally spread
+            # into a ring around the player. Only applies to aggroed enemies
+            # within visual range to avoid performance overhead.
+            if dist_to_player < VISUAL_CULL_RANGE:
+                for other in game.enemies:
+                    if other is enemy or not other.alive or other.dying:
+                        continue
+                    if not other.alerted:
+                        continue
+                    sep_dx = enemy.x - other.x
+                    sep_dz = enemy.z - other.z
+                    sep_dist_sq = sep_dx * sep_dx + sep_dz * sep_dz
+                    if sep_dist_sq < ENEMY_SEPARATION_RADIUS * ENEMY_SEPARATION_RADIUS and sep_dist_sq > 0.01:
+                        sep_dist = math.sqrt(sep_dist_sq)
+                        # Stronger push when closer — inverse distance falloff
+                        push_strength = ENEMY_SEPARATION_FORCE * (1.0 - sep_dist / ENEMY_SEPARATION_RADIUS)
+                        push_x = (sep_dx / sep_dist) * push_strength * time.dt
+                        push_z = (sep_dz / sep_dist) * push_strength * time.dt
+                        if game._is_walkable(enemy.x + push_x, enemy.z + push_z):
+                            enemy.x += push_x
+                            enemy.z += push_z
 
             # ── Phase Shifter: Teleport near player periodically ──
             # PERFORMANCE: skip complex special AI for distant enemies
@@ -7601,6 +7664,25 @@ def game_update():
                 # passing to color.rgba() which expects 0-255 values.
                 ir, ig, ib = _c255_color(col.item_color)
                 col.glow.color = color.rgba(ir, ig, ib, glow_alpha)
+                # ── Collectible Pull Motion Trail ── While being pulled, spawn
+                # brief fading trail dots at the item's current position so the
+                # magnetic pull feels fast and fluid. The trail communicates
+                # speed and direction, making the pull visually satisfying
+                # instead of the item appearing to teleport frame by frame.
+                col.pull_trail_timer += time.dt
+                if col.pull_trail_timer >= COLLECT_PULL_TRAIL_INTERVAL:
+                    col.pull_trail_timer = 0.0
+                    tr, tg, tb = _c255_color(col.item_color)
+                    trail_dot = Entity(
+                        model='sphere',
+                        color=color.rgba(tr, tg, tb, 120),
+                        scale=COLLECT_PULL_TRAIL_START_SCALE,
+                        position=Vec3(col.x, col.y, col.z),
+                    )
+                    game.particles.append((trail_dot, Vec3(0, 0, 0), COLLECT_PULL_TRAIL_LIFETIME))
+            else:
+                # Not being pulled — reset trail timer
+                col.pull_trail_timer = 0.0
         # Level-scaled collection radius — grows slightly with player level
         # (rewards progression with smoother collection, as advertised in README)
         level_collect_bonus = (p.level - 1) * COLLECT_RADIUS_PER_LEVEL
