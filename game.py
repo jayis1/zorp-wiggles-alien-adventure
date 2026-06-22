@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.1"
+VERSION = "2.19.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -140,6 +140,15 @@ ENEMY_HIT_RIPPLE_DURATION = 0.5       # How long the expanding impact ring lasts
 ENEMY_HIT_RIPPLE_EXPAND_SPEED = 8.0   # How fast the impact ring expands
 ENEMY_HIT_RIPPLE_MAX_SCALE = 3.0      # Maximum scale the impact ring reaches
 ENEMY_HIT_RIPPLE_START_SCALE = 0.3    # Starting scale of the impact ring
+# ─── Enemy Hit Flash Tint ────────────────────────────────────────────────────
+# On hit, enemies flash a brightened version of their OWN color instead of pure
+# white. This produces cohesive, target-tinted feedback — hitting a Lava Crawler
+# yields a bright orange flash, hitting a Crystal Guardian yields bright cyan —
+# making each impact feel tailored to the enemy instead of a generic white wash.
+# The brightened tint is computed by lerping the enemy's original color toward
+# white by ENEMY_HIT_FLASH_BRIGHTNESS (0.85 = 85% toward white, retaining a hint
+# of the enemy's hue for a more polished, less harsh flash).
+ENEMY_HIT_FLASH_BRIGHTNESS = 0.85  # How far to lerp enemy color toward white on hit (0=own color, 1=white)
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -165,6 +174,14 @@ MUZZLE_FLASH_PLAYER_TINT_COLOR = color.rgb(180, 255, 255)  # Bright cyan-white
 # ─── Projectile Glow Aura ──────────────────────────────────────────────────────
 PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
 PROJECTILE_AURA_SCALE = 1.8                           # Aura sphere scale multiplier (relative to projectile)
+# ─── Projectile Bolt Stretch ──────────────────────────────────────────────────
+# Projectiles are stretched into elongated bolt shapes aligned with their travel
+# direction, making the tentacle laser look like a streaking energy bolt instead
+# of a round dot. The stretch is applied as a non-uniform scale (long in the
+# direction of travel, normal perpendicular) so the bolt visibly streaks through
+# the air — a simple but dramatic visual upgrade to the core combat feel.
+PROJECTILE_BOLT_LENGTH = 2.2   # Scale multiplier along travel direction (elongated)
+PROJECTILE_BOLT_WIDTH = 0.7    # Scale multiplier perpendicular to travel (slightly compressed)
 # Combo-scaling aura: as the combo grows, the projectile aura pulses faster and
 # brighter — the laser visually "charges up" during kill streaks, making high
 # combos feel more powerful and giving immediate visual feedback that you're on
@@ -192,6 +209,15 @@ PLAYER_SQUISH_AMOUNT = 0.18   # How much the player squishes on landing/moving
 PLAYER_SQUISH_SPEED = 8.0     # How fast the squish animation runs
 PLAYER_STRETCH_FACTOR = 1.14  # Y stretch when moving (elongated alien look)
 PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
+
+# ─── Player Stop Squish ──────────────────────────────────────────────────────
+# When the player decelerates from a run to a near-stop, Zorp briefly squishes
+# (compressed Y, bulged XZ) and recovers elastically — a subtle "landing" feel
+# that makes stopping feel weighty and grounded instead of just freezing.
+# Complements the existing dash landing squish but is much gentler.
+PLAYER_STOP_SQUISH_AMOUNT = 0.12     # Max Y compression on stop (0.12 = squished to 88% height)
+PLAYER_STOP_SQUISH_THRESHOLD = 3.0   # Velocity magnitude that triggers the squish when dropping below
+PLAYER_STOP_SQUISH_RECOVERY = 10.0   # How fast the stop squish recovers to normal
 
 # ─── Player Damage Scale Punch ──────────────────────────────────────────────
 # When the player takes damage, the model briefly squashes (flat Y, bulged XZ)
@@ -1265,6 +1291,12 @@ class Player(Entity):
         # Squish/stretch animation state
         self.squish_current = 1.0  # Current Y scale (1.0 = normal)
         self.is_moving = False
+        # Previous-frame velocity magnitude — used to detect deceleration-to-stop
+        # for the stop squish reaction
+        self._prev_speed = 0.0
+        # Stop squish timer — decays from 1.0 to 0; while > 0, a gentle squish
+        # is applied in animate_bob() for a weighty "landing" feel on stop
+        self.stop_squish = 0.0
         # Level-up scale bounce timer — integrates with animate_bob for satisfying pop
         self.level_up_scale_timer = 0.0
         # Damage scale punch — brief squish reaction when the player takes damage,
@@ -1428,6 +1460,27 @@ class Player(Entity):
             y_compression = 1.0 - PLAYER_DAMAGE_PUNCH_AMOUNT * punch_t
             xz_bulge = 1.0 + PLAYER_DAMAGE_PUNCH_AMOUNT * 0.6 * punch_t
             self.scale = Vec3(xz_scale * xz_bulge, y_scale * self.dash_land_squish * y_compression, xz_scale * xz_bulge)
+
+        # ── Stop Squish ── When the player decelerates from a run to a near-stop,
+        # Zorp briefly squishes (compressed Y, bulged XZ) and recovers elastically
+        # — a subtle "landing" feel that makes stopping feel weighty and grounded
+        # instead of just freezing in place. The squish is triggered in
+        # game_update when velocity drops below the threshold from a running speed,
+        # and decays here for a quick pop-then-recover. Much gentler than the
+        # damage punch and dash landing squish so it composes cleanly with them.
+        if self.stop_squish > 0:
+            self.stop_squish -= time.dt * PLAYER_STOP_SQUISH_RECOVERY
+            if self.stop_squish < 0:
+                self.stop_squish = 0
+            stop_t = self.stop_squish  # 1.0 → 0.0
+            stop_y_comp = 1.0 - PLAYER_STOP_SQUISH_AMOUNT * stop_t
+            stop_xz_bulge = 1.0 + PLAYER_STOP_SQUISH_AMOUNT * 0.5 * stop_t
+            # Compose with whatever scale was already set (squish or damage punch)
+            self.scale = Vec3(
+                self.scale_x * stop_xz_bulge,
+                self.scale_y * stop_y_comp,
+                self.scale_z * stop_xz_bulge,
+            )
 
     def set_facing_from_mouse(self, cam_pivot):
         """Point the alien toward where the mouse ray hits the ground."""
@@ -1668,7 +1721,23 @@ class Enemy(Entity):
         self.hp -= amount
         self.hit_flash = ENEMY_HIT_FLASH_DURATION
         self.hit_scale_punch = 1.0  # Trigger scale punch animation
-        self.color = color.white
+        # ── Enemy Hit Flash Tint ── Flash a brightened version of the enemy's
+        # own color instead of pure white — hitting a Lava Crawler produces a
+        # bright orange flash, hitting a Crystal Guardian produces bright cyan.
+        # This makes each impact feel tailored to the target instead of a
+        # generic white wash, producing more cohesive and polished feedback.
+        # BUG FIX: Use _c255_color() to normalize — original_color may be a
+        # named color (0-1 range) or color.rgb() (0-255 range). Arithmetic on
+        # 0-1 values produces wrong results (e.g. 0.196*0.85+255*0.15=38.4
+        # instead of the correct 170*0.15+255*0.85=242).
+        or_, og, ob = _c255_color(self.original_color)
+        b = ENEMY_HIT_FLASH_BRIGHTNESS
+        flash_col = color.rgb(
+            min(255, int(or_ * (1 - b) + 255 * b)),
+            min(255, int(og * (1 - b) + 255 * b)),
+            min(255, int(ob * (1 - b) + 255 * b)),
+        )
+        self.color = flash_col
         invoke(setattr, self, 'color', self.original_color, delay=ENEMY_HIT_FLASH_DURATION)
         # Apply knockback if a direction is provided
         if hit_direction and hit_direction.length() > 0.01:
@@ -2607,6 +2676,15 @@ class Projectile(Entity):
         self.damage = damage
         self.speed = speed
         self.lifetime = PROJECTILE_LIFETIME
+
+        # ── Bolt Stretch ── Orient the projectile so its local Z axis aligns
+        # with the travel direction, then apply a non-uniform scale that
+        # stretches it along Z (length) and slightly compresses it along X/Y
+        # (width). This turns the round sphere into a streaking energy bolt
+        # that visibly points in the direction it's traveling — a dramatic
+        # visual upgrade to the core combat feel.
+        self.look_at(position + self.direction)
+        self.scale = Vec3(PROJECTILE_BOLT_WIDTH, PROJECTILE_BOLT_WIDTH, PROJECTILE_BOLT_LENGTH)
 
         # Soft glow aura — a larger translucent sphere parented to the projectile
         # that gives the shot an energy-ball look without any lighting cost
@@ -6317,6 +6395,18 @@ def game_update():
                 p.facing = p.velocity.normalized()
     else:
         p.velocity = Vec3(0, 0, 0)  # Reset velocity during dash
+
+    # ── Stop Squish Trigger ── Detect when the player decelerates from a run
+    # to a near-stop and trigger a gentle squish reaction. We compare the
+    # current speed against the previous frame's speed: if we were running
+    # (above threshold) and now we're nearly stopped (below threshold), fire
+    # the squish. This makes stopping feel weighty — Zorp "lands" from a run.
+    if p.dash_timer <= 0:
+        current_speed = p.velocity.length()
+        if (p._prev_speed >= PLAYER_STOP_SQUISH_THRESHOLD
+                and current_speed < PLAYER_STOP_SQUISH_THRESHOLD):
+            p.stop_squish = 1.0
+        p._prev_speed = current_speed
 
     # Face mouse
     hit = mouse.world_point

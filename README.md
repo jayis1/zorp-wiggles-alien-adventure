@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.19.1 — 3D!)
+## Features (v2.19.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -172,6 +172,9 @@ python game.py
 - **Overheal Barrier** — when you pick up a Health Potion at full HP, the excess healing converts into a temporary overheal barrier (up to 60 HP) that absorbs damage before your real HP is reduced! The barrier decays over time (6 HP/sec after a 3-second delay), so it's a temporary combat buffer — not a permanent HP increase. A golden HP bar extension and pulsing golden ring around Zorp visualize the barrier. Makes Health Potions valuable even in late-game when you're often at full HP!
 - **Adrenaline Rush** — when Zorp's HP drops below 20%, a burst of adrenaline triggers: **+35% movement speed** and **+50% fire rate** for 4 seconds! A red-orange screen-edge vignette pulses with urgency, and an orange glow ring appears around the player. This creates dramatic clutch moments — a "fight or flight" last chance to turn the tide. Re-triggers after HP recovers above the threshold and drops again
 - **Treasure Compass** — stand still for 2 seconds and a golden directional arrow appears on the HUD, pointing toward the nearest rare-or-better collectible within 80 units! The arrow rotates in real-time and pulses bigger as you get closer to the target. Fades out smoothly when you start moving again. Makes downtime useful and encourages exploration — no more wandering aimlessly looking for valuable loot!
+- **Player stop squish** — when Zorp decelerates from a run to a near-stop, the model briefly squishes (compressed Y, bulged XZ) and recovers elastically — a subtle "landing" feel that makes stopping feel weighty and grounded instead of just freezing in place. Complements the existing dash landing squish but is much gentler, so normal gameplay stops feel responsive and alive
+- **Enemy hit flash tint** — enemies now flash a brightened version of their OWN color when hit instead of pure white! Hitting a Lava Crawler produces a bright orange flash, hitting a Crystal Guardian produces bright cyan — each impact feels tailored to the target instead of a generic white wash, producing more cohesive and polished combat feedback
+- **Projectile bolt stretch** — tentacle laser shots are now stretched into elongated energy bolts aligned with their travel direction, making them look like streaking comets instead of round dots. The bolt visibly points where it's going, dramatically improving the core combat visual feel and making every shot look fast and powerful
 
 ## The Self-Improving Game
 
