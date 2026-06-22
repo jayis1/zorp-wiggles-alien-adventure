@@ -2293,8 +2293,13 @@ class AlienMonolith:
                 bc = self.BUFF_COLORS.get(self.active_buff, color.rgb(150, 100, 255))
                 glow_a = int(100 + 50 * math.sin(t * 4))
                 self.cap.color = bc
-                self.ring.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), glow_a)
-                self.ground_glow.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), 40)
+                # BUG FIX: bc components are 0-1 normalized floats (Ursina stores
+                # color.rgb() values as 0-1 internally). int(0.196)=0, int(1.0)=1,
+                # etc. — so the ring/glow were always black (rgba(0,0,0,alpha))
+                # instead of the buff color. Use _c255_color() to normalize.
+                bcr, bcg, bcb = _c255_color(bc)
+                self.ring.color = color.rgba(bcr, bcg, bcb, glow_a)
+                self.ground_glow.color = color.rgba(bcr, bcg, bcb, 40)
             else:
                 bright_a = int(80 + 40 * math.sin(t * 3))
                 self.cap.color = color.rgb(180, 140, 255)
@@ -2992,10 +2997,13 @@ class Game:
             twinkle_offset = random.uniform(0, math.pi * 2)
             # Pick a star color from the varied palette for richer sky visuals
             star_base_color = random.choice(STAR_COLORS)
+            # BUG FIX: STAR_COLORS use color.rgba() which stores components as
+            # 0-1 normalized floats in Ursina. int(1.0)=1 instead of 255, making
+            # stars nearly invisible. Use _c255_color() to normalize to 0-255.
+            sbr, sbg, sbb = _c255_color(star_base_color)
             star = Entity(
                 model='quad',
-                color=color.rgba(int(star_base_color[0]), int(star_base_color[1]),
-                                 int(star_base_color[2]), int(255 * brightness)),
+                color=color.rgba(sbr, sbg, sbb, int(255 * brightness)),
                 scale=star_size,
                 position=(sx, sy, sz),
                 billboard=True,
@@ -3025,10 +3033,13 @@ class Game:
             nz = random.uniform(-NEBULA_SPREAD, NEBULA_SPREAD)
             nebula_size = random.uniform(30, 80)
             nebula_color = nebula_palette[i % len(nebula_palette)]
+            # BUG FIX: nebula_palette uses color.rgb() which stores components
+            # as 0-1 normalized floats in Ursina. int(0.392)=0, int(0.118)=0,
+            # etc. — making nebula clouds black. Use _c255_color() to normalize.
+            ncr, ncg, ncb = _c255_color(nebula_color)
             cloud = Entity(
                 model='quad',
-                color=color.rgba(int(nebula_color[0]), int(nebula_color[1]),
-                                 int(nebula_color[2]), 25),
+                color=color.rgba(ncr, ncg, ncb, 25),
                 scale=nebula_size,
                 position=(nx, ny, nz),
                 billboard=True,
@@ -3057,10 +3068,13 @@ class Game:
             glow_size = random.uniform(60, 120)
             glow_color = horizon_palette[i % len(horizon_palette)]
             glow_alpha = HORIZON_GLOW_ALPHA_BASE + random.randint(-10, 10)
+            # BUG FIX: horizon_palette uses color.rgb() which stores components
+            # as 0-1 normalized floats in Ursina. int(0.392)=0, int(0.118)=0,
+            # etc. — making horizon glows black. Use _c255_color() to normalize.
+            gcr, gcg, gcb = _c255_color(glow_color)
             horizon_glow = Entity(
                 model='quad',
-                color=color.rgba(int(glow_color[0]), int(glow_color[1]),
-                                 int(glow_color[2]), glow_alpha),
+                color=color.rgba(gcr, gcg, gcb, glow_alpha),
                 scale=glow_size,
                 position=(gx, gy, gz),
                 billboard=True,
@@ -3283,6 +3297,15 @@ class Game:
                 destroy(pwr)
         self.pulse_wave_rings.clear()
 
+        # BUG FIX: Destroy vacuum pulse rings — these were missing from cleanup,
+        # causing entity leaks on restart. Each vacuum pulse spawns a
+        # PulseWaveRing entity that must be destroyed before the new Game() is
+        # created, otherwise stale rings linger in the scene.
+        for vpr in self.vacuum_pulse_rings:
+            if vpr and hasattr(vpr, 'enabled') and vpr.enabled:
+                destroy(vpr)
+        self.vacuum_pulse_rings.clear()
+
         # Destroy spawn warning rings
         for sw in self.spawn_warnings:
             if sw and hasattr(sw, 'enabled') and sw.enabled:
@@ -3407,7 +3430,9 @@ class Game:
                       'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
                       'heal_flash', 'combo_edge_glow', 'threat_counter_text',
                       'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
-                      'compass_arrow'):
+                      'compass_arrow',
+                      'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
+                      'auto_fire_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -3726,9 +3751,14 @@ class Game:
             A Ursina Color suitable for dust particles.
         """
         biome_col = BIOME_COLORS.get(biome, C_GRASS)
-        dust_r = min(255, int(biome_col[0] * 0.7 + 80))
-        dust_g = min(255, int(biome_col[1] * 0.7 + 60))
-        dust_b = min(255, int(biome_col[2] * 0.6 + 70))
+        # BUG FIX: biome_col components are 0-1 normalized floats (Ursina stores
+        # color.rgb() values as 0-1 internally). int(0.039*0.7+80)=80 instead of
+        # int(10*0.7+80)=87. Without this fix, dust color was always ~rgb(80,60,70)
+        # regardless of biome — no biome tinting at all. Use _c255_color() first.
+        dr, dg, db = _c255_color(biome_col)
+        dust_r = min(255, int(dr * 0.7 + 80))
+        dust_g = min(255, int(dg * 0.7 + 60))
+        dust_b = min(255, int(db * 0.6 + 70))
         return color.rgb(dust_r, dust_g, dust_b)
 
     @staticmethod
@@ -4333,9 +4363,11 @@ class Game:
                 wy = min(int(my * scale_factor), WORLD_SIZE - 1)
                 biome = self.world_grid[wy][wx]
                 c = BIOME_COLORS.get(biome, C_GRASS)
-                r = min(255, max(0, int(c[0])))
-                g = min(255, max(0, int(c[1])))
-                b = min(255, max(0, int(c[2])))
+                # BUG FIX: c components are 0-1 normalized floats (Ursina stores
+                # color.rgb() values as 0-1 internally). int(0.039)=0, int(0.706)=0,
+                # etc. — so the minimap was entirely black. Use _c255_color() to
+                # normalize to 0-255 for the PIL texture pixel values.
+                r, g, b = _c255_color(c)
                 img.putpixel((mx, my), (r, g, b))
 
         minimap_texture = Texture(img)
@@ -4797,11 +4829,18 @@ class Game:
             scale_pulse = 1.0 + (XP_GAIN_FLASH_SCALE_MULT - 1.0) * flash_ratio
             self.xp_bar.scale_y = 0.015 * scale_pulse
             # Color flash: blend from bright white-cyan toward normal purple
+            # BUG FIX: C_PURPLE components are stored as 0-1 normalized floats
+            # by Ursina (color.rgb(170,0,255) → Color(0.667, 0.0, 1.0, 1.0)),
+            # but the arithmetic expects 0-255 values. Using _c255_color() to
+            # normalize before blending. Without this fix, the flash color was
+            # wrong — e.g. C_PURPLE[0]=0.667 → int(0.667+254*0.7)=178 instead
+            # of the correct int(170+85*0.7)=229.
             flash_blend = flash_ratio * 0.7
+            pr, pg, pb = _c255_color(C_PURPLE)
             self.xp_bar.color = color.rgb(
-                min(255, int(C_PURPLE[0] + (255 - C_PURPLE[0]) * flash_blend)),
-                min(255, int(C_PURPLE[1] + (255 - C_PURPLE[1]) * flash_blend)),
-                min(255, int(C_PURPLE[2] + (255 - C_PURPLE[2]) * flash_blend)),
+                min(255, int(pr + (255 - pr) * flash_blend)),
+                min(255, int(pg + (255 - pg) * flash_blend)),
+                min(255, int(pb + (255 - pb) * flash_blend)),
             )
         else:
             self.xp_bar.scale_y = 0.015
@@ -5107,9 +5146,13 @@ class Game:
         # Color matches the biome's ground color for quick visual identification
         biome_col = BIOME_COLORS.get(self.current_biome, C_GRASS)
         # Target color: biome ground color brightened for readability (as before)
-        target_r = float(min(255, int(biome_col[0]) + 80))
-        target_g = float(min(255, int(biome_col[1]) + 80))
-        target_b = float(min(255, int(biome_col[2]) + 80))
+        # BUG FIX: biome_col components are 0-1 normalized floats (Ursina stores
+        # color.rgb() values as 0-1 internally). int(0.039)+80=80 instead of
+        # int(10)+80=90. Use _c255_color() to normalize before brightening.
+        bcr, bcg, bcb = _c255_color(biome_col)
+        target_r = float(min(255, bcr + 80))
+        target_g = float(min(255, bcg + 80))
+        target_b = float(min(255, bcb + 80))
         # Smoothly lerp the biome indicator color toward the target for a polished
         # transition instead of an abrupt color snap when crossing biome borders.
         cr, cg, cb = self.biome_color_current
@@ -5727,7 +5770,12 @@ def game_update():
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
             alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
             bc = star.base_color if hasattr(star, 'base_color') else color.rgba(255, 255, 255, 255)
-            star.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), alpha)
+            # BUG FIX: bc components are 0-1 normalized floats (Ursina stores
+            # color.rgba() values as 0-1 internally). int(1.0)=1, int(0.937)=0,
+            # etc. — so stars were nearly invisible (rgba(1,1,1,alpha)) instead
+            # of their proper colors. Use _c255_color() to normalize.
+            sr, sg, sb = _c255_color(bc)
+            star.color = color.rgba(sr, sg, sb, alpha)
         game._update_hud()
         return
 
@@ -6329,11 +6377,19 @@ def game_update():
             heartbeat_speed = LOW_HP_HEARTBEAT_SPEED + (LOW_HP_HEARTBEAT_SPEED_MAX - LOW_HP_HEARTBEAT_SPEED) * danger_ratio
             pulse = 0.5 + 0.5 * math.sin(game.t * heartbeat_speed)
             red_mix = danger_ratio * pulse
-            # Blend between normal alien color and danger red
+            # BUG FIX: Blend between normal alien color and danger red.
+            # C_ALIEN components are stored as 0-1 normalized floats by Ursina
+            # (color.rgb(0,230,70) → Color(0.0, 0.902, 0.275, 1.0)), but the
+            # arithmetic below expects 0-255 values. Using _c255_color() to
+            # normalize to 0-255 before the blend math. Without this fix, the
+            # green and blue channels were always int(0.902 * x) = 0 and
+            # int(0.275 * x) = 0, making the danger pulse pure red instead of
+            # a gradual green-to-red blend.
+            ar, ag, ab = _c255_color(C_ALIEN)
             p.color = color.rgb(
-                min(255, int(C_ALIEN[0] + (255 - C_ALIEN[0]) * red_mix)),
-                max(0, int(C_ALIEN[1] * (1 - red_mix * 0.6))),
-                max(0, int(C_ALIEN[2] * (1 - red_mix * 0.6))),
+                min(255, int(ar + (255 - ar) * red_mix)),
+                max(0, int(ag * (1 - red_mix * 0.6))),
+                max(0, int(ab * (1 - red_mix * 0.6))),
             )
         else:
             p.color = C_ALIEN
@@ -7050,12 +7106,13 @@ def game_update():
                     scale_mult = 1.0 - fade_t * 0.3
                 base_scale = ENEMY_ALERT_INDICATOR_SCALE / max(0.5, enemy.original_scale)
                 enemy.alert_indicator.scale = base_scale * scale_mult
-                enemy.alert_indicator.color = color.rgba(
-                    int(ENEMY_ALERT_INDICATOR_COLOR[0]),
-                    int(ENEMY_ALERT_INDICATOR_COLOR[1]),
-                    int(ENEMY_ALERT_INDICATOR_COLOR[2]),
-                    alpha,
-                )
+                # BUG FIX: ENEMY_ALERT_INDICATOR_COLOR is created with color.rgb()
+                # which stores components as 0-1 normalized floats in Ursina.
+                # int(1.0)=1, int(0.863)=0, int(0.157)=0 — so the indicator was
+                # nearly invisible (rgba(1,0,0,alpha)) instead of bright yellow
+                # (rgba(255,220,40,alpha)). Use _c255_color() to normalize.
+                air, aig, aib = _c255_color(ENEMY_ALERT_INDICATOR_COLOR)
+                enemy.alert_indicator.color = color.rgba(air, aig, aib, alpha)
 
         # Update ground shadow position to follow enemy (world-space, on ground plane)
         # PERFORMANCE: only update shadows/HP bars for nearby enemies
@@ -7872,7 +7929,10 @@ def game_update():
         twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
         alpha = int(255 * max(0.1, min(1.0, star.base_brightness * twinkle)))
         bc = star.base_color if hasattr(star, 'base_color') else color.rgba(255, 255, 255, 255)
-        star.color = color.rgba(int(bc[0]), int(bc[1]), int(bc[2]), alpha)
+        # BUG FIX: Same as hit-stop star twinkling — normalize bc components
+        # from 0-1 to 0-255 with _c255_color() before passing to color.rgba().
+        sr, sg, sb = _c255_color(bc)
+        star.color = color.rgba(sr, sg, sb, alpha)
 
     # ── Nebula Cloud Drift ──
     for cloud in game.nebula_clouds:
@@ -7885,7 +7945,12 @@ def game_update():
         pulse_alpha = HORIZON_GLOW_ALPHA_BASE + int(8 * math.sin(game.t * 1.5 + i * 0.7))
         base = hg.base_color if hasattr(hg, 'base_color') else color.rgba(80, 30, 120, 35)
         if hasattr(hg, 'base_color'):
-            hg.color = color.rgba(int(base[0]), int(base[1]), int(base[2]), pulse_alpha)
+            # BUG FIX: base components are 0-1 normalized floats (Ursina stores
+            # color.rgb() values as 0-1 internally). int(0.392)=0, int(0.118)=0,
+            # etc. — so horizon glows were always black (rgba(0,0,0,alpha))
+            # instead of their palette colors. Use _c255_color() to normalize.
+            hr, hg_, hb = _c255_color(base)
+            hg.color = color.rgba(hr, hg_, hb, pulse_alpha)
 
     # ── Biome-Aware Fog (DISABLED) ──
     # Ursina's fog shader expects 0-1 normalized colors but color.rgb() returns
