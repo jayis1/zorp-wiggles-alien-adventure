@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.18.1"
+VERSION = "2.18.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -218,6 +218,26 @@ COLLECT_SPAWN_DURATION = 0.4           # Seconds for collectible spawn scale-in 
 
 # ─── Dash Afterimage ─────────────────────────────────────────────────────────
 DASH_AFTERIMAGE_DURATION = 0.25       # How long the dash ghost persists
+DASH_AFTERIMAGE_INTERVAL = 0.06       # Seconds between afterimage ghosts during dash
+DASH_AFTERIMAGE_ALPHA = 80            # Alpha of trailing afterimages (fainter than start)
+
+# ─── Tentacle Recoil ──────────────────────────────────────────────────────────
+# When Zorp fires, all four tentacles briefly whip backward and spring back,
+# simulating weapon recoil on the character model. This adds physicality to
+# shooting — you see and feel each shot through the tentacles, not just the
+# muzzle flash and crosshair. The recoil decays exponentially for a quick
+# snap-then-recover feel.
+TENTACLE_RECOIL_DURATION = 0.12    # How long the recoil whip lasts (seconds)
+TENTACLE_RECOIL_ANGLE = 55         # Max backward rotation angle (degrees)
+TENTACLE_RECOIL_RECOVERY = 14.0    # How fast tentacles spring back to normal
+
+# ─── Collectible Pickup Snap ──────────────────────────────────────────────────
+# When a collectible is very close to the player, the magnetic pull gets a
+# dramatic boost for a satisfying final "snap" into the player — instead of
+# the item gently drifting the last few units, it zips in with a burst of
+# speed that makes pickups feel snappy and responsive.
+COLLECT_SNAP_RADIUS = 1.5          # Within this distance, snap boost activates
+COLLECT_SNAP_STRENGTH = 2.5        # Pull strength multiplier during the final snap
 
 # ─── Movement Dust ──────────────────────────────────────────────────────────
 MOVEMENT_DUST_INTERVAL = 0.12       # Seconds between dust puffs while moving
@@ -1184,6 +1204,11 @@ class Player(Entity):
         # normal alien green or low-HP danger pulse. Set by Game.shoot().
         self.muzzle_tint_timer = 0.0
 
+        # Tentacle recoil timer — set by Game.shoot(), decays exponentially.
+        # While > 0, update_tentacles() adds a backward whip rotation that
+        # springs back to normal, simulating weapon recoil on the character model.
+        self.tentacle_recoil_timer = 0.0
+
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
@@ -1231,11 +1256,28 @@ class Player(Entity):
         self.kills[name] = self.kills.get(name, 0) + 1
 
     def update_tentacles(self, t):
-        """Animate tentacles with a sinusoidal wave pattern."""
+        """Animate tentacles with a sinusoidal wave pattern.
+
+        When tentacle_recoil_timer is active (set by shoot()), all tentacles
+        whip backward and spring back to normal — a physical weapon-recoil
+        reaction on the character model that makes each shot feel impactful.
+        The recoil is applied as an additive rotation on top of the normal
+        wave animation, and decays exponentially for a quick snap-then-recover.
+        """
+        # Compute recoil offset — decays from max to 0 over TENTACLE_RECOIL_DURATION
+        recoil_offset = 0.0
+        if self.tentacle_recoil_timer > 0:
+            self.tentacle_recoil_timer -= time.dt
+            if self.tentacle_recoil_timer < 0:
+                self.tentacle_recoil_timer = 0
+            recoil_progress = self.tentacle_recoil_timer / TENTACLE_RECOIL_DURATION
+            # Exponential decay — strong at start, quick recovery
+            recoil_offset = TENTACLE_RECOIL_ANGLE * recoil_progress ** 0.5
+
         for i, tent in enumerate(self.tentacles):
             angle_offset = (i - 1.5) * 0.5
             wave = math.sin(t * 5 + i * 1.5) * 0.3
-            tent.rotation_x = wave * 40
+            tent.rotation_x = wave * 40 + recoil_offset
             tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
 
     def update_pupils(self):
@@ -2752,6 +2794,11 @@ class Game:
 
         # Auto-fire toggle (X key) — continuous shooting without holding mouse
         self.auto_fire_enabled = False
+
+        # Dash afterimage accumulator — tracks time between afterimage spawns
+        # during a dash so we spawn multiple fading ghosts along the dash path
+        # instead of just one at the start position.
+        self._dash_afterimage_timer = 0.0
 
         # Idle HP regeneration — rewards standing still with slow HP regen
         self.idle_timer = 0.0        # How long the player has been idle
@@ -4474,6 +4521,13 @@ class Game:
             self.player.muzzle_tint_timer = MUZZLE_FLASH_PLAYER_TINT_DURATION
             self.player.color = MUZZLE_FLASH_PLAYER_TINT_COLOR
 
+        # ── Tentacle Recoil ── All four tentacles whip backward on each shot,
+        # simulating weapon recoil on the character model. The recoil decays
+        # exponentially in update_tentacles() for a quick snap-then-spring-back
+        # feel that adds physicality to shooting — you see and feel each shot
+        # through the tentacles, not just the muzzle flash and crosshair.
+        self.player.tentacle_recoil_timer = TENTACLE_RECOIL_DURATION
+
         if self.player.weapon_upgrade_timer > 0:
             # Spread shot: fire 3 projectiles in a fan pattern
             base_angle = math.atan2(direction.x, direction.z)
@@ -5495,6 +5549,21 @@ def game_update():
         # Dash trail particles
         if int(game.t * 30) % 2 == 0:
             game._spawn_particles(p.position + Vec3(0, 0.5, 0), color.rgba(0, 230, 70, 180), count=DASH_TRAIL_PARTICLES)
+        # ── Dash Multi-Afterimage ── Spawn multiple fading ghost silhouettes
+        # along the dash path at regular intervals, creating a streaking trail
+        # that communicates the dash direction and speed far more clearly than
+        # a single afterimage at the start position. Each ghost is a faint
+        # green sphere that fades over DASH_AFTERIMAGE_DURATION seconds.
+        game._dash_afterimage_timer += time.dt
+        if game._dash_afterimage_timer >= DASH_AFTERIMAGE_INTERVAL:
+            game._dash_afterimage_timer = 0.0
+            afterimage = Entity(
+                model='sphere',
+                color=color.rgba(0, 230, 70, DASH_AFTERIMAGE_ALPHA),
+                scale=p.scale_x * 1.0,
+                position=p.position,
+            )
+            destroy(afterimage, delay=DASH_AFTERIMAGE_DURATION)
         # Dash collectible vacuum — pull nearby items toward player while dashing
         for col in game.collectibles:
             if col.popping or col.spawn_timer > 0:
@@ -5526,6 +5595,9 @@ def game_update():
         p.invuln_timer = max(p.invuln_timer, DASH_INVULN_DURATION)  # Brief invincibility during dash
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
+        # Reset the afterimage accumulator so the first trailing ghost appears
+        # after one interval, not instantly at the dash start position.
+        game._dash_afterimage_timer = 0.0
         # Dash afterimage: leave a fading ghost silhouette at the start position
         # for a more dramatic speed effect that communicates the dash direction clearly
         afterimage = Entity(
@@ -7214,6 +7286,13 @@ def game_update():
                 # This creates a satisfying "snap" feel rather than a linear pull
                 closeness = 1.0 - (dist / pull_radius)  # 0 at edge, ~1 near center
                 pull_strength = closeness ** 0.6  # Exponential ramp — gentle start, snappy finish
+                # ── Final Pickup Snap ── When the item is very close to the player
+                # (within COLLECT_SNAP_RADIUS), boost the pull strength dramatically
+                # for a satisfying final "zip" into the player — instead of the item
+                # gently drifting the last few units, it snaps in with a burst of
+                # speed that makes pickups feel snappy and responsive.
+                if dist < COLLECT_SNAP_RADIUS:
+                    pull_strength *= COLLECT_SNAP_STRENGTH
                 col.position += pull_dir * pull_speed * pull_strength * time.dt
                 # Spin faster as pulled — proportional to closeness
                 col.rotation_y += 200 * closeness * time.dt

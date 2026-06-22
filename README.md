@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.18.1 — 3D!)
+## Features (v2.18.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -349,6 +349,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.18.2 — Tentacle Recoil, Dash Afterimage Trail & Pickup Snap
+- **Tentacle recoil on shoot**: All four of Zorp's tentacles now physically whip backward on every shot and spring back to normal, simulating weapon recoil on the character model. The recoil decays exponentially over 0.12 seconds for a quick snap-then-spring-back feel — you see and feel each shot through the tentacles, not just the muzzle flash and crosshair. The whip angle (55° max) is applied as an additive rotation on top of the normal sinusoidal wave animation, so the tentacles stay alive and waving while still reacting to each trigger pull. Combined with the existing muzzle flash player tint and crosshair recoil, every shot now has three layers of physical feedback on the character model and HUD
+- **Dash multi-afterimage trail**: Dashing now leaves a streaking trail of multiple fading ghost silhouettes along the dash path instead of just one at the start position. A new afterimage is spawned every 0.06 seconds during the 0.2-second dash, creating ~3 trailing ghosts that clearly communicate the dash direction and speed. Each ghost is a faint green sphere (alpha 80) that fades over 0.25 seconds, producing a comet-tail effect that makes dashing feel significantly more dynamic and satisfying — you see the streak of where you've been, not just a single ghost at the origin
+- **Collectible pickup snap**: When a collectible is within 1.5 units of the player during magnetic pull, the pull strength gets a 2.5x boost for a satisfying final "zip" into the player. Instead of items gently drifting the last few units before pickup, they snap in with a burst of speed that makes every pickup feel snappy and responsive. This complements the existing exponential pull curve (closeness^0.6) with a dramatic final acceleration — the item accelerates gently from far away, ramps up as it approaches, then zips in for the last meter. Combined with the existing spin-acceleration and glow-brightening during pull, pickups now have a complete satisfying arc from detection to collection
 
 ### v2.18.1 — Fireball AOE Rewards, Pulse Wave Buff, Vacuum Duration & Combo Bar Flash
 - **Fireball AOE kills now grant XP and score**: Previously, enemies killed by the Fireball Scroll's explosion blast (not the direct hit, but the AOE splash damage) granted combo credit and loot drops but no XP or score — making the power-up less rewarding for multi-kills. Now AOE kills grant full XP (with combo and monolith multipliers applied), score (with combo multiplier), kill burst particles, and kill feed entries, matching the rewards from direct projectile kills. This makes the Fireball Scroll feel properly powerful for clearing groups — every AOE kill counts toward progression
