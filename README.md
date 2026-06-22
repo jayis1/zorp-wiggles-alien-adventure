@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.19.2 — 3D!)
+## Features (v2.19.3 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -175,6 +175,9 @@ python game.py
 - **Player stop squish** — when Zorp decelerates from a run to a near-stop, the model briefly squishes (compressed Y, bulged XZ) and recovers elastically — a subtle "landing" feel that makes stopping feel weighty and grounded instead of just freezing in place. Complements the existing dash landing squish but is much gentler, so normal gameplay stops feel responsive and alive
 - **Enemy hit flash tint** — enemies now flash a brightened version of their OWN color when hit instead of pure white! Hitting a Lava Crawler produces a bright orange flash, hitting a Crystal Guardian produces bright cyan — each impact feels tailored to the target instead of a generic white wash, producing more cohesive and polished combat feedback
 - **Projectile bolt stretch** — tentacle laser shots are now stretched into elongated energy bolts aligned with their travel direction, making them look like streaking comets instead of round dots. The bolt visibly points where it's going, dramatically improving the core combat visual feel and making every shot look fast and powerful
+- **Enemy spawn portal vortex** — a spinning purple-magenta disc now appears beneath enemy spawn warning rings, rotating faster as the enemy materializes! Creates a dimensional portal effect — like enemies are emerging from a rift rather than just popping in. The vortex spins with accelerating speed, shrinks, and fades as the spawn countdown reaches zero, making enemy spawns feel more dramatic and otherworldly
+- **Pickup milestone celebrations** — collecting 50, 100, 200, or 500 total items triggers a golden particle burst and announcement message! A celebratory ★ milestone popup with golden sparkle burst and screen shake rewards dedicated collectors, making item gathering feel meaningful beyond individual pickups
+- **Healing pulse ring** — whenever Zorp is healed by any source (Health Potion, Regen Crystal, Spawn Healing Zone, Healing Shrine, or Idle Regeneration), a brief expanding green ring radiates outward from his position! Makes heals feel visceral and satisfying instead of just a number silently ticking up — you see and feel the healing happening in the world
 
 ## The Self-Improving Game
 

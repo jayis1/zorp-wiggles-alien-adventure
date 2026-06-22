@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.2"
+VERSION = "2.19.3"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1011,6 +1011,37 @@ COMPASS_SCAN_RADIUS = 80.0          # How far to search for rare+ collectibles
 COMPASS_RARE_TIERS = {'rare', 'very_rare', 'legendary', 'mythic'}  # Tiers worth pointing to
 COMPASS_ARROW_COLOR = color.rgb(255, 200, 60)  # Golden arrow color
 COMPASS_ARROW_FADE_SPEED = 5.0      # How fast the arrow fades in/out
+
+# ─── Enemy Spawn Portal Vortex ──────────────────────────────────────────────
+# A spinning flat disc appears beneath the spawn warning ring, rotating faster
+# as the enemy materializes. This creates a visual "portal" effect that makes
+# enemy spawns feel more dramatic and otherworldly — like the enemy is emerging
+# from a dimensional rift rather than just popping into existence.
+SPAWN_VORTEX_START_SPEED = 60    # Initial rotation speed (degrees/sec)
+SPAWN_VORTEX_END_SPEED = 400     # Final rotation speed (degrees/sec) — spins rapidly as enemy appears
+SPAWN_VORTEX_COLOR = color.rgba(180, 40, 200, 0)  # Purple-magenta vortex disc
+
+# ─── Pickup Milestone Celebrations ──────────────────────────────────────────
+# When the player collects 50, 100, 200, or 500 total items, a celebratory
+# golden particle burst + announcement appears — rewarding dedicated collectors
+# and making item gathering feel meaningful beyond individual pickups.
+PICKUP_MILESTONES = [50, 100, 200, 500]
+PICKUP_MILESTONE_PARTICLES = 30
+PICKUP_MILESTONE_SCREEN_SHAKE = 0.3
+PICKUP_MILESTONE_ANNOUNCE_DURATION = 2.5
+PICKUP_MILESTONE_COLOR = color.rgb(255, 200, 60)  # Golden celebration color
+
+# ─── Healing Pulse Ring ─────────────────────────────────────────────────────
+# Whenever the player is healed by any source (Health Potion, Regen Crystal,
+# Spawn Healing Zone, Healing Shrine, Idle Regen), a brief expanding green ring
+# radiates outward from Zorp's position — making heals feel visceral and
+# satisfying instead of just a number ticking up silently.
+HEAL_PULSE_DURATION = 0.5
+HEAL_PULSE_EXPAND_SPEED = 8.0
+HEAL_PULSE_MAX_SCALE = 3.5
+HEAL_PULSE_START_SCALE = 0.8
+HEAL_PULSE_ALPHA = 120
+HEAL_PULSE_COLOR = color.rgb(80, 255, 120)
 
 # ─── Combo Screen Edge Glow ──────────────────────────────────────────────────
 # At combo x5+, a colored screen-edge vignette appears and intensifies as the
@@ -2059,6 +2090,86 @@ class SpawnWarningRing(Entity):
         return False
 
 
+# ─── Spawn Portal Vortex ───────────────────────────────────────────────────
+class SpawnPortalVortex(Entity):
+    """A spinning flat disc that appears beneath the spawn warning ring.
+
+    Rotates faster as the enemy materializes, creating a dimensional portal
+    effect — like the enemy is emerging from a rift rather than just appearing.
+    The disc fades in, spins with accelerating speed, then fades out when the
+    enemy spawns. Uses a separate quad from the warning ring so the vortex can
+    spin independently while the ring shrinks.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='quad',
+            color=color.rgba(180, 40, 200, 0),
+            scale=2.5,
+            position=position + Vec3(0, 0.08, 0),
+            rotation_x=90,
+        )
+        self.lifetime = SPAWN_WARNING_DURATION
+        self.max_lifetime = SPAWN_WARNING_DURATION
+
+    def update_vortex(self, dt):
+        """Animate the vortex disc. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Spin accelerates from slow to fast as the enemy materializes
+        spin_speed = SPAWN_VORTEX_START_SPEED + (SPAWN_VORTEX_END_SPEED - SPAWN_VORTEX_START_SPEED) * progress
+        self.rotation_z += spin_speed * dt
+        # Scale shrinks slightly as the vortex closes
+        self.scale = 2.5 - 0.8 * progress
+        # Alpha ramps up then fades at the very end
+        if progress < 0.8:
+            base_alpha = int(40 + 80 * progress)
+        else:
+            base_alpha = int(120 * (1.0 - (progress - 0.8) / 0.2))
+        # Pulse for energy feel
+        pulse = 0.7 + 0.3 * math.sin(self.lifetime * 15)
+        alpha = max(0, int(base_alpha * pulse))
+        self.color = color.rgba(180, 40, 200, alpha)
+        return False
+
+
+# ─── Healing Pulse Ring ────────────────────────────────────────────────────
+class HealPulseRing(Entity):
+    """A brief expanding green ring that radiates from the player when healed.
+
+    Makes any healing source feel visceral — the green ring expands outward
+    from Zorp's position and fades, giving a clear visual cue that HP was
+    restored. Works for all heal sources: Health Potion, Regen Crystal, Spawn
+    Healing Zone, Healing Shrine, and Idle Regen.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='quad',
+            color=color.rgba(80, 255, 120, HEAL_PULSE_ALPHA),
+            scale=HEAL_PULSE_START_SCALE,
+            position=position + Vec3(0, 0.09, 0),
+            rotation_x=90,
+        )
+        self.lifetime = HEAL_PULSE_DURATION
+        self.max_lifetime = HEAL_PULSE_DURATION
+
+    def update_pulse(self, dt):
+        """Animate the healing pulse ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand outward
+        self.scale = HEAL_PULSE_START_SCALE + (HEAL_PULSE_MAX_SCALE - HEAL_PULSE_START_SCALE) * progress
+        # Fade out
+        alpha = int(HEAL_PULSE_ALPHA * (1.0 - progress))
+        self.color = color.rgba(80, 255, 120, max(0, alpha))
+        return False
+
+
 # ─── Collectible Spawn Ring ────────────────────────────────────────────────
 class CollectibleSpawnRing(Entity):
     """A brief expanding ground ring that radiates outward when a collectible
@@ -2973,6 +3084,8 @@ class Game:
         self.idle_timer = 0.0        # How long the player has been idle
         self.idle_regen_tick = 0.0   # Accumulator for idle regen healing
         self.spawn_warnings = []  # Enemy spawn warning rings
+        self.spawn_vortices = []  # Enemy spawn portal vortex discs
+        self.heal_pulse_rings = []  # Healing pulse ring effects
         self.collect_spawn_rings = []  # Collectible spawn ground rings
 
         # Achievement system
@@ -3389,6 +3502,18 @@ class Game:
             if sw and hasattr(sw, 'enabled') and sw.enabled:
                 destroy(sw)
         self.spawn_warnings.clear()
+
+        # Destroy spawn portal vortices
+        for vortex in self.spawn_vortices:
+            if vortex and hasattr(vortex, 'enabled') and vortex.enabled:
+                destroy(vortex)
+        self.spawn_vortices.clear()
+
+        # Destroy heal pulse rings
+        for hpr in self.heal_pulse_rings:
+            if hpr and hasattr(hpr, 'enabled') and hpr.enabled:
+                destroy(hpr)
+        self.heal_pulse_rings.clear()
 
         # Destroy collectible spawn rings
         for csr in self.collect_spawn_rings:
@@ -4710,6 +4835,42 @@ class Game:
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.4, 0.9)))
 
+    def _spawn_heal_pulse(self, position):
+        """Spawn a healing pulse ring at the given position.
+
+        Creates an expanding green ring that radiates outward, making any
+        healing source feel visceral. Called from all heal sites: Health
+        Potion pickup, Regen Crystal tick, Spawn Healing Zone, Healing Shrine,
+        and Idle Regen. The ring is a standalone entity that self-expands and
+        is cleaned up when expired.
+        """
+        ring = HealPulseRing(position=position)
+        self.heal_pulse_rings.append(ring)
+
+    def _check_pickup_milestone(self):
+        """Check if the player has hit a pickup milestone and celebrate.
+
+        At 50, 100, 200, and 500 total items collected, a golden particle
+        burst, screen shake, and announcement message appear — rewarding
+        dedicated collectors and making item gathering feel meaningful beyond
+        individual pickups. Each milestone only fires once per run.
+        """
+        for milestone in PICKUP_MILESTONES:
+            if self.total_items_collected == milestone:
+                # Golden particle burst around the player
+                self._spawn_particles(
+                    self.player.position + Vec3(0, 1, 0),
+                    PICKUP_MILESTONE_COLOR,
+                    count=PICKUP_MILESTONE_PARTICLES,
+                )
+                self._spawn_collect_burst(
+                    self.player.position + Vec3(0, 1, 0),
+                    PICKUP_MILESTONE_COLOR,
+                )
+                self.screen_shake = max(self.screen_shake, PICKUP_MILESTONE_SCREEN_SHAKE)
+                self.add_message(f"★ {milestone} ITEMS COLLECTED! ★")
+                break
+
     def shoot(self):
         """Fire tentacle laser toward the mouse cursor.
 
@@ -5843,6 +6004,16 @@ def game_update():
             if sw.update_warning(time.dt):
                 destroy(sw)
                 game.spawn_warnings.remove(sw)
+        # Update spawn portal vortices during freeze (visual only)
+        for vortex in game.spawn_vortices[:]:
+            if vortex.update_vortex(time.dt):
+                destroy(vortex)
+                game.spawn_vortices.remove(vortex)
+        # Update heal pulse rings during freeze (visual only)
+        for hpr in game.heal_pulse_rings[:]:
+            if hpr.update_pulse(time.dt):
+                destroy(hpr)
+                game.heal_pulse_rings.remove(hpr)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -6191,6 +6362,8 @@ def game_update():
             if heal_amount > 0:
                 p.hp += heal_amount
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(50, 255, 120), count=4)
+                # ── Healing Pulse Ring ── Green ring expands from Zorp on regen tick
+                game._spawn_heal_pulse(p.position)
                 # Healing number — uses is_heal=True so DamageNumber renders it green
                 # with a "+" prefix and never overrides the color during update().
                 # BUG FIX: Previously the color was set after construction but
@@ -6334,6 +6507,8 @@ def game_update():
                 p.hp += heal_amt
                 game._spawn_particles(p.position + Vec3(0, 1, 0),
                                       color.rgb(100, 255, 150), count=3)
+                # ── Healing Pulse Ring ── Green ring expands from Zorp on idle regen
+                game._spawn_heal_pulse(p.position)
     else:
         game.idle_regen_tick = 0.0
 
@@ -7598,6 +7773,15 @@ def game_update():
             destroy(csr)
             game.collect_spawn_rings.remove(csr)
 
+    # ── Update Heal Pulse Rings ── Expanding green rings from healing events
+    # are updated and removed when expired. These are spawned by all heal sources
+    # (Health Potion, Regen Crystal, Spawn Healing Zone, Healing Shrine, Idle
+    # Regen) to make healing feel visceral.
+    for hpr in game.heal_pulse_rings[:]:
+        if hpr.update_pulse(time.dt):
+            destroy(hpr)
+            game.heal_pulse_rings.remove(hpr)
+
     # ── Pulse Wave Ring Update ── BUG FIX: ring update_ring() was only called
     # during hit-stop freeze (a 0.08s window after kills), so in normal gameplay
     # the rings never expanded, never faded, and never expired — making Pulse
@@ -7849,6 +8033,8 @@ def game_update():
                     actual_heal = min(heal_remaining, hp_room)
                     p.hp += actual_heal
                     heal_remaining -= actual_heal
+                    # ── Healing Pulse Ring ── Green ring expands from Zorp on heal
+                    game._spawn_heal_pulse(p.position)
                 else:
                     actual_heal = 0
                 # Convert excess healing to overheal (capped at OVERHEAL_MAX)
@@ -7966,6 +8152,8 @@ def game_update():
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
             game.total_items_collected += 1
+            # ── Pickup Milestone Check ── Celebrate at 50, 100, 200, 500 items
+            game._check_pickup_milestone()
             # ── Rarity-Scaled Screen Shake ── The base screen shake on pickup now
             # scales with rarity tier: common items get a tiny 0.08 shake, while
             # mythic items get a dramatic 0.45 shake. This makes grabbing a Plasma
@@ -8097,6 +8285,11 @@ def game_update():
                 warning.spawn_x = ex
                 warning.spawn_z = ez
                 game.spawn_warnings.append(warning)
+                # ── Spawn Portal Vortex ── A spinning purple disc appears beneath
+                # the warning ring, creating a dimensional portal effect that
+                # makes enemy spawns feel more dramatic and otherworldly.
+                vortex = SpawnPortalVortex(position=Vec3(ex, 0, ez))
+                game.spawn_vortices.append(vortex)
 
     # ── Update Spawn Warnings & Materialize Enemies ──
     for sw in game.spawn_warnings[:]:
@@ -8133,6 +8326,13 @@ def game_update():
                 game.particles.append((mat_p, mat_vel, random.uniform(0.3, 0.6)))
             destroy(sw)
             game.spawn_warnings.remove(sw)
+
+    # ── Update Spawn Portal Vortices ── Spin and fade the vortex discs.
+    # Vortices are paired with spawn warnings and expire at the same time.
+    for vortex in game.spawn_vortices[:]:
+        if vortex.update_vortex(time.dt):
+            destroy(vortex)
+            game.spawn_vortices.remove(vortex)
 
     # Respawn collectibles — rate scales dynamically with how depleted the world is.
     # When the collectible count drops well below MIN_COLLECTIBLES, the respawn
@@ -8389,6 +8589,8 @@ def game_update():
                 game.add_message(f"Healing Shrine! +{heal_amt} HP!")
                 game._spawn_particles(shrine.position + Vec3(0, 3, 0), color.rgb(100, 255, 150), count=25)
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 150), count=15)
+                # ── Healing Pulse Ring ── Green ring expands from Zorp on shrine heal
+                game._spawn_heal_pulse(p.position)
                 game.screen_shake = max(game.screen_shake, 0.2)
                 game.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
                 # Flash the shrine crystal bright white briefly
@@ -8430,6 +8632,8 @@ def game_update():
             if heal_amt > 0:
                 p.hp += heal_amt
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 100), count=3)
+                # ── Healing Pulse Ring ── Green ring expands from Zorp on spawn zone heal
+                game._spawn_heal_pulse(p.position)
                 # Show a green healing number so the player sees the heal value
                 game.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
 
