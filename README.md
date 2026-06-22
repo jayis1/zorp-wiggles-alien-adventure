@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.18.2 — 3D!)
+## Features (v2.19.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -47,7 +47,7 @@ python game.py
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 5 seconds
 - **Speed Boost** — 1.8x speed for 6 seconds
-- **Health Potion** — restores 55 HP instantly
+- **Health Potion** — restores 55 HP instantly; excess healing at full HP converts to a temporary **Overheal Barrier** (up to 60 extra HP that decays over time)!
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
 - **Star Fruit** — walk over water and lava for 6 seconds! Golden shimmer ring appears beneath you
@@ -169,6 +169,9 @@ python game.py
 - **Combo screen edge glow** — at combo x5+, a colored screen-edge vignette appears and intensifies as your kill streak grows, shifting from warm yellow (x5) → orange (x7) → red (x10+). At x10+ it pulses rapidly for maximum urgency. Makes high combos feel electric and dangerous — you *feel* the heat of your kill streak across the entire screen, not just in the corner counter
 - **Nearby enemy threat counter** — a HUD indicator showing how many enemies are currently within 30 units, color-coded by threat level: green (1-3, safe), yellow (4-6, caution), orange (7-9, danger), red (10+, critical!). Gives you constant situational awareness at a glance — you know when you're in a safe zone vs about to be swarmed without needing to check the minimap. Updates every 0.3 seconds for smooth performance
 - **Level-up golden screen flash** — leveling up now triggers a brief golden screen-edge flash across the whole screen, complementing the existing level-up text, scale bounce, particle burst, screen shake, and magnet vacuum. Makes every level-up feel like a full-screen celebratory moment instead of just a text popup — you *see* the golden glow of progression
+- **Overheal Barrier** — when you pick up a Health Potion at full HP, the excess healing converts into a temporary overheal barrier (up to 60 HP) that absorbs damage before your real HP is reduced! The barrier decays over time (6 HP/sec after a 3-second delay), so it's a temporary combat buffer — not a permanent HP increase. A golden HP bar extension and pulsing golden ring around Zorp visualize the barrier. Makes Health Potions valuable even in late-game when you're often at full HP!
+- **Adrenaline Rush** — when Zorp's HP drops below 20%, a burst of adrenaline triggers: **+35% movement speed** and **+50% fire rate** for 4 seconds! A red-orange screen-edge vignette pulses with urgency, and an orange glow ring appears around the player. This creates dramatic clutch moments — a "fight or flight" last chance to turn the tide. Re-triggers after HP recovers above the threshold and drops again
+- **Treasure Compass** — stand still for 2 seconds and a golden directional arrow appears on the HUD, pointing toward the nearest rare-or-better collectible within 80 units! The arrow rotates in real-time and pulses bigger as you get closer to the target. Fades out smoothly when you start moving again. Makes downtime useful and encourages exploration — no more wandering aimlessly looking for valuable loot!
 
 ## The Self-Improving Game
 
@@ -205,7 +208,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | Nebula Dust | 100 pts | Score only | Very Rare |
 | Cosmic Jelly | 200 pts | Score only | Legendary |
 | Plasma Core | 350 pts | Score only | Mythic |
-| **Health Potion** | 15 pts | Restores 55 HP | Common |
+| **Health Potion** | 15 pts | Restores 55 HP; excess converts to **Overheal Barrier** (max 60) | Common |
 | **Speed Boost** | 15 pts | 1.8x speed for 6s | Uncommon |
 | **Shield Crystal** | 15 pts | Blocks all damage for 5s | Rare |
 | **Weapon Upgrade** | 20 pts | Spread shot (3 lasers) for 8s | Rare |
@@ -216,6 +219,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Fireball Scroll** | 25 pts | Projectiles explode on impact for AOE damage (8s) | Rare |
 | **Regen Crystal** | 20 pts | Regenerates 8 HP/sec for 10 seconds | Uncommon |
 | **Lucky Clover** | 20 pts | +35% crit chance for 8 seconds | Uncommon |
+| **Mirror Shard** | 25 pts | Reflects enemy projectiles back at them for 6s | Rare |
 
 ## Enemies
 

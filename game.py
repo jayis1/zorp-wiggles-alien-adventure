@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.18.2"
+VERSION = "2.19.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -925,6 +925,44 @@ IDLE_REGEN_DELAY = 3.0                # Seconds of inactivity before regen start
 IDLE_REGEN_HP_PER_SECOND = 4           # HP restored per second while idle
 IDLE_REGEN_PARTICLE_INTERVAL = 1.0    # Seconds between idle regen heal particles
 
+# ─── Overheal Barrier ──────────────────────────────────────────────────────────
+# When the player picks up a Health Potion at full HP (or the heal would exceed
+# max HP), the excess healing converts into a temporary "overheal" barrier —
+# extra HP that decays over time. This makes Health Potions valuable even in
+# late-game when the player is often at full HP, instead of being wasted.
+# The barrier is displayed as a golden extension of the HP bar and a golden
+# ring around the player.
+OVERHEAL_MAX = 60                   # Maximum overheal barrier amount
+OVERHEAL_DECAY_PER_SECOND = 6       # How much overheal decays per second
+OVERHEAL_DECAY_DELAY = 3.0          # Seconds before overheal starts decaying
+OVERHEAL_RING_COLOR = color.rgb(255, 200, 60)  # Golden ring for overheal visual
+
+# ─── Adrenaline Rush ──────────────────────────────────────────────────────────
+# When the player drops below ADRENALINE_HP_THRESHOLD, they enter an adrenaline
+# state: movement speed and fire rate increase briefly, and a red-orange screen
+# edge pulse appears. This creates dramatic clutch moments — a "fight or flight"
+# response that rewards skilled play under pressure and gives a last chance to
+# turn the tide. Triggers once per HP drop; re-triggers after recovering above
+# the threshold and dropping again.
+ADRENALINE_HP_THRESHOLD = 0.20      # HP ratio below which adrenaline triggers
+ADRENALINE_DURATION = 4.0           # How long the adrenaline buff lasts
+ADRENALINE_SPEED_MULT = 1.35        # Speed multiplier during adrenaline
+ADRENALINE_FIRE_RATE_MULT = 1.5     # Fire rate multiplier (cooldown divided by this)
+ADRENALINE_VIGNETTE_MAX_ALPHA = 50  # Peak alpha of the red-orange adrenaline vignette
+ADRENALINE_VIGNETTE_PULSE_SPEED = 6.0  # How fast the vignette pulses
+
+# ─── Treasure Compass ──────────────────────────────────────────────────────────
+# When the player stands still for a few seconds, a subtle golden arrow appears
+# on the HUD pointing toward the nearest rare-or-better collectible. This makes
+# downtime useful, encourages exploration, and helps players find valuable loot
+# without a minimap cluttered with item markers. The arrow updates in real-time
+# and fades out when the player starts moving again.
+COMPASS_IDLE_DELAY = 2.0            # Seconds of standing still before compass appears
+COMPASS_SCAN_RADIUS = 80.0          # How far to search for rare+ collectibles
+COMPASS_RARE_TIERS = {'rare', 'very_rare', 'legendary', 'mythic'}  # Tiers worth pointing to
+COMPASS_ARROW_COLOR = color.rgb(255, 200, 60)  # Golden arrow color
+COMPASS_ARROW_FADE_SPEED = 5.0      # How fast the arrow fades in/out
+
 # ─── Combo Screen Edge Glow ──────────────────────────────────────────────────
 # At combo x5+, a colored screen-edge vignette appears and intensifies as the
 # combo grows. The color shifts from warm yellow (x5) to orange (x7) to red
@@ -1117,6 +1155,16 @@ class Player(Entity):
         # Mirror Shard timer — reflects enemy projectiles back at enemies
         self.mirror_timer = 0.0
 
+        # Overheal Barrier — temporary extra HP from excess healing that decays
+        # over time. Displayed as a golden HP bar extension and player ring.
+        self.overheal = 0               # Current overheal barrier amount
+        self.overheal_decay_delay = 0.0 # Time before decay starts (set when overheal is gained)
+
+        # Adrenaline Rush — triggered when HP drops below ADRENALINE_HP_THRESHOLD.
+        # Grants temporary speed + fire rate boost for clutch moments.
+        self.adrenaline_timer = 0.0     # >0 while adrenaline is active
+        self.adrenaline_cooldown = False  # True after adrenaline ends; resets when HP recovers above threshold
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -1225,6 +1273,11 @@ class Player(Entity):
     def take_damage(self, amount):
         """Apply damage to the player. Returns True if player died.
 
+        The Overheal Barrier absorbs damage before real HP is reduced —
+        excess healing stored as overheal acts as a temporary shield that
+        decays over time. This makes overhealed Health Potions valuable in
+        combat instead of just being a cap-waste.
+
         Args:
             amount: Damage points to subtract from HP.
 
@@ -1233,6 +1286,13 @@ class Player(Entity):
         """
         if self.invuln_timer > 0:
             return False
+        # ── Overheal Barrier Absorption ── Damage is absorbed by the overheal
+        # barrier first, then any remaining damage hits real HP. This gives
+        # the player a temporary buffer from excess healing.
+        if self.overheal > 0:
+            absorbed = min(self.overheal, amount)
+            self.overheal -= absorbed
+            amount -= absorbed
         self.hp -= amount
         self.invuln_timer = PLAYER_INVULN_DURATION
         self.damage_taken_flag = True  # Flag for HP bar shake trigger
@@ -3297,6 +3357,10 @@ class Game:
                 destroy(self.player.float_ring)
             if hasattr(self.player, 'monolith_ring') and self.player.monolith_ring is not None:
                 destroy(self.player.monolith_ring)
+            if hasattr(self.player, 'overheal_ring') and self.player.overheal_ring is not None:
+                destroy(self.player.overheal_ring)
+            if hasattr(self.player, 'adrenaline_ring') and self.player.adrenaline_ring is not None:
+                destroy(self.player.adrenaline_ring)
             destroy(self.player)
         # Player's children cascade-destroy: tentacles, eyes, pupils, shield_visual
 
@@ -3316,7 +3380,8 @@ class Game:
                       'boss_tension_vignette', 'multi_kill_text',
                       'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
                       'heal_flash', 'combo_edge_glow', 'threat_counter_text',
-                      'level_up_flash'):
+                      'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
+                      'compass_arrow'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -4192,6 +4257,38 @@ class Game:
         )
         self.level_up_flash_timer = 0.0
 
+        # ── Overheal Barrier HP Bar ── Golden extension of the HP bar that
+        # appears when the player has overheal. Positioned to the right of the
+        # normal HP bar, growing leftward as overheal accumulates.
+        self.overheal_bar = Entity(
+            parent=camera.ui, model='quad', color=OVERHEAL_RING_COLOR,
+            scale=(0.001, 0.03), position=(-0.15, 0.46),
+            origin=(-0.5, 0), visible=False,
+        )
+
+        # ── Adrenaline Rush Vignette ── Red-orange screen-edge pulse that
+        # appears when the player enters the adrenaline state (HP < 20%).
+        # Fades in smoothly when triggered, pulses while active, and fades
+        # out when adrenaline ends.
+        self.adrenaline_vignette = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 120, 30, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=1.6,  # Above boss tension but below combo edge glow
+        )
+
+        # ── Treasure Compass Arrow ── Golden directional arrow on the HUD that
+        # points toward the nearest rare+ collectible when the player has been
+        # standing still for COMPASS_IDLE_DELAY seconds. Rotates to point at
+        # the target and fades in/out smoothly.
+        self.compass_arrow = Text(
+            text='♦', position=(0, 0.07), scale=2.0,
+            color=color.rgba(255, 200, 60, 0), origin=(0, 0), visible=False,
+        )
+        self.compass_alpha = 0.0  # Current alpha level for smooth fade
+
     def _build_minimap(self):
         """Create a minimap with terrain-color texture and enemy dot tracking.
 
@@ -4487,7 +4584,13 @@ class Game:
         """
         if self.player.shoot_timer > 0 or self.game_over:
             return
-        self.player.shoot_timer = SHOOT_COOLDOWN
+        # ── Adrenaline Rush fire rate buff ── When adrenaline is active, the
+        # shoot cooldown is reduced (fire rate increased), letting the player
+        # unleash a burst of lasers during clutch moments.
+        if self.player.adrenaline_timer > 0:
+            self.player.shoot_timer = SHOOT_COOLDOWN / ADRENALINE_FIRE_RATE_MULT
+        else:
+            self.player.shoot_timer = SHOOT_COOLDOWN
 
         # Crosshair recoil — expand the crosshair briefly for a dynamic feel
         self.crosshair_recoil = 1.0
@@ -4575,7 +4678,11 @@ class Game:
             self.hp_bar_bg.color = color.rgb(int(180 * pulse_alpha), 0, 0)
         else:
             self.hp_bar_bg.color = color.dark_gray
-        self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
+        # Display HP with overheal if active
+        if p.overheal > 0:
+            self.hp_text.text = f'HP: {p.hp}/{p.max_hp} (+{int(p.overheal)})'
+        else:
+            self.hp_text.text = f'HP: {p.hp}/{p.max_hp}'
 
         # ── HP Bar Damage Shake ── When the player takes damage, the HP bar
         # jitters briefly with decreasing intensity for visceral damage feedback.
@@ -4795,6 +4902,12 @@ class Game:
         if p.mirror_timer > 0:
             pu_lines.append(f'MIRROR SHARD: {p.mirror_timer:.1f}s')
             pu_timers.append(p.mirror_timer)
+        if p.adrenaline_timer > 0:
+            pu_lines.append(f'⚡ ADRENALINE: {p.adrenaline_timer:.1f}s')
+            pu_timers.append(p.adrenaline_timer)
+        if p.overheal > 0:
+            pu_lines.append(f'🛡 OVERHEAL: {int(p.overheal)}')
+            # Overheal doesn't expire like a timer, so don't add to pu_timers
         self.powerup_text.text = '  |  '.join(pu_lines)
         if pu_lines:
             # Check if any active buff is about to expire — if so, pulse red
@@ -5213,6 +5326,101 @@ class Game:
         self.crosshair2.scale = (CROSSHAIR_IDLE_SCALE_Y * recoil_mult,
                                  CROSSHAIR_IDLE_SCALE_X * recoil_mult)
 
+        # ── Overheal Barrier HP Bar ── Golden extension to the right of the
+        # normal HP bar, showing how much overheal buffer the player has.
+        # The bar grows from the right edge of the HP bar outward.
+        if p.overheal > 0:
+            overheal_ratio = min(1.0, p.overheal / OVERHEAL_MAX)
+            bar_w = 0.4 * overheal_ratio  # Max width matches the HP bar
+            # Position: starts at the right edge of HP bar (-0.15) and extends right
+            self.overheal_bar.scale_x = max(0.001, bar_w)
+            self.overheal_bar.x = -0.15
+            self.overheal_bar.visible = True
+            # Gentle golden pulse so it's visually distinct from regular HP
+            pulse = 0.7 + 0.3 * math.sin(self.t * 4)
+            self.overheal_bar.color = color.rgba(
+                255, int(180 + 40 * pulse), int(40 + 30 * pulse), 230
+            )
+        else:
+            self.overheal_bar.visible = False
+
+        # ── Adrenaline Rush Vignette ── Red-orange screen-edge pulse that's
+        # active while the player is in the adrenaline state. Fades in/out
+        # smoothly and pulses for urgency.
+        if p.adrenaline_timer > 0:
+            adrenaline_pulse = 0.5 + 0.5 * math.sin(self.t * ADRENALINE_VIGNETTE_PULSE_SPEED)
+            # Fade in during first 0.3s, full after that, fade out in last 0.5s
+            if p.adrenaline_timer > ADRENALINE_DURATION - 0.3:
+                fade = (ADRENALINE_DURATION - p.adrenaline_timer) / 0.3
+            elif p.adrenaline_timer < 0.5:
+                fade = p.adrenaline_timer / 0.5
+            else:
+                fade = 1.0
+            vignette_alpha = int(ADRENALINE_VIGNETTE_MAX_ALPHA * adrenaline_pulse * fade)
+            self.adrenaline_vignette.color = color.rgba(255, 120, 30, vignette_alpha)
+        else:
+            self.adrenaline_vignette.color = color.rgba(255, 120, 30, 0)
+
+        # ── Treasure Compass ── When the player has been idle for
+        # COMPASS_IDLE_DELAY seconds, a golden arrow appears on the HUD
+        # pointing toward the nearest rare+ collectible within scan range.
+        # Fades in smoothly when idle, fades out when the player moves.
+        if self.idle_timer >= COMPASS_IDLE_DELAY:
+            # Find the nearest rare+ collectible within scan radius
+            nearest_col = None
+            nearest_dist_sq = COMPASS_SCAN_RADIUS * COMPASS_SCAN_RADIUS
+            for col in self.collectibles:
+                if col.popping or col.spawn_timer > 0:
+                    continue
+                if col.rarity not in COMPASS_RARE_TIERS:
+                    continue
+                dx = col.x - p.x
+                dz = col.z - p.z
+                d_sq = dx * dx + dz * dz
+                if d_sq < nearest_dist_sq:
+                    nearest_dist_sq = d_sq
+                    nearest_col = col
+            if nearest_col is not None:
+                # Calculate angle from player to collectible (screen-space)
+                dx = nearest_col.x - p.x
+                dz = nearest_col.z - p.z
+                # Adjust for camera yaw so the arrow points in screen-space
+                world_angle = math.atan2(dx, dz)
+                screen_angle = world_angle - math.radians(self.cam_yaw)
+                # Target alpha — fade in
+                self.compass_alpha = min(1.0, self.compass_alpha + COMPASS_ARROW_FADE_SPEED * time.dt)
+                alpha = int(200 * self.compass_alpha)
+                self.compass_arrow.visible = True
+                self.compass_arrow.color = color.rgba(255, 200, 60, alpha)
+                # Position the arrow at the screen edge in the target direction
+                arrow_dist = 0.25
+                ax = math.sin(screen_angle) * arrow_dist
+                ay = math.cos(screen_angle) * arrow_dist * 0.5  # Flattened for screen aspect
+                self.compass_arrow.position = (ax, 0.07 + ay)
+                # Rotate the arrow character to point at the target
+                # Text rotation is in degrees; 0 = pointing up, adjust for screen angle
+                self.compass_arrow.rotation_z = -math.degrees(screen_angle)
+                # Distance-based scale — closer items make the arrow pulse bigger
+                dist = math.sqrt(nearest_dist_sq)
+                proximity_pulse = 1.0 + max(0, (30 - dist) / 30) * 0.3 * math.sin(self.t * 6)
+                self.compass_arrow.scale = 2.0 * proximity_pulse
+            else:
+                # No rare collectible found — fade out
+                self.compass_alpha = max(0, self.compass_alpha - COMPASS_ARROW_FADE_SPEED * time.dt)
+                if self.compass_alpha > 0:
+                    self.compass_arrow.visible = True
+                    self.compass_arrow.color = color.rgba(255, 200, 60, int(200 * self.compass_alpha))
+                else:
+                    self.compass_arrow.visible = False
+        else:
+            # Player is moving — fade out the compass
+            self.compass_alpha = max(0, self.compass_alpha - COMPASS_ARROW_FADE_SPEED * time.dt)
+            if self.compass_alpha > 0:
+                self.compass_arrow.visible = True
+                self.compass_arrow.color = color.rgba(255, 200, 60, int(200 * self.compass_alpha))
+            else:
+                self.compass_arrow.visible = False
+
     def _update_missions(self):
         """Check and update mission progress for all active missions."""
         p = self.player
@@ -5529,6 +5737,11 @@ def game_update():
     # Apply monolith speed buff
     if p.monolith_speed_timer > 0:
         effective_speed *= MONOLITH_SPEED_MULT
+    # ── Adrenaline Rush speed buff ── When adrenaline is active, the player
+    # moves faster — a "fight or flight" burst for clutch escapes or aggressive
+    # pushes when near death.
+    if p.adrenaline_timer > 0:
+        effective_speed *= ADRENALINE_SPEED_MULT
 
     # ── Dash Ability ──
     if p.dash_cooldown > 0:
@@ -5704,6 +5917,54 @@ def game_update():
     else:
         p.powerup_ring.visible = False
 
+    # ── Overheal Barrier Ring ── Golden ring around the player when they have
+    # an active overheal buffer, providing a clear visual indicator that they
+    # have temporary extra HP protection.
+    if p.overheal > 0:
+        if not hasattr(p, 'overheal_ring') or p.overheal_ring is None:
+            p.overheal_ring = Entity(
+                model='quad',
+                color=color.rgba(255, 200, 60, 0),
+                scale=2.8,
+                position=(p.x, 0.04, p.z),
+                rotation_x=90,
+            )
+        p.overheal_ring.visible = True
+        p.overheal_ring.position = (p.x, 0.04, p.z)
+        # Pulse the ring alpha and scale based on overheal amount
+        oh_ratio = p.overheal / OVERHEAL_MAX
+        oh_pulse = 0.5 + 0.5 * math.sin(game.t * 5)
+        oh_alpha = int((40 + 50 * oh_pulse) * oh_ratio)
+        p.overheal_ring.color = color.rgba(255, 200, 60, oh_alpha)
+        p.overheal_ring.scale = 2.8 + 0.3 * oh_pulse * oh_ratio
+    else:
+        if hasattr(p, 'overheal_ring') and p.overheal_ring is not None:
+            destroy(p.overheal_ring)
+            p.overheal_ring = None
+
+    # ── Adrenaline Rush Player Visual ── While adrenaline is active, Zorp's
+    # model gets a subtle orange-red glow ring, making the buff visible on the
+    # character itself, not just the screen edges.
+    if p.adrenaline_timer > 0:
+        if not hasattr(p, 'adrenaline_ring') or p.adrenaline_ring is None:
+            p.adrenaline_ring = Entity(
+                model='quad',
+                color=color.rgba(255, 120, 30, 0),
+                scale=2.5,
+                position=(p.x, 0.06, p.z),
+                rotation_x=90,
+            )
+        p.adrenaline_ring.visible = True
+        p.adrenaline_ring.position = (p.x, 0.06, p.z)
+        ad_pulse = 0.5 + 0.5 * math.sin(game.t * ADRENALINE_VIGNETTE_PULSE_SPEED)
+        ad_alpha = int(60 + 60 * ad_pulse)
+        p.adrenaline_ring.color = color.rgba(255, 120, 30, ad_alpha)
+        p.adrenaline_ring.scale = 2.5 + 0.4 * ad_pulse
+    else:
+        if hasattr(p, 'adrenaline_ring') and p.adrenaline_ring is not None:
+            destroy(p.adrenaline_ring)
+            p.adrenaline_ring = None
+
     # Float visual update — show golden shimmer when floating
     if p.float_timer > 0:
         if not hasattr(p, 'float_ring') or p.float_ring is None:
@@ -5793,6 +6054,38 @@ def game_update():
     # Mirror Shard timer — reflects enemy projectiles
     if p.mirror_timer > 0:
         p.mirror_timer -= time.dt
+
+    # ── Overheal Barrier Decay ── The overheal buffer decays over time after
+    # a delay, so it's a temporary combat buffer rather than a permanent HP
+    # increase. This prevents stockpiling overheal between fights.
+    if p.overheal > 0:
+        if p.overheal_decay_delay > 0:
+            p.overheal_decay_delay -= time.dt
+        else:
+            p.overheal = max(0, p.overheal - OVERHEAL_DECAY_PER_SECOND * time.dt)
+            # Small golden sparkle particle as the barrier slowly fades
+            if int(game.t * 3) % 2 == 0:
+                game._spawn_particles(p.position + Vec3(0, 0.8, 0), OVERHEAL_RING_COLOR, count=1)
+
+    # ── Adrenaline Rush ── When HP drops below the threshold, the player gets
+    # a temporary burst of speed and fire rate — a "fight or flight" response
+    # for clutch moments. Triggers once per drop; re-arms when HP recovers
+    # above the threshold so it can trigger again on the next dangerous dip.
+    hp_ratio_current = p.hp / p.max_hp if p.max_hp > 0 else 0
+    if p.adrenaline_timer > 0:
+        p.adrenaline_timer -= time.dt
+        if p.adrenaline_timer <= 0:
+            p.adrenaline_cooldown = True  # Prevent immediate re-trigger
+            game.add_message("Adrenaline fades...")
+    elif not p.adrenaline_cooldown and hp_ratio_current < ADRENALINE_HP_THRESHOLD and hp_ratio_current > 0:
+        # Trigger adrenaline!
+        p.adrenaline_timer = ADRENALINE_DURATION
+        game.add_message("⚡ ADRENALINE RUSH!")
+        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 120, 30), count=20)
+        game.screen_shake = max(game.screen_shake, 0.3)
+    elif p.adrenaline_cooldown and hp_ratio_current > ADRENALINE_HP_THRESHOLD + 0.05:
+        # HP recovered above threshold + margin — re-arm adrenaline
+        p.adrenaline_cooldown = False
 
     # Cosmic Leech drain DoT — deals damage over time
     if p.drain_timer > 0:
@@ -7317,9 +7610,38 @@ def game_update():
             if col.name == 'Health Potion':
                 # Track HP ratio before heal for the low-HP heal flash trigger
                 hp_ratio_before = p.hp / p.max_hp if p.max_hp > 0 else 0
-                p.hp = min(p.hp + HEALTH_POTION_HEAL, p.max_hp)
-                game.add_message(f"Health Potion! +{HEALTH_POTION_HEAL} HP")
+                # ── Overheal Barrier ── If the heal would exceed max HP, the
+                # excess converts into a temporary overheal barrier that absorbs
+                # damage before real HP is reduced. This makes Health Potions
+                # valuable even at full HP instead of being wasted.
+                heal_remaining = HEALTH_POTION_HEAL
+                hp_room = p.max_hp - p.hp
+                if hp_room > 0:
+                    actual_heal = min(heal_remaining, hp_room)
+                    p.hp += actual_heal
+                    heal_remaining -= actual_heal
+                else:
+                    actual_heal = 0
+                # Convert excess healing to overheal (capped at OVERHEAL_MAX)
+                overheal_gained = 0
+                if heal_remaining > 0 and p.overheal < OVERHEAL_MAX:
+                    overheal_gained = min(heal_remaining, OVERHEAL_MAX - p.overheal)
+                    p.overheal += overheal_gained
+                    p.overheal_decay_delay = OVERHEAL_DECAY_DELAY
+                # Build the message describing what happened
+                msg_parts = []
+                if actual_heal > 0:
+                    msg_parts.append(f"+{actual_heal} HP")
+                if overheal_gained > 0:
+                    msg_parts.append(f"+{overheal_gained} Overheal")
+                if msg_parts:
+                    game.add_message(f"Health Potion! {' | '.join(msg_parts)}")
+                else:
+                    game.add_message("Health Potion! (Overheal full!)")
                 game._spawn_particles(col.position, color.rgb(255, 50, 50), count=12)
+                if overheal_gained > 0:
+                    # Extra golden particles for the overheal portion
+                    game._spawn_particles(col.position, OVERHEAL_RING_COLOR, count=8)
                 # ── Heal Pickup Green Flash ── If the player was at low HP when
                 # they grabbed the potion, flash the screen edges green — a
                 # satisfying "you're saved!" cue that makes clutch heals feel
