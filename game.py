@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.20.1"
+VERSION = "2.20.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -842,6 +842,39 @@ LOW_HP_POTION_GLOW_BOOST = 1.8       # Brightness multiplier on the glow ring
 LOW_HP_POTION_PULSE_BOOST = 2.0      # Pulse speed multiplier when prioritized
 # Ordered rarity tiers so we can check >= rare
 RARITY_TIER_ORDER = ['common', 'uncommon', 'rare', 'very_rare', 'legendary', 'mythic']
+
+# ─── Ability Ready Flash for Pulse Wave & Vacuum Pulse ──────────────────────────
+# The Dash ability already has a ready-flash when its cooldown ends. Now Pulse
+# Wave and Vacuum Pulse get the same treatment — a brief colored pulse behind
+# their HUD text when they come off cooldown, so the player's eye is drawn to
+# the fact that the ability is available again without constantly checking.
+PULSE_READY_FLASH_DURATION = 0.4    # How long the pulse wave ready flash lasts
+PULSE_READY_FLASH_COLOR = color.rgba(0, 255, 200, 0)   # Teal flash for pulse wave
+VACUUM_READY_FLASH_DURATION = 0.4   # How long the vacuum pulse ready flash lasts
+VACUUM_READY_FLASH_COLOR = color.rgba(255, 220, 80, 0)  # Gold flash for vacuum pulse
+
+# ─── Enemy Death Ground Ring ──────────────────────────────────────────────────
+# When an enemy dies, a brief expanding ground ring radiates outward from the
+# death point in the enemy's own color — complementing the existing death
+# particle burst, pop animation, and screen shake with a ground-level visual
+# that's visible even when looking down from the third-person camera. This
+# matches the visual language of hit ripples, dash landing rings, collectible
+# spawn/pickup rings, and heal pulse rings, giving kills a complete satisfying
+# visual arc. The ring scales with enemy size — bigger enemies produce bigger
+# death rings for proportional impact feedback.
+ENEMY_DEATH_RING_DURATION = 0.45     # How long the death ring expands (seconds)
+ENEMY_DEATH_RING_START_SCALE = 0.4   # Starting scale of the death ring
+ENEMY_DEATH_RING_MAX_SCALE = 3.5     # Max scale the death ring reaches
+ENEMY_DEATH_RING_ALPHA = 130         # Starting alpha of the death ring
+
+# ─── Crosshair Hit-Confirmation Color Flash ──────────────────────────────────
+# When a projectile hits an enemy, the crosshair briefly flashes to confirm the
+# hit — tinting toward the enemy's color (or gold for crits). This gives instant
+# visual feedback that your shot connected, making shooting feel more responsive
+# and satisfying. The flash decays quickly so rapid fire still feels clean.
+CROSSHAIR_HIT_FLASH_DURATION = 0.12  # How long the crosshair hit flash lasts
+CROSSHAIR_HIT_FLASH_COLOR = color.rgba(255, 255, 100, 255)  # Default hit flash (yellow-white)
+CROSSHAIR_CRIT_FLASH_COLOR = color.rgba(255, 200, 0, 255)  # Crit hit flash (gold)
 
 # ─── XP Bar Gain Flash ──────────────────────────────────────────────────────────
 # When the player gains XP, the XP bar briefly flashes brighter and pulses
@@ -2554,6 +2587,49 @@ class CollectiblePickupRing(Entity):
         return False
 
 
+# ─── Enemy Death Ground Ring ────────────────────────────────────────────────
+class EnemyDeathRing(Entity):
+    """A brief expanding ground ring that radiates outward from an enemy's
+    death point in the enemy's own color.
+
+    Complements the existing death particle burst, pop-up animation, and
+    screen shake with a ground-level visual that's visible even when looking
+    down from the third-person camera. Matches the visual language of hit
+    ripples, dash landing rings, collectible spawn/pickup rings, and heal
+    pulse rings — giving kills a complete, satisfying visual arc. The ring
+    scales with enemy size so tougher enemies produce a bigger death ring.
+    """
+
+    def __init__(self, position, col, enemy_scale=1.0):
+        cr, cg, cb = _c255_color(col)
+        super().__init__(
+            model='quad',
+            color=color.rgba(cr, cg, cb, ENEMY_DEATH_RING_ALPHA),
+            scale=ENEMY_DEATH_RING_START_SCALE,
+            position=position + Vec3(0, 0.1, 0),
+            rotation_x=90,
+        )
+        self.lifetime = ENEMY_DEATH_RING_DURATION
+        self.max_lifetime = ENEMY_DEATH_RING_DURATION
+        self._r, self._g, self._b = cr, cg, cb
+        # Scale the max ring size with enemy scale — bigger enemies get bigger rings
+        self._max_scale = ENEMY_DEATH_RING_MAX_SCALE * max(0.6, min(2.0, enemy_scale))
+
+    def update_ring(self, dt):
+        """Expand and fade the ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to enemy-scaled max with ease-out
+        ease = 1.0 - (1.0 - progress) ** 2
+        self.scale = ENEMY_DEATH_RING_START_SCALE + (self._max_scale - ENEMY_DEATH_RING_START_SCALE) * ease
+        # Fade alpha out smoothly
+        alpha = max(0, int(ENEMY_DEATH_RING_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(self._r, self._g, self._b, alpha)
+        return False
+
+
 # ─── Achievement ──────────────────────────────────────────────────────────
 class Achievement:
     """A milestone that unlocks when the player reaches a specific goal.
@@ -3472,6 +3548,17 @@ class Game:
         self.collect_pickup_rings = []  # Collectible pickup ground rings
         self.dash_land_rings = []  # Dash landing impact rings
         self.footstep_ripples = []  # Player footstep ground ripples while running
+        self.enemy_death_rings = []  # Enemy death expanding ground rings
+
+        # ── Ability Ready Flash Tracking ── When the Pulse Wave or Vacuum
+        # Pulse cooldown ends, a brief colored pulse flashes behind their HUD
+        # text so the player notices the ability is available again — matching
+        # the existing Dash ready flash. We track whether each was on cooldown
+        # last frame so we only fire the flash on the transition.
+        self._pulse_was_on_cooldown = False
+        self.pulse_ready_flash_timer = 0.0
+        self._vacuum_was_on_cooldown = False
+        self.vacuum_ready_flash_timer = 0.0
 
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
@@ -3746,6 +3833,10 @@ class Game:
 
         # Crosshair recoil — expands briefly on each shot for a dynamic aim feel
         self.crosshair_recoil = 0.0  # 1.0 = just fired, decays to 0
+        # Crosshair hit flash — briefly tints the crosshair when a shot hits an
+        # enemy, giving instant hit-confirmation feedback. Gold for crits.
+        self.crosshair_hit_flash_timer = 0.0
+        self.crosshair_hit_flash_color = CROSSHAIR_HIT_FLASH_COLOR
 
         # Score roll-up — displayed score smoothly lerps toward the real score
         self.displayed_score = 0
@@ -4038,7 +4129,7 @@ class Game:
                       'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
                       'compass_arrow',
                       'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
-                      'auto_fire_text'):
+                      'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -4761,6 +4852,26 @@ class Game:
             color=color.rgba(0, 255, 255, 0),
             scale=(0.2, 0.035),
             position=(-0.65, 0.37),
+        )
+
+        # Pulse Wave ready flash overlay — brief teal pulse behind pulse text
+        # when cooldown ends, matching the Dash ready flash pattern.
+        self.pulse_ready_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(0, 255, 200, 0),
+            scale=(0.2, 0.035),
+            position=(-0.65, 0.21),
+        )
+
+        # Vacuum Pulse ready flash overlay — brief gold pulse behind vacuum text
+        # when cooldown ends, matching the Dash/Pulse ready flash pattern.
+        self.vacuum_ready_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 220, 80, 0),
+            scale=(0.2, 0.035),
+            position=(-0.65, 0.17),
         )
 
         # Ability cooldown bars — visual progress bars beneath the dash and
@@ -5952,6 +6063,32 @@ class Game:
             self.vacuum_cd_bar_bg.visible = False
             self.vacuum_cd_bar.visible = False
 
+        # ── Pulse Wave Ready Flash ── Brief teal pulse behind the pulse text
+        # when the cooldown ends, so the player notices it's available again
+        # without having to check the HUD constantly. Matches the Dash ready
+        # flash pattern for consistent ability feedback.
+        if self.pulse_ready_flash_timer > 0:
+            self.pulse_ready_flash_timer -= time.dt
+            flash_ratio = max(0, self.pulse_ready_flash_timer / PULSE_READY_FLASH_DURATION)
+            flash_alpha = int(120 * flash_ratio)
+            self.pulse_ready_flash.color = color.rgba(0, 255, 200, flash_alpha)
+            scale_pulse = 1.0 + 0.15 * flash_ratio
+            self.pulse_ready_flash.scale = (0.2 * scale_pulse, 0.035 * scale_pulse)
+        else:
+            self.pulse_ready_flash.color = color.rgba(0, 255, 200, 0)
+
+        # ── Vacuum Pulse Ready Flash ── Brief gold pulse behind the vacuum text
+        # when the cooldown ends, matching the Dash/Pulse ready flash pattern.
+        if self.vacuum_ready_flash_timer > 0:
+            self.vacuum_ready_flash_timer -= time.dt
+            flash_ratio = max(0, self.vacuum_ready_flash_timer / VACUUM_READY_FLASH_DURATION)
+            flash_alpha = int(120 * flash_ratio)
+            self.vacuum_ready_flash.color = color.rgba(255, 220, 80, flash_alpha)
+            scale_pulse = 1.0 + 0.15 * flash_ratio
+            self.vacuum_ready_flash.scale = (0.2 * scale_pulse, 0.035 * scale_pulse)
+        else:
+            self.vacuum_ready_flash.color = color.rgba(255, 220, 80, 0)
+
         # ── Auto-Fire Indicator ── Shows [AUTO] in magenta when auto-fire is on
         if self.auto_fire_enabled:
             self.auto_fire_text.text = '⚡ AUTO-FIRE [X]'
@@ -6104,6 +6241,28 @@ class Game:
                                 CROSSHAIR_IDLE_SCALE_Y * recoil_mult)
         self.crosshair2.scale = (CROSSHAIR_IDLE_SCALE_Y * recoil_mult,
                                  CROSSHAIR_IDLE_SCALE_X * recoil_mult)
+
+        # ── Crosshair Hit-Confirmation Flash ── When a projectile hits an enemy,
+        # the crosshair briefly tints to confirm the hit — gold for crits, warm
+        # yellow-white for normal hits. This gives instant visual feedback that
+        # your shot connected, making shooting feel more responsive. The flash
+        # decays quickly so rapid fire still feels clean.
+        if self.crosshair_hit_flash_timer > 0:
+            self.crosshair_hit_flash_timer -= time.dt
+            if self.crosshair_hit_flash_timer <= 0:
+                self.crosshair_hit_flash_timer = 0
+                self.crosshair.color = color.rgba(255, 255, 255, 128)
+                self.crosshair2.color = color.rgba(255, 255, 255, 128)
+            else:
+                flash_ratio = self.crosshair_hit_flash_timer / CROSSHAIR_HIT_FLASH_DURATION
+                # Blend from the flash color toward normal white
+                fr, fg, fb = _c255_color(self.crosshair_hit_flash_color)
+                r = int(fr + (255 - fr) * (1 - flash_ratio))
+                g = int(fg + (255 - fg) * (1 - flash_ratio))
+                b = int(fb + (255 - fb) * (1 - flash_ratio))
+                a = int(128 + 127 * flash_ratio)  # Brighter during flash
+                self.crosshair.color = color.rgba(r, g, b, a)
+                self.crosshair2.color = color.rgba(r, g, b, a)
 
         # ── Overheal Barrier HP Bar ── Golden extension to the right of the
         # normal HP bar, showing how much overheal buffer the player has.
@@ -6524,6 +6683,11 @@ def game_update():
             if hpr.update_pulse(time.dt):
                 destroy(hpr)
                 game.heal_pulse_rings.remove(hpr)
+        # Update enemy death rings during freeze (visual only)
+        for edr in game.enemy_death_rings[:]:
+            if edr.update_ring(time.dt):
+                destroy(edr)
+                game.enemy_death_rings.remove(edr)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -6969,12 +7133,22 @@ def game_update():
         game.pulse_wave_cooldown -= time.dt
         if game.pulse_wave_cooldown < 0:
             game.pulse_wave_cooldown = 0
+        game._pulse_was_on_cooldown = True
+    elif game._pulse_was_on_cooldown:
+        # Pulse Wave just came off cooldown — trigger readiness flash
+        game._pulse_was_on_cooldown = False
+        game.pulse_ready_flash_timer = PULSE_READY_FLASH_DURATION
 
     # Vacuum Pulse cooldown — counts down like other ability cooldowns
     if game.vacuum_pulse_cooldown > 0:
         game.vacuum_pulse_cooldown -= time.dt
         if game.vacuum_pulse_cooldown < 0:
             game.vacuum_pulse_cooldown = 0
+        game._vacuum_was_on_cooldown = True
+    elif game._vacuum_was_on_cooldown:
+        # Vacuum Pulse just came off cooldown — trigger readiness flash
+        game._vacuum_was_on_cooldown = False
+        game.vacuum_ready_flash_timer = VACUUM_READY_FLASH_DURATION
 
     # ── Vacuum Pulse Active ── While the vacuum pulse is active, pull ALL
     # collectibles within range toward the player at high speed.
@@ -8037,6 +8211,12 @@ def game_update():
                 # Pass projectile direction for knockback
                 hit_dir = proj.direction
                 killed = enemy.take_damage(damage, hit_direction=hit_dir)
+                # ── Crosshair Hit-Confirmation Flash ── The crosshair briefly
+                # tints to confirm the hit — gold for crits, warm yellow-white
+                # for normal hits. Gives instant visual feedback that your shot
+                # connected, making shooting feel more responsive and satisfying.
+                game.crosshair_hit_flash_timer = CROSSHAIR_HIT_FLASH_DURATION
+                game.crosshair_hit_flash_color = CROSSHAIR_CRIT_FLASH_COLOR if is_crit else CROSSHAIR_HIT_FLASH_COLOR
                 # ── Projectile Impact Flash ── A brief bright flash sphere pops at
                 # the exact contact point, giving each hit a punchy contact-effect
                 # that complements the existing hit ripple and particle burst.
@@ -8227,6 +8407,17 @@ def game_update():
                     # Kill burst: radial ring of particles for satisfying, explosive kill feedback
                     # Scaled with enemy max HP — tougher enemies produce bigger death explosions
                     game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                    # ── Enemy Death Ground Ring ── A brief expanding ground ring
+                    # in the enemy's color radiates from the death point, giving
+                    # the kill a ground-level visual that's visible from the
+                    # third-person camera — matching hit ripples, dash landing
+                    # rings, collectible rings, and heal pulse rings for a
+                    # complete and consistent visual language.
+                    game.enemy_death_rings.append(EnemyDeathRing(
+                        position=Vec3(enemy.x, 0, enemy.z),
+                        col=enemy.original_color,
+                        enemy_scale=enemy.original_scale,
+                    ))
                     game.add_message(f"Defeated {enemy.name}!")
                     # Add to kill feed
                     game.kill_feed.append((game.t, f"✦ {enemy.name}"))
@@ -8430,6 +8621,14 @@ def game_update():
             destroy(hpr)
             game.heal_pulse_rings.remove(hpr)
 
+    # ── Update Enemy Death Ground Rings ── Expanding ground rings from enemy
+    # kills are updated and removed when expired. These spawn in the enemy's
+    # own color and scale with enemy size for proportional impact feedback.
+    for edr in game.enemy_death_rings[:]:
+        if edr.update_ring(time.dt):
+            destroy(edr)
+            game.enemy_death_rings.remove(edr)
+
     # ── Pulse Wave Ring Update ── BUG FIX: ring update_ring() was only called
     # during hit-stop freeze (a 0.08s window after kills), so in normal gameplay
     # the rings never expanded, never faded, and never expired — making Pulse
@@ -8502,6 +8701,12 @@ def game_update():
                             game.collectibles.append(c)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                    # ── Enemy Death Ground Ring ── (Pulse Wave kill variant)
+                    game.enemy_death_rings.append(EnemyDeathRing(
+                        position=Vec3(enemy.x, 0, enemy.z),
+                        col=enemy.original_color,
+                        enemy_scale=enemy.original_scale,
+                    ))
                     game.add_message(f"Pulse Wave defeated {enemy.name}!")
                     game.kill_feed.append((game.t, f"🌀 {enemy.name}"))
 

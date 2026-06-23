@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.20.1 — 3D!)
+## Features (v2.20.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -184,6 +184,9 @@ python game.py
 - **Boss death slow-motion** — when a boss-tier enemy (Plasma Drake, 350+ HP) is killed, the game enters a brief cinematic slow-motion effect! Time scales down to 35% speed for 0.5 seconds, then smoothly recovers to normal — making the boss's death animation, particle explosion, and screen shake play out in dramatic slow-mo. The time scale ramps smoothly back to 100% (no abrupt snap), so the transition feels organic. Only triggers for the toughest enemies so it stays special and doesn't slow down regular combat
 - **Enemy spawn materialization flash** — when an enemy materializes from a spawn warning, a bright warm-orange flash sphere now pops at the spawn point in addition to the existing vertical particle column! The flash expands to 2.5x scale and fades over 0.18 seconds, giving the materialization a punchy 3D light burst that's visible from any angle — especially effective in dark biomes or at distance where the particle column alone might be hard to see
 - **Player footstep ground ripples** — while running, Zorp periodically emits subtle biome-tinted ground rings that expand and fade from his position! These "footstep ripples" give movement more visual weight and ground connection — you see and feel the momentum of running as rings radiate outward with each step. The ripples are biome-tinted (green on grass, tan on desert, blue on snow) for environmental cohesion and fire at a steady 0.28-second interval, stopping when standing still
+- **Ability ready flash for Pulse Wave & Vacuum Pulse** — the Dash ability already flashed when its cooldown ended; now Pulse Wave and Vacuum Pulse get the same treatment! A brief teal pulse flashes behind the Pulse Wave HUD text and a gold pulse behind Vacuum Pulse when they come off cooldown, giving consistent "ability is ready!" feedback across all three active abilities — your eye is drawn to the HUD the moment an ability becomes available
+- **Enemy death ground ring** — when an enemy dies, a brief expanding ground ring radiates outward from the death point in the enemy's own color! This fills a gap in the visual language (hits, dashes, pickups, and heals all had ground rings, but kills didn't) and scales with enemy size — a Plasma Drake produces a massive expanding ring while a Swarm Mite produces a small pop. Visible from the third-person camera even when looking straight down
+- **Crosshair hit-confirmation flash** — when a projectile hits an enemy, the crosshair briefly tints to confirm the hit — warm yellow-white for normal hits, gold for critical hits! This gives instant visual feedback that your shot connected, making shooting feel more responsive. The flash decays over 0.12 seconds so rapid fire stays clean
 
 ## The Self-Improving Game
 
@@ -365,6 +368,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.20.2 — Ability Ready Flashes, Enemy Death Ring & Crosshair Hit Flash
+- **Ability ready flash for Pulse Wave & Vacuum Pulse**: The Dash ability already flashed cyan when its cooldown ended — now Pulse Wave and Vacuum Pulse get the same treatment. When Pulse Wave comes off cooldown, a brief teal pulse flashes behind its HUD text; when Vacuum Pulse ends, a gold pulse appears. This gives consistent "ability is ready!" feedback across all three active abilities, so the player's eye is drawn to the HUD at the exact moment an ability becomes available — no more wondering "is my Q ready yet?" while dodging enemies. The flash decays smoothly over 0.4 seconds with a slight scale pulse, matching the Dash ready flash pattern exactly
+- **Enemy death ground ring**: When an enemy dies, a brief expanding ground ring now radiates outward from the death point in the enemy's own color — complementing the existing death particle burst, pop-up animation, and screen shake with a ground-level visual that's visible even when looking down from the third-person camera. This fills a gap in the game's visual language: hits had ripples, dash landings had rings, collectibles had spawn/pickup rings, heals had pulse rings — but kills had no ground-level effect. The ring scales with enemy size (bigger enemies produce bigger rings up to 2x), so a Plasma Drake death creates a massive expanding ring while a Swarm Mite produces a small pop. Works for all kill sources (projectiles, Pulse Wave) and is updated during hit-stop freeze frames for visual continuity
+- **Crosshair hit-confirmation flash**: When a projectile hits an enemy, the crosshair briefly tints to confirm the hit — warm yellow-white for normal hits, gold for critical hits. This gives instant visual feedback that your shot connected, making shooting feel more responsive and satisfying — you *see* the hit on your crosshair, not just on the enemy. The flash decays smoothly over 0.12 seconds so rapid fire still feels clean, and the gold crit variant gives critical hits an extra layer of satisfying feedback on top of the existing golden particles and screen shake. The crosshair brightens and shifts color during the flash, then blends back to normal white — a subtle but impactful combat feel improvement
 
 ### v2.20.1 — Enemy Projectile Glow, Level-Up Heal Scaling & Pickup Ground Ring
 - **Enemy projectile glow aura**: Spore Spitter projectiles now have a soft pulsing orange glow aura (matching the player's projectile aura) so incoming enemy fire is clearly visible and threatening — especially in dark biomes where a flat orange sphere can be nearly invisible against the terrain. The aura is a translucent parented sphere that pulses in brightness each frame, making it easy to track and dodge incoming shots. This brings enemy projectiles to the same visual standard as player projectiles, which have had a glow aura since v2.12.2
