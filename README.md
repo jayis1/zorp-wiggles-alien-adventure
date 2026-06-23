@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.20.0 — 3D!)
+## Features (v2.20.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -365,6 +365,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.20.1 — Enemy Projectile Glow, Level-Up Heal Scaling & Pickup Ground Ring
+- **Enemy projectile glow aura**: Spore Spitter projectiles now have a soft pulsing orange glow aura (matching the player's projectile aura) so incoming enemy fire is clearly visible and threatening — especially in dark biomes where a flat orange sphere can be nearly invisible against the terrain. The aura is a translucent parented sphere that pulses in brightness each frame, making it easy to track and dodge incoming shots. This brings enemy projectiles to the same visual standard as player projectiles, which have had a glow aura since v2.12.2
+- **Level-up heal scaling**: The fixed 40 HP heal on level-up was insignificant at high levels — at level 10 (240 max HP), it healed only 17% of your health bar. Now the heal is the *larger* of a flat 40 HP base and 15% of max HP, so level-ups stay rewarding throughout the game. Early game (120 HP): the flat 40 HP dominates (33% heal). Late game (240+ HP): the 15% percentage takes over (36+ HP), keeping each level-up meaningful instead of a negligible tickle
+- **Collectible pickup ground ring**: When a collectible is picked up, a brief expanding ground ring now radiates outward from the pickup point in the item's color — complementing the existing pop animation and particle burst with a ground-level visual that's visible even when looking down from the third-person camera. This matches the existing spawn ring that fires when collectibles appear, giving pickups a complete satisfying visual arc from spawn to collection. The ring is slightly faster (0.30s vs 0.45s) and smaller than the spawn ring so pickups feel snappy rather than lingering
 
 ### v2.20.0 — Boss Death Slow-Motion, Spawn Flash & Footstep Ripples
 - **Boss death slow-motion**: When a boss-tier enemy (Plasma Drake, 350+ HP) is killed, the game enters a brief cinematic slow-motion effect! Time scales down to 35% speed for 0.5 seconds, then smoothly recovers to normal speed — making the boss's death animation, particle explosion, and screen shake play out in dramatic slow-mo. The time scale ramps smoothly from 35% back to 100% (no abrupt snap), so the transition feels organic and cinematic. A "BOSS DOWN! SLOW-MO!" message appears to celebrate the moment. Only triggers for enemies with 300+ max HP so it stays special and doesn't slow down regular combat. Works for all kill sources (projectiles, Pulse Wave). The slow-mo is applied by scaling `time.dt` in-place after Ursina sets it each frame, so all existing gameplay logic automatically uses the scaled time without modifying hundreds of individual call sites

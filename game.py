@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.20.0"
+VERSION = "2.20.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -119,7 +119,8 @@ SPAWN_SAFE_RADIUS = 15
 ENEMY_SPAWN_SAFE_RADIUS = 30
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-LEVEL_UP_HEAL_AMOUNT = 40              # Generous heal — rewards survival and leveling up
+LEVEL_UP_HEAL_AMOUNT = 40              # Base heal — rewards survival and leveling up
+LEVEL_UP_HEAL_PERCENT = 0.15           # Heals 15% of max HP on level-up (scales with level)
 LEVEL_UP_HP_BONUS = 12                 # More HP per level — 120→132→144→... feels meaningful
 LEVEL_UP_SPEED_BONUS = 0.4             # Slightly more speed per level for better kite feel
 XP_SCALE_FACTOR = 1.40                 # Flatter XP curve — levels come faster in late game
@@ -799,6 +800,29 @@ RARE_PICKUP_TIER_THRESHOLD = 'rare'  # Minimum rarity tier that triggers the fla
 HEAL_FLASH_DURATION = 0.40          # Seconds the heal flash stays visible
 HEAL_FLASH_MAX_ALPHA = 70           # Peak alpha of the green heal flash overlay
 HEAL_FLASH_HP_THRESHOLD = 0.40      # HP ratio below which a heal flash triggers
+
+# ─── Enemy Projectile Glow Aura ──────────────────────────────────────────────
+# Spore Spitter projectiles get a soft pulsing orange glow aura, making them
+# more visible and threatening — matching the player's projectile glow aura
+# for visual consistency. The aura is a translucent parented sphere that pulses
+# in brightness as the projectile flies, so incoming fire is easier to spot
+# and dodge. This is especially important in dark biomes where a flat orange
+# sphere can be nearly invisible against the terrain.
+ENEMY_PROJECTILE_AURA_COLOR = color.rgba(255, 120, 20, 50)   # Orange glow
+ENEMY_PROJECTILE_AURA_SCALE = 1.7                             # Aura scale multiplier
+ENEMY_PROJECTILE_AURA_PULSE_SPEED = 10.0                      # How fast the aura pulses
+
+# ─── Collectible Pickup Ground Ring ──────────────────────────────────────────
+# When a collectible is picked up (collected), a brief expanding ground ring
+# radiates outward from the pickup point in the item's color — complementing
+# the existing pop animation and particle burst with a ground-level visual
+# that's visible even when looking down at the world from the third-person
+# camera. Makes pickups feel more satisfying and grounded, matching the
+# existing spawn ring that fires when collectibles appear.
+COLLECT_PICKUP_RING_DURATION = 0.30    # How long the pickup ring expands
+COLLECT_PICKUP_RING_START_SCALE = 0.3  # Starting scale of the pickup ring
+COLLECT_PICKUP_RING_MAX_SCALE = 2.0    # Max scale the pickup ring reaches
+COLLECT_PICKUP_RING_ALPHA = 100        # Starting alpha of the pickup ring
 
 # ─── Collectible Spawn Ground Ring ────────────────────────────────────────────
 # When a collectible finishes its spawn-in animation, a brief expanding ground
@@ -1490,7 +1514,13 @@ class Player(Entity):
             self.level += 1
             self.xp_to_next = int(self.xp_to_next * XP_SCALE_FACTOR)
             self.max_hp += LEVEL_UP_HP_BONUS
-            self.hp = min(self.hp + LEVEL_UP_HEAL_AMOUNT, self.max_hp)
+            # ── Level-Up Heal Scaling ── The heal is the LARGER of a flat base
+            # amount and a percentage of max HP. This keeps level-ups rewarding
+            # at all stages: early game the flat 40 HP is generous (33% of 120
+            # HP), but late game when max HP is 240+, the 15% percentage heal
+            # (36+ HP) takes over so level-ups never feel insignificant.
+            heal_amt = max(LEVEL_UP_HEAL_AMOUNT, int(self.max_hp * LEVEL_UP_HEAL_PERCENT))
+            self.hp = min(self.hp + heal_amt, self.max_hp)
             self.speed += LEVEL_UP_SPEED_BONUS
             self.level_up_pending = True
 
@@ -2484,6 +2514,46 @@ class CollectibleSpawnRing(Entity):
         return False
 
 
+# ─── Collectible Pickup Ring ────────────────────────────────────────────────
+class CollectiblePickupRing(Entity):
+    """A brief expanding ground ring that radiates outward when a collectible
+    is picked up, in the item's color.
+
+    Complements the existing pop animation and particle burst with a
+    ground-level visual that's visible even when looking down at the world
+    from the third-person camera — making pickups feel more satisfying and
+    grounded. The ring is slightly faster and smaller than the spawn ring
+    so pickups feel snappy rather than lingering.
+    """
+
+    def __init__(self, position, col):
+        cr, cg, cb = _c255_color(col)
+        super().__init__(
+            model='quad',
+            color=color.rgba(cr, cg, cb, COLLECT_PICKUP_RING_ALPHA),
+            scale=COLLECT_PICKUP_RING_START_SCALE,
+            position=position + Vec3(0, 0.1, 0),
+            rotation_x=90,
+        )
+        self.lifetime = COLLECT_PICKUP_RING_DURATION
+        self.max_lifetime = COLLECT_PICKUP_RING_DURATION
+        self._r, self._g, self._b = cr, cg, cb
+
+    def update_ring(self, dt):
+        """Expand and fade the ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to max scale with ease-out
+        ease = 1.0 - (1.0 - progress) ** 2
+        self.scale = COLLECT_PICKUP_RING_START_SCALE + (COLLECT_PICKUP_RING_MAX_SCALE - COLLECT_PICKUP_RING_START_SCALE) * ease
+        # Fade alpha out smoothly
+        alpha = max(0, int(COLLECT_PICKUP_RING_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(self._r, self._g, self._b, alpha)
+        return False
+
+
 # ─── Achievement ──────────────────────────────────────────────────────────
 class Achievement:
     """A milestone that unlocks when the player reaches a specific goal.
@@ -3116,7 +3186,14 @@ class Projectile(Entity):
 
 
 class EnemyProjectile(Entity):
-    """A projectile fired by Spore Spitter enemies toward the player."""
+    """A projectile fired by Spore Spitter enemies toward the player.
+
+    Features a soft pulsing orange glow aura (matching the player projectile
+    aura) so incoming enemy fire is clearly visible and threatening —
+    especially in dark biomes where a flat orange sphere can be hard to see.
+    The aura pulses in brightness as the projectile flies, making it easy to
+    track and dodge.
+    """
 
     def __init__(self, position, direction, damage=10, speed=20):
         super().__init__(
@@ -3130,10 +3207,32 @@ class EnemyProjectile(Entity):
         self.speed = speed
         self.lifetime = 3.0
 
+        # ── Glow Aura ── A larger translucent sphere parented to the projectile
+        # that gives the enemy shot a glowing energy-ball look, making it much
+        # easier to see and dodge. The aura pulses in brightness each frame.
+        self.aura = Entity(
+            model='sphere',
+            color=ENEMY_PROJECTILE_AURA_COLOR,
+            scale=ENEMY_PROJECTILE_AURA_SCALE,
+            parent=self,
+        )
+        self.aura_base_alpha = ENEMY_PROJECTILE_AURA_COLOR[3]
+        self._aura_phase = random.uniform(0, math.pi * 2)
+
     def move(self, dt):
-        """Move the enemy projectile forward. Returns False when lifetime expires."""
+        """Move the enemy projectile forward. Returns False when lifetime expires.
+
+        Also pulses the glow aura's alpha for a living, threatening visual
+        that makes the projectile easy to track as it flies toward the player.
+        """
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
+        # Pulse the aura brightness so the projectile visibly glows
+        self._aura_phase += dt * ENEMY_PROJECTILE_AURA_PULSE_SPEED
+        pulse = 0.5 + 0.5 * math.sin(self._aura_phase)
+        a = max(20, min(255, int(self.aura_base_alpha * (0.5 + 0.5 * pulse))))
+        r, g, b = _c255_color(ENEMY_PROJECTILE_AURA_COLOR)
+        self.aura.color = color.rgba(r, g, b, a)
         return self.lifetime > 0
 
 
@@ -3370,6 +3469,7 @@ class Game:
         self.spawn_vortices = []  # Enemy spawn portal vortex discs
         self.heal_pulse_rings = []  # Healing pulse ring effects
         self.collect_spawn_rings = []  # Collectible spawn ground rings
+        self.collect_pickup_rings = []  # Collectible pickup ground rings
         self.dash_land_rings = []  # Dash landing impact rings
         self.footstep_ripples = []  # Player footstep ground ripples while running
 
@@ -3805,6 +3905,12 @@ class Game:
             if csr and hasattr(csr, 'enabled') and csr.enabled:
                 destroy(csr)
         self.collect_spawn_rings.clear()
+
+        # Destroy collectible pickup rings
+        for cpr in self.collect_pickup_rings:
+            if cpr and hasattr(cpr, 'enabled') and cpr.enabled:
+                destroy(cpr)
+        self.collect_pickup_rings.clear()
 
         # Destroy dash landing rings
         for dlr in self.dash_land_rings:
@@ -6383,6 +6489,11 @@ def game_update():
             if csr.update_ring(time.dt):
                 destroy(csr)
                 game.collect_spawn_rings.remove(csr)
+        # Update collectible pickup rings during freeze (visual only)
+        for cpr in game.collect_pickup_rings[:]:
+            if cpr.update_ring(time.dt):
+                destroy(cpr)
+                game.collect_pickup_rings.remove(cpr)
         # Update dash landing rings during freeze (visual only)
         for dlr in game.dash_land_rings[:]:
             if dlr.update_ring(time.dt):
@@ -8288,6 +8399,14 @@ def game_update():
             destroy(csr)
             game.collect_spawn_rings.remove(csr)
 
+    # ── Update Collectible Pickup Rings ── Expanding rings from item pickups
+    # are updated and removed when expired, providing a satisfying ground-level
+    # visual that complements the pop animation and particle burst.
+    for cpr in game.collect_pickup_rings[:]:
+        if cpr.update_ring(time.dt):
+            destroy(cpr)
+            game.collect_pickup_rings.remove(cpr)
+
     # ── Update Dash Landing Impact Rings ── Expanding rings from dash landings
     # are updated and removed when expired, providing a visual impact cue.
     for dlr in game.dash_land_rings[:]:
@@ -8688,6 +8807,12 @@ def game_update():
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
             game.total_items_collected += 1
+            # ── Collectible Pickup Ground Ring ── A brief expanding ground ring
+            # radiates outward from the pickup point in the item's color,
+            # complementing the pop animation and particle burst with a
+            # ground-level visual that's visible from the third-person camera.
+            game.collect_pickup_rings.append(CollectiblePickupRing(
+                position=Vec3(col.x, 0, col.z), col=col.item_color))
             # ── Pickup Milestone Check ── Celebrate at 50, 100, 200, 500 items
             game._check_pickup_milestone()
             # ── Rarity-Scaled Screen Shake ── The base screen shake on pickup now
