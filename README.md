@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.19.4 — 3D!)
+## Features (v2.19.5 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -178,6 +178,9 @@ python game.py
 - **Enemy spawn portal vortex** — a spinning purple-magenta disc now appears beneath enemy spawn warning rings, rotating faster as the enemy materializes! Creates a dimensional portal effect — like enemies are emerging from a rift rather than just popping in. The vortex spins with accelerating speed, shrinks, and fades as the spawn countdown reaches zero, making enemy spawns feel more dramatic and otherworldly
 - **Pickup milestone celebrations** — collecting 50, 100, 200, or 500 total items triggers a golden particle burst and announcement message! A celebratory ★ milestone popup with golden sparkle burst and screen shake rewards dedicated collectors, making item gathering feel meaningful beyond individual pickups
 - **Healing pulse ring** — whenever Zorp is healed by any source (Health Potion, Regen Crystal, Spawn Healing Zone, Healing Shrine, or Idle Regeneration), a brief expanding green ring radiates outward from his position! Makes heals feel visceral and satisfying instead of just a number silently ticking up — you see and feel the healing happening in the world
+- **Player eye blinking** — Zorp now periodically blinks both eyes at random intervals, with a smooth Y-scale squish that closes and opens the eyes naturally. The pupils squish along with the eyes, creating a natural eyelid effect. Adds personality and makes the character feel more alive, complementing the existing idle breathing and pupil tracking
+- **Enemy wander direction smoothing** — wandering enemies now smoothly curve into new directions instead of snapping instantly on timer ticks. When they hit an obstacle, they turn around gracefully over a few frames instead of instantly reversing. Makes idle enemies look like they're meandering organically rather than jerking around
+- **Collectible beacon pulse** — collectibles periodically emit a larger, brighter glow expansion (a "beacon" pulse) well beyond their normal breathing range, making items much easier to spot from far away. Each item beacons at random intervals so they don't sync, with the glow ring bursting outward and brightening before settling back
 
 ## The Self-Improving Game
 
@@ -359,6 +362,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.19.5 — Eye Blink, Wander Smoothing & Collectible Beacon Pulse
+- **Player eye blinking**: Zorp now periodically blinks both eyes — a quick Y-scale squish that closes and opens the eyes smoothly over ~0.15 seconds at random 3–6 second intervals. The pupils (parented to the eyes) squish along automatically, creating a natural "eyelid closing" effect. This adds personality and makes the character feel more alive, complementing the existing idle breathing and pupil-tracking animations. Each blink uses a triangle wave (0→1→0) so the eye closes and opens naturally rather than snapping
+- **Enemy wander direction smoothing**: When wandering, enemies now smoothly lerp toward their new wander direction instead of snapping instantly. This makes idle enemy movement feel more natural and organic — enemies curve gracefully into new headings like creatures meandering rather than jerking into new directions on a timer tick. When hitting an obstacle, enemies reverse their target direction smoothly over the next few frames instead of instantly flipping. The lerp speed (3.0/s) is tuned to be noticeable but not sluggish, so the world feels alive without enemies feeling unresponsive
+- **Collectible beacon pulse**: Collectibles now periodically emit a larger, brighter "beacon" pulse — a brief expansion of the glow ring well beyond its normal range. Every 4–8 seconds (randomized per item so they don't sync), the glow ring bursts outward to 2.2x its normal maximum scale and brightens 1.8x over 0.6 seconds, then settles back. This makes items significantly easier to spot from far away, especially rare+ collectibles that are worth seeking out. The expansion uses an ease-out curve so it bursts quickly and settles smoothly, and it takes the max of the normal pulse and beacon so the beacon always overrides
 
 ### v2.19.4 — Death Explosion Scale, Dash Impact Ring, XP Anticipation & Score Formatting
 - **Enemy death explosion scale**: The kill particle burst now scales with the enemy's max HP — a Swarm Mite (12 HP) produces a small puff while a Plasma Drake (350 HP) erupts in a massive particle storm! Particle count, spread distance, upward velocity, particle size, and lifetime all scale logarithmically with enemy toughness, making hard-fought kills against tough enemies feel proportionally more rewarding and dramatic. A 350 HP boss produces 2x as many particles flying 1.5x farther than a standard kill

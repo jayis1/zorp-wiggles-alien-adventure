@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.4"
+VERSION = "2.19.5"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -295,6 +295,13 @@ MOVEMENT_DUST_COUNT = 2              # Number of dust particles per puff
 
 # ─── Enemy Smooth Rotation ──────────────────────────────────────────────────
 ENEMY_TURN_SPEED = 8.0               # How fast enemies rotate to face the player (higher = snappier)
+
+# ─── Enemy Wander Direction Smoothing ────────────────────────────────────────
+# When wandering, enemies lerp toward their new wander direction instead of
+# snapping instantly. This makes idle movement feel more natural and organic —
+# enemies curve gracefully into new directions like creatures meandering
+# rather than teleporting their facing vector on a timer tick.
+ENEMY_WANDER_TURN_SPEED = 3.0  # How fast the actual wander dir lerps toward target
 
 # ─── Player-Level Difficulty Scaling ──────────────────────────────────────────
 PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
@@ -674,6 +681,19 @@ GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
 GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
 GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
 
+# ─── Collectible Beacon Pulse ──────────────────────────────────────────────────
+# In addition to the normal glow pulse, collectibles periodically emit a
+# larger, brighter "beacon" pulse — a brief expansion of the glow ring well
+# beyond its normal range. This makes items easier to spot from far away,
+# especially rare+ collectibles that are worth seeking out. The beacon fires
+# at random intervals so items don't all beacon in sync, and the expansion
+# is larger and faster than the normal breathing pulse for clear visibility.
+COLLECT_BEACON_INTERVAL_MIN = 4.0   # Min seconds between beacon pulses
+COLLECT_BEACON_INTERVAL_MAX = 8.0   # Max seconds between beacon pulses
+COLLECT_BEACON_DURATION = 0.6       # How long the beacon expansion lasts
+COLLECT_BEACON_SCALE_MULT = 2.2     # Max glow scale multiplier during beacon (relative to max_scale)
+COLLECT_BEACON_ALPHA_MULT = 1.8     # Brightness multiplier during beacon peak
+
 # ─── Overkill System ──────────────────────────────────────────────────────────
 OVERKILL_DAMAGE_THRESHOLD = 25  # Minimum excess damage to trigger Overkill
 OVERKILL_XP_BONUS = 20            # Bonus XP for overkill
@@ -778,6 +798,16 @@ RARITY_SPIN_SPEED = {
 # making the character feel alive rather than frozen between movements.
 PLAYER_IDLE_BREATHE_SPEED = 1.5  # How fast the breathing cycle is (slower = calmer)
 PLAYER_IDLE_BREATHE_AMOUNT = 0.03  # 3% scale variation — subtle but perceptible
+
+# ─── Player Eye Blink ──────────────────────────────────────────────────────────
+# Zorp periodically blinks — a quick Y-scale squish of both eyes that adds
+# personality and makes the character feel more alive. The blink is triggered
+# at random intervals and lasts ~0.15 seconds, with a smooth squish-then-
+# recover animation. The pupils (parented to the eyes) get squished along
+# with the eyes, creating a natural "eyelid closing" effect.
+PLAYER_BLINK_INTERVAL_MIN = 3.0   # Minimum seconds between blinks
+PLAYER_BLINK_INTERVAL_MAX = 6.0   # Maximum seconds between blinks
+PLAYER_BLINK_DURATION = 0.15      # How long the blink lasts (seconds)
 
 # ─── Enemy Materialization Burst ──────────────────────────────────────────────
 # When an enemy materializes from a spawn warning, a vertical burst of particles
@@ -1296,6 +1326,15 @@ class Player(Entity):
         self.pupil_r = Entity(model='sphere', color=color.black, scale=(0.2, 0.25, 0.2),
                               parent=self.eye_r, position=(0, 0, -0.3))
 
+        # ── Eye Blink State ── Zorp periodically blinks both eyes (Y-scale
+        # squish) for personality. The blink timer counts down to the next
+        # blink; while blink_active is True, update_pupils() applies the
+        # squish animation. The eye base Y scales are stored so the blink
+        # can compose cleanly with the existing pupil-tracking offset.
+        self._eye_base_scale_y = 0.5  # Original eye Y scale (from init above)
+        self.blink_timer = random.uniform(PLAYER_BLINK_INTERVAL_MIN, PLAYER_BLINK_INTERVAL_MAX)
+        self.blink_active = 0.0  # 0 = not blinking, ramps to 1 then back to 0
+
         # Shield visual (invisible by default)
         self.shield_visual = Entity(model='sphere', color=color.rgba(100, 200, 255, 60),
                                     scale=1.6, parent=self, visible=False)
@@ -1461,7 +1500,38 @@ class Player(Entity):
 
         Pupils shift slightly in the direction Zorp is facing, giving a lively
         'looking where you aim' feel that connects the player to the character.
+
+        Also handles periodic eye blinking — both eyes squish to ~10% Y scale
+        and recover smoothly, giving Zorp personality and making the character
+        feel alive. The blink uses a triangle wave (0→1→0) so it closes and
+        opens naturally within the blink duration.
         """
+        # ── Eye Blink Animation ── Count down to the next blink, then run the
+        # blink squish over PLAYER_BLINK_DURATION seconds. The blink uses a
+        # triangle wave (0→1→0) mapped to a Y-scale squish from full to ~10%
+        # and back, so the eye closes and opens smoothly. Pupils are parented
+        # to the eyes, so they squish along automatically.
+        self.blink_timer -= time.dt
+        if self.blink_timer <= 0 and self.blink_active <= 0:
+            # Trigger a new blink
+            self.blink_active = PLAYER_BLINK_DURATION
+            self.blink_timer = random.uniform(PLAYER_BLINK_INTERVAL_MIN, PLAYER_BLINK_INTERVAL_MAX)
+        if self.blink_active > 0:
+            self.blink_active -= time.dt
+            if self.blink_active < 0:
+                self.blink_active = 0
+            # Triangle wave: 0 at start/end, 1 at midpoint
+            blink_phase = 1.0 - (self.blink_active / PLAYER_BLINK_DURATION)  # 0→1
+            blink_intensity = 1.0 - abs(blink_phase * 2 - 1)  # Triangle: 0→1→0
+            # Squish eye Y scale from full down to 10% at peak blink
+            squish_y = self._eye_base_scale_y * (1.0 - 0.9 * blink_intensity)
+            self.eye_l.scale_y = squish_y
+            self.eye_r.scale_y = squish_y
+        else:
+            # Not blinking — ensure eyes are at full Y scale
+            self.eye_l.scale_y = self._eye_base_scale_y
+            self.eye_r.scale_y = self._eye_base_scale_y
+
         # Map facing direction to a small pupil offset (max 0.12 units)
         fx, fz = self.facing.x, self.facing.z
         mag = max(0.001, math.sqrt(fx * fx + fz * fz))
@@ -1602,6 +1672,7 @@ class Enemy(Entity):
         self.attack_cd = 0
         self.detect_range = info.get('detect', ENEMY_DETECT_RANGE)
         self.wander_dir = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1)).normalized()
+        self.wander_target_dir = Vec3(self.wander_dir)  # Smoothly lerped toward for organic turning
         self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
         self.hit_scale_punch = 0.0   # Timer for scale punch animation on hit
@@ -2000,6 +2071,11 @@ class Collectible(Entity):
         # Pull trail timer — tracks time between trail dot spawns while the
         # collectible is being magnetically pulled toward the player
         self.pull_trail_timer = 0.0
+        # Beacon pulse timer — periodically emits a larger, brighter glow
+        # expansion so the item is easier to spot from far away. Each item
+        # gets a random initial timer so beacons don't all fire in sync.
+        self.beacon_timer = random.uniform(COLLECT_BEACON_INTERVAL_MIN, COLLECT_BEACON_INTERVAL_MAX)
+        self.beacon_active = 0.0  # >0 while the beacon expansion is playing
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
@@ -2030,6 +2106,33 @@ class Collectible(Entity):
         # Rarity-scaled glow pulse — faster pulse and wider range for rarer items
         pulse = self.glow_min_scale + (self.glow_max_scale - self.glow_min_scale) * (0.5 + 0.5 * math.sin(t * self.glow_pulse_speed + self.bob_offset))
         self.glow.scale = pulse
+        # ── Beacon Pulse ── Periodically emit a larger, brighter glow expansion
+        # so the item is easier to spot from far away. The beacon fires at random
+        # intervals (4-8s) and expands the glow ring well beyond its normal range
+        # over 0.6 seconds, then settles back. The expansion uses a sine-based
+        # ease-out curve so it bursts outward quickly and settles smoothly.
+        self.beacon_timer -= time.dt
+        if self.beacon_timer <= 0 and self.beacon_active <= 0:
+            self.beacon_active = COLLECT_BEACON_DURATION
+            self.beacon_timer = random.uniform(COLLECT_BEACON_INTERVAL_MIN, COLLECT_BEACON_INTERVAL_MAX)
+        if self.beacon_active > 0:
+            self.beacon_active -= time.dt
+            if self.beacon_active < 0:
+                self.beacon_active = 0
+            beacon_phase = 1.0 - (self.beacon_active / COLLECT_BEACON_DURATION)  # 0→1
+            # Ease-out: burst outward fast, settle slowly (1 - (1-t)^2)
+            beacon_t = 1.0 - (1.0 - beacon_phase) ** 2
+            beacon_scale = self.glow_max_scale + (self.glow_max_scale * COLLECT_BEACON_SCALE_MULT - self.glow_max_scale) * beacon_t
+            # Take the max of the normal pulse and the beacon so the beacon
+            # always overrides (never shrinks the glow below the normal pulse)
+            self.glow.scale = max(pulse, beacon_scale)
+            # Brighten the glow alpha during the beacon peak
+            beacon_intensity = 1.0 - abs(beacon_phase * 2 - 1)  # Triangle: 0→1→0
+            glow_cfg = RARITY_GLOW_CONFIG.get(self.rarity, RARITY_GLOW_CONFIG['common'])
+            base_alpha = glow_cfg['glow_alpha']
+            beacon_alpha = min(255, int(base_alpha * (1.0 + (COLLECT_BEACON_ALPHA_MULT - 1.0) * beacon_intensity)))
+            ir, ig, ib = _c255_color(self.item_color)
+            self.glow.color = color.rgba(ir, ig, ib, beacon_alpha)
 
 
 # ─── Pulse Wave Ring ─────────────────────────────────────────────────────
@@ -7329,15 +7432,32 @@ def game_update():
             if enemy.wander_timer <= 0:
                 # Bug fix: guard against zero-length direction producing NaN
                 wd = Vec3(random.uniform(-1, 1), 0, random.uniform(-1, 1))
-                enemy.wander_dir = wd.normalized() if wd.length() > 0.01 else Vec3(1, 0, 0)
+                enemy.wander_target_dir = wd.normalized() if wd.length() > 0.01 else Vec3(1, 0, 0)
                 enemy.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
+            # ── Wander Direction Smoothing ── Lerp the actual wander direction
+            # toward the target direction so enemies curve gracefully into new
+            # headings instead of snapping instantly. This makes idle enemies
+            # look like they're meandering organically rather than jerking into
+            # new directions on a timer tick.
+            enemy.wander_dir = Vec3(
+                lerp(enemy.wander_dir.x, enemy.wander_target_dir.x, time.dt * ENEMY_WANDER_TURN_SPEED),
+                0,
+                lerp(enemy.wander_dir.z, enemy.wander_target_dir.z, time.dt * ENEMY_WANDER_TURN_SPEED),
+            )
+            # Normalize to keep speed consistent even during the lerp
+            wd_len = enemy.wander_dir.length()
+            if wd_len > 0.01:
+                enemy.wander_dir = enemy.wander_dir / wd_len
             # Time Warp slow factor applies to wander too
             wander_speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
             new_pos = enemy.position + enemy.wander_dir * enemy.speed * ENEMY_WANDER_SPEED_FACTOR * wander_speed_mult * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
             else:
-                enemy.wander_dir = -enemy.wander_dir
+                # Hit an obstacle — reverse the target direction so the enemy
+                # turns around smoothly over the next few frames instead of
+                # snapping to the opposite direction instantly.
+                enemy.wander_target_dir = -enemy.wander_target_dir
 
         # Attack player (shield blocks damage)
         # Bug fix: cooldown must decrement even when in range, otherwise enemies
