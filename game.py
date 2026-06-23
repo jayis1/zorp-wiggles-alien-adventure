@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.6"
+VERSION = "2.20.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -711,6 +711,44 @@ DASH_LAND_SCREEN_SHAKE = 0.12     # Small camera shake on landing for impact
 GLOW_PULSE_SPEED = 3.5        # how fast the glow ring pulses
 GLOW_PULSE_MIN_SCALE = 2.8     # minimum glow scale
 GLOW_PULSE_MAX_SCALE = 3.8     # maximum glow scale
+
+# ─── Boss Death Slow-Motion ──────────────────────────────────────────────────
+# When a boss-tier enemy (Plasma Drake, 350 HP) is killed, the game enters a
+# brief slow-motion effect — time.dt is scaled down for a fraction of a second
+# so the boss's death animation, particle explosion, and screen shake play out
+# in dramatic cinematic slow-mo. This makes boss kills feel like momentous,
+# memorable events instead of just another enemy death. The slow-mo tapers
+# smoothly back to normal speed (no abrupt snap) and only triggers for the
+# toughest enemies so it stays special.
+BOSS_DEATH_SLOWMO_DURATION = 0.5     # How long the slow-motion lasts (seconds, real-time)
+BOSS_DEATH_SLOWMO_SCALE = 0.35       # Time scale during slow-mo (0.35 = 35% speed)
+BOSS_DEATH_SLOWMO_RECOVER_SPEED = 3.0  # How fast time scale recovers to 1.0
+BOSS_DEATH_HP_THRESHOLD = 300        # Enemy max_hp at or above this triggers slow-mo
+
+# ─── Enemy Spawn Materialization Flash ────────────────────────────────────────
+# When an enemy materializes from a spawn warning, a bright expanding flash
+# sphere appears at the spawn point in addition to the existing vertical
+# particle burst. The flash pops to full size instantly and fades over a
+# fraction of a second, giving the materialization a punchy "light burst"
+# effect that makes enemy appearances feel more dramatic and noticeable —
+# especially in dark biomes or at distance where the particle column alone
+# might be hard to see.
+SPAWN_FLASH_DURATION = 0.18          # How long the flash sphere lasts (seconds)
+SPAWN_FLASH_SCALE = 2.5             # Peak scale of the flash sphere
+SPAWN_FLASH_COLOR = color.rgba(255, 180, 100, 200)  # Warm orange-white flash
+
+# ─── Player Footstep Ground Ripples ──────────────────────────────────────────
+# While running, Zorp periodically emits small expanding ground rings from his
+# position — subtle "footstep ripples" that give movement more visual weight
+# and ground connection. The ripples are biome-tinted (matching the movement
+# dust color) and expand outward quickly before fading, so they don't clutter
+# the screen but add a sense of momentum and physicality to running. They
+# fire at a steady interval while moving and stop when standing still.
+FOOTSTEP_RIPPLE_INTERVAL = 0.28     # Seconds between footstep ripples while moving
+FOOTSTEP_RIPPLE_DURATION = 0.35     # How long each ripple expands before fading
+FOOTSTEP_RIPPLE_START_SCALE = 0.6   # Starting scale of the footstep ring
+FOOTSTEP_RIPPLE_MAX_SCALE = 2.0     # Max scale the ripple reaches
+FOOTSTEP_RIPPLE_ALPHA = 60          # Starting alpha of the footstep ring
 
 # ─── Collectible Beacon Pulse ──────────────────────────────────────────────────
 # In addition to the normal glow pulse, collectibles periodically emit a
@@ -2372,6 +2410,43 @@ class DashLandRing(Entity):
         return False
 
 
+# ─── Player Footstep Ground Ripple ──────────────────────────────────────────
+class FootstepRipple(Entity):
+    """A small expanding ground ring that radiates from Zorp's position while running.
+
+    Gives movement more visual weight and ground connection — subtle biome-tinted
+    ripples that expand and fade quickly, communicating momentum without cluttering
+    the screen. Fires at a steady interval while the player is moving.
+    """
+
+    def __init__(self, position, col):
+        cr, cg, cb = _c255_color(col)
+        super().__init__(
+            model='quad',
+            color=color.rgba(cr, cg, cb, FOOTSTEP_RIPPLE_ALPHA),
+            scale=FOOTSTEP_RIPPLE_START_SCALE,
+            position=position + Vec3(0, 0.04, 0),
+            rotation_x=90,
+        )
+        self.lifetime = FOOTSTEP_RIPPLE_DURATION
+        self.max_lifetime = FOOTSTEP_RIPPLE_DURATION
+        self._r, self._g, self._b = cr, cg, cb
+
+    def update_ripple(self, dt):
+        """Expand and fade the ripple. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to max scale with ease-out
+        ease = 1.0 - (1.0 - progress) ** 2
+        self.scale = FOOTSTEP_RIPPLE_START_SCALE + (FOOTSTEP_RIPPLE_MAX_SCALE - FOOTSTEP_RIPPLE_START_SCALE) * ease
+        # Fade alpha out smoothly
+        alpha = max(0, int(FOOTSTEP_RIPPLE_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(self._r, self._g, self._b, alpha)
+        return False
+
+
 # ─── Collectible Spawn Ring ────────────────────────────────────────────────
 class CollectibleSpawnRing(Entity):
     """A brief expanding ground ring that radiates outward when a collectible
@@ -3242,6 +3317,12 @@ class Game:
         self.screen_shake = 0.0
         self.level_up_timer = 0.0
         self.hit_stop_timer = 0.0
+        # ── Boss Death Slow-Motion ── When a boss-tier enemy is killed, time
+        # is briefly slowed for a cinematic effect. slowmo_timer counts down
+        # in real-time; while > 0, time.dt is multiplied by BOSS_DEATH_SLOWMO_SCALE.
+        # The time scale smoothly recovers to 1.0 as the timer winds down.
+        self.boss_slowmo_timer = 0.0
+        self.boss_slowmo_time_scale = 1.0  # Current effective time scale (lerps back to 1.0)
         self.kill_fov_timer = 0.0  # Camera FOV punch on kill — brief zoom-in effect
         self.current_biome = 'grass'
         # Smoothly-interpolated biome indicator color (r,g,b floats in 0-255 range)
@@ -3290,6 +3371,7 @@ class Game:
         self.heal_pulse_rings = []  # Healing pulse ring effects
         self.collect_spawn_rings = []  # Collectible spawn ground rings
         self.dash_land_rings = []  # Dash landing impact rings
+        self.footstep_ripples = []  # Player footstep ground ripples while running
 
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
@@ -3729,6 +3811,12 @@ class Game:
             if dlr and hasattr(dlr, 'enabled') and dlr.enabled:
                 destroy(dlr)
         self.dash_land_rings.clear()
+
+        # Destroy footstep ripples
+        for fr in self.footstep_ripples:
+            if fr and hasattr(fr, 'enabled') and fr.enabled:
+                destroy(fr)
+        self.footstep_ripples.clear()
 
         # Destroy spawn healing zone ring
         if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
@@ -6213,6 +6301,30 @@ def game_update():
     game.t += time.dt
     p = game.player
 
+    # ── Boss Death Slow-Motion ── When a boss is killed, time is briefly
+    # slowed for a cinematic effect. The slowmo_timer counts down in real
+    # time, and the time_scale smoothly recovers from BOSS_DEATH_SLOWMO_SCALE
+    # back to 1.0 as the timer winds down. We compute a dt_scale multiplier
+    # that's applied to all gameplay logic below (but NOT to the slowmo timer
+    # itself, which runs in real time so the effect duration is consistent).
+    if game.boss_slowmo_timer > 0:
+        game.boss_slowmo_timer -= time.dt  # Count down in real-time
+        # Time scale smoothly recovers from slowmo scale toward 1.0
+        recover_progress = 1.0 - max(0, game.boss_slowmo_timer / BOSS_DEATH_SLOWMO_DURATION)
+        game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE + (1.0 - BOSS_DEATH_SLOWMO_SCALE) * recover_progress
+        if game.boss_slowmo_timer <= 0:
+            game.boss_slowmo_time_scale = 1.0
+            game.boss_slowmo_timer = 0.0
+    else:
+        game.boss_slowmo_time_scale = 1.0
+    dt_scaled = time.dt * game.boss_slowmo_time_scale
+    # Apply the slow-mo by scaling time.dt in-place. Ursina resets time.dt
+    # each frame before calling this function, so this is safe — all existing
+    # time.dt references below will use the scaled value, and next frame
+    # Ursina sets a fresh value. This avoids modifying hundreds of individual
+    # time.dt call sites.
+    time.dt = dt_scaled
+
     # ── Hit-Stop: Brief freeze on kills for impact ──
     if game.hit_stop_timer > 0:
         game.hit_stop_timer -= time.dt
@@ -6276,6 +6388,11 @@ def game_update():
             if dlr.update_ring(time.dt):
                 destroy(dlr)
                 game.dash_land_rings.remove(dlr)
+        # Update footstep ripples during freeze (visual only)
+        for fr in game.footstep_ripples[:]:
+            if fr.update_ripple(time.dt):
+                destroy(fr)
+                game.footstep_ripples.remove(fr)
         # Update pulse wave rings during freeze (visual only)
         for pwr in game.pulse_wave_rings[:]:
             if pwr.update_ring(time.dt):
@@ -6825,8 +6942,20 @@ def game_update():
                 dust_p = Entity(model='sphere', color=dust_col, scale=random.uniform(0.06, 0.14),
                                position=dust_pos)
                 game.particles.append((dust_p, vel, random.uniform(0.2, 0.5)))
+        # ── Footstep Ground Ripples ── Periodically emit a subtle expanding
+        # ground ring while running, giving movement more visual weight and
+        # ground connection. The ripples are biome-tinted (matching the dust
+        # color) and expand quickly before fading, so they communicate
+        # momentum without cluttering the screen. They fire at a slower
+        # interval than the dust puffs so they don't overlap too densely.
+        p._footstep_timer = getattr(p, '_footstep_timer', 0.0) + time.dt
+        if p._footstep_timer >= FOOTSTEP_RIPPLE_INTERVAL:
+            p._footstep_timer = 0.0
+            ripple_col = game._biome_dust_color(game.current_biome)
+            game.footstep_ripples.append(FootstepRipple(position=Vec3(p.x, 0, p.z), col=ripple_col))
     else:
         p._dust_timer = getattr(p, '_dust_timer', 0.0)
+        p._footstep_timer = getattr(p, '_footstep_timer', 0.0)
 
     if p.dash_timer <= 0:
         # ── Smooth Acceleration/Deceleration ──
@@ -7906,6 +8035,16 @@ def game_update():
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
                 if killed:
+                    # ── Boss Death Slow-Motion ── If the killed enemy is a
+                    # boss-tier (max_hp >= BOSS_DEATH_HP_THRESHOLD), trigger
+                    # a brief cinematic slow-motion effect. The time scale
+                    # smoothly recovers from 35% back to 100% over 0.5 seconds,
+                    # making the boss's death animation, particle explosion,
+                    # and screen shake play out in dramatic slow-mo.
+                    if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                        game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                        game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                        game.add_message("BOSS DOWN! SLOW-MO!")
                     # ── Overkill System ── If the damage exceeded the enemy's
                     # remaining HP by more than OVERKILL_DAMAGE_THRESHOLD, grant
                     # bonus XP, extra particles, and a special OVERKILL damage
@@ -8156,6 +8295,13 @@ def game_update():
             destroy(dlr)
             game.dash_land_rings.remove(dlr)
 
+    # ── Update Footstep Ripples ── Expanding ground rings from running are
+    # updated and removed when expired, providing subtle movement feedback.
+    for fr in game.footstep_ripples[:]:
+        if fr.update_ripple(time.dt):
+            destroy(fr)
+            game.footstep_ripples.remove(fr)
+
     # ── Update Heal Pulse Rings ── Expanding green rings from healing events
     # are updated and removed when expired. These are spawned by all heal sources
     # (Health Potion, Regen Crystal, Spawn Healing Zone, Healing Shrine, Idle
@@ -8206,6 +8352,13 @@ def game_update():
                 game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=False))
                 game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(0, 255, 200, 180)))
                 if killed:
+                    # ── Boss Death Slow-Motion ── Trigger slow-mo for boss kills
+                    # from Pulse Wave as well, so any boss death gets the cinematic
+                    # treatment regardless of how it was killed.
+                    if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                        game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                        game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                        game.add_message("BOSS DOWN! SLOW-MO!")
                     p.add_kill(enemy.name)
                     game.total_kills += 1
                     game.combo_count += 1
@@ -8707,6 +8860,26 @@ def game_update():
                     position=Vec3(ex, 0.5, ez),
                 )
                 game.particles.append((mat_p, mat_vel, random.uniform(0.3, 0.6)))
+            # ── Materialization Flash Sphere ── A bright expanding flash sphere
+            # pops at the spawn point, giving the materialization a punchy light
+            # burst effect. The flash pops to full scale instantly and fades over
+            # SPAWN_FLASH_DURATION seconds, complementing the vertical particle
+            # column with a 3D light burst that's visible from any angle —
+            # especially effective in dark biomes or at distance.
+            flash_s = Entity(
+                model='sphere',
+                color=SPAWN_FLASH_COLOR,
+                scale=0.01,
+                position=Vec3(ex, 1, ez),
+            )
+            flash_s.scale = SPAWN_FLASH_SCALE
+            fr, fg, fb = _c255_color(SPAWN_FLASH_COLOR)
+            flash_s.animate_color(
+                color.rgba(fr, fg, fb, 0),
+                duration=SPAWN_FLASH_DURATION,
+                curve=curve.linear,
+            )
+            destroy(flash_s, delay=SPAWN_FLASH_DURATION + 0.01)
             destroy(sw)
             game.spawn_warnings.remove(sw)
 
