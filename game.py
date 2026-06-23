@@ -8766,12 +8766,20 @@ def game_update():
             hr, hg_, hb = _c255_color(base)
             hg.color = color.rgba(hr, hg_, hb, pulse_alpha)
 
+    # ── Biome Tracking ──
+    # BUG FIX: current_biome was never updated during gameplay because the
+    # biome update was commented out alongside the fog code. This caused the
+    # biome indicator text to always show "Grasslands", weather to always
+    # show rain (grass biome), and biome-tinted dust/ripple effects to always
+    # use the grass color — regardless of where the player actually was.
+    # Now biome tracking is separated from fog (which stays disabled below).
+    current_biome = game._get_biome_at(p.x, p.z)
+    if current_biome != game.current_biome:
+        game.current_biome = current_biome
+
     # ── Biome-Aware Fog (DISABLED) ──
     # Ursina's fog shader expects 0-1 normalized colors but color.rgb() returns
     # 0-255 values. This causes white-out. Disabled until properly fixed.
-    # current_biome = game._get_biome_at(p.x, p.z)
-    # if current_biome != game.current_biome:
-    #     game.current_biome = current_biome
     # fog_info = BIOME_FOG.get(current_biome, BIOME_FOG['grass'])
     # target_fog_color = fog_info['color']
     # target_fog_density = fog_info['density']
