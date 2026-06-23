@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.20.2 — 3D!)
+## Features (v2.21.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -368,6 +368,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.21.0 — Void Bomber Blast Radius Warning, Overheal Absorption Burst & Enemy Enrage
+- **Void Bomber explosion radius warning decal**: When a Void Bomber's fuse activates, a pulsing red ground ring now appears beneath it showing the exact explosion radius — giving the player a clear spatial cue of the danger zone so they can judge whether to run or hold position. The ring follows the bomber as it moves and pulses brighter and faster as the fuse counts down (accelerating from 10 Hz to 25 Hz), creating increasing urgency. Without this, the player had to memorize the blast range (5.5 units) or learn it through trial and error. The ring is destroyed when the bomber explodes, and is properly cleaned up in `_destroy_enemy_entities()` for restart handling. This makes Void Bombers significantly more fair to fight — you can see exactly where not to stand
+- **Overheal absorption golden burst**: When the Overheal Barrier absorbs a hit, a golden particle burst and expanding ground ring now fire from the player — making the barrier's protection clearly visible. Without this, overheal just silently depletes with no feedback that it saved you from damage. The burst uses the same golden color as the overheal HP bar extension and player ring for instant visual cohesion — you immediately know "my overheal absorbed that hit" rather than wondering why your HP didn't drop. The expanding ring uses an ease-out scale curve over 0.4 seconds (0.5→3.5 scale) and fades smoothly, matching the polish standard of other ring effects. A new `overheal_absorbed_flag` on the Player is set by `take_damage()` when overheal absorbs damage, then consumed by `game_update()` to spawn the visual effect
+- **Enemy enrage at low HP**: When any enemy's HP drops below 25% of max, it enters an "enraged" state — 35% faster movement, a red color shift, and periodic red rage particles emitted every 0.4 seconds. This makes the final moments of a tough fight more dynamic and rewarding: enemies fight back harder when cornered, making kills feel earned rather than inevitable. The enrage triggers exactly once per enemy (flag prevents re-triggering), with a brief 8-particle red burst on activation. The speed bonus stacks with Time Warp (so Time Warp still slows enraged enemies, but they remain faster than normal enemies under the same debuff). The red color tint is a 60% lerp from the enemy's original color toward red, and only applies when no other temporary color effect is active (hit flash, windup telegraph, Void Bomber fuse, Void Stalker cloak) so it doesn't fight higher-priority visual states. A Plasma Drake at 87 HP is now noticeably more threatening than at 88 HP — creating exciting clutch moments where you need to finish off a raging boss before it closes the distance
 
 ### v2.20.2 — Ability Ready Flashes, Enemy Death Ring & Crosshair Hit Flash
 - **Ability ready flash for Pulse Wave & Vacuum Pulse**: The Dash ability already flashed cyan when its cooldown ended — now Pulse Wave and Vacuum Pulse get the same treatment. When Pulse Wave comes off cooldown, a brief teal pulse flashes behind its HUD text; when Vacuum Pulse ends, a gold pulse appears. This gives consistent "ability is ready!" feedback across all three active abilities, so the player's eye is drawn to the HUD at the exact moment an ability becomes available — no more wondering "is my Q ready yet?" while dodging enemies. The flash decays smoothly over 0.4 seconds with a slight scale pulse, matching the Dash ready flash pattern exactly

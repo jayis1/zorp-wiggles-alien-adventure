@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.20.2"
+VERSION = "2.21.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -161,6 +161,18 @@ ENEMY_HIT_RIPPLE_START_SCALE = 0.3    # Starting scale of the impact ring
 # white by ENEMY_HIT_FLASH_BRIGHTNESS (0.85 = 85% toward white, retaining a hint
 # of the enemy's hue for a more polished, less harsh flash).
 ENEMY_HIT_FLASH_BRIGHTNESS = 0.85  # How far to lerp enemy color toward white on hit (0=own color, 1=white)
+
+# ─── Enemy Enrage at Low HP ───────────────────────────────────────────────────
+# When an enemy's HP drops below ENRAGE_HP_THRESHOLD (25%), it enters a brief
+# "enrage" state: its movement speed increases, its color shifts toward red, and
+# it emits small red rage particles. This makes the final moments of a tough
+# fight more dynamic and rewarding — enemies fight back harder when cornered,
+# making kills feel earned rather than inevitable.
+ENRAGE_HP_THRESHOLD = 0.25         # Fraction of max HP below which enrage triggers
+ENRAGE_SPEED_MULT = 1.35           # Speed multiplier while enraged
+ENRAGE_COLOR_MIX = 0.6              # How far to lerp toward red (0=own color, 1=full red)
+ENRAGE_PARTICLE_INTERVAL = 0.4     # Seconds between rage particle emissions
+ENRAGE_PARTICLE_COUNT = 3          # Particles per emission
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -465,6 +477,13 @@ VOID_BOMBER_FUSE_RANGE = 6
 VOID_BOMBER_FUSE_TIME = 1.4
 VOID_BOMBER_EXPLOSION_RADIUS = 5.5
 VOID_BOMBER_EXPLOSION_DAMAGE = 40
+# ── Void Bomber Explosion Radius Warning Decal ── When the fuse activates,
+# a pulsing red ground ring appears at the bomber's feet showing the
+# explosion radius. This gives the player a clear spatial cue of the
+# danger zone so they can judge whether they need to run or can safely
+# stay put — instead of having to guess the blast range from memory.
+VOID_BOMBER_WARNING_RING_ALPHA = 80
+VOID_BOMBER_WARNING_RING_PULSE_SPEED = 10.0
 
 # ─── Cosmic Leech (New Enemy) ────────────────────────────────────────────────
 COSMIC_LEECH_DRAIN_DAMAGE = 3       # Damage per second while drain is active
@@ -1171,6 +1190,16 @@ OVERHEAL_MAX = 60                   # Maximum overheal barrier amount
 OVERHEAL_DECAY_PER_SECOND = 6       # How much overheal decays per second
 OVERHEAL_DECAY_DELAY = 3.0          # Seconds before overheal starts decaying
 OVERHEAL_RING_COLOR = color.rgb(255, 200, 60)  # Golden ring for overheal visual
+# ── Overheal Absorption Burst ── When the Overheal Barrier absorbs damage,
+# a golden particle burst and expanding ring fire from the player so the
+# barrier's protection is clearly visible. Without this, overheal just
+# silently depletes — the player has no feedback that the barrier saved
+# them. The burst uses the same golden color as the overheal ring for
+# visual cohesion, making it instantly readable as "your overheal absorbed
+# that hit" rather than generic damage feedback.
+OVERHEAL_ABSORB_PARTICLE_COUNT = 10
+OVERHEAL_ABSORB_RING_DURATION = 0.4
+OVERHEAL_ABSORB_RING_MAX_SCALE = 3.5
 
 # ─── Adrenaline Rush ──────────────────────────────────────────────────────────
 # When the player drops below ADRENALINE_HP_THRESHOLD, they enter an adrenaline
@@ -1425,6 +1454,7 @@ class Player(Entity):
         # over time. Displayed as a golden HP bar extension and player ring.
         self.overheal = 0               # Current overheal barrier amount
         self.overheal_decay_delay = 0.0 # Time before decay starts (set when overheal is gained)
+        self.overheal_absorbed_flag = False  # Set by take_damage when overheal absorbs a hit
 
         # Adrenaline Rush — triggered when HP drops below ADRENALINE_HP_THRESHOLD.
         # Grants temporary speed + fire rate boost for clutch moments.
@@ -1580,6 +1610,10 @@ class Player(Entity):
             absorbed = min(self.overheal, amount)
             self.overheal -= absorbed
             amount -= absorbed
+            # Flag for the game_update to spawn a golden absorption burst so
+            # the player can see the barrier is working — without this, the
+            # overheal just silently depletes with no visual feedback.
+            self.overheal_absorbed_flag = True
         self.hp -= amount
         self.invuln_timer = PLAYER_INVULN_DURATION
         self.damage_taken_flag = True  # Flag for HP bar shake trigger
@@ -1829,6 +1863,15 @@ class Enemy(Entity):
         self.fuse_timer = 0
         self.fuse_active = False
         self.pulse_speed = 0
+        # ── Void Bomber Warning Ring ── A ground ring showing the explosion
+        # radius. Created when the fuse activates and destroyed on explosion.
+        self.warning_ring = None
+        # ── Enemy Enrage ── When HP drops below ENRAGE_HP_THRESHOLD, the enemy
+        # enters a rage state with faster movement and red color shift.
+        # enraged flag prevents re-triggering, and enrage_particle_timer
+        # controls the periodic red particle emission.
+        self.enraged = False
+        self.enrage_particle_timer = 0.0
 
         # Nebula Phantom: flying enemy that orbits and dive-attacks
         self.is_nebula_phantom = (enemy_type == 'Nebula Phantom')
@@ -3888,6 +3931,16 @@ class Game:
         if hasattr(enemy, 'pull_ring') and enemy.pull_ring is not None:
             destroy(enemy.pull_ring)
             enemy.pull_ring = None
+        # Clean up Void Bomber warning ring if present
+        if hasattr(enemy, 'warning_ring') and enemy.warning_ring is not None:
+            if enemy.warning_ring.enabled:
+                destroy(enemy.warning_ring)
+            enemy.warning_ring = None
+        # Clean up alert indicator if present
+        if hasattr(enemy, 'alert_indicator') and enemy.alert_indicator is not None:
+            if enemy.alert_indicator.enabled:
+                destroy(enemy.alert_indicator)
+            enemy.alert_indicator = None
         # Clean up Echo Wraith decoy clones if present
         if hasattr(enemy, 'echo_clone_entities') and enemy.echo_clone_entities:
             for clone in enemy.echo_clone_entities:
@@ -7326,6 +7379,32 @@ def game_update():
         p.damage_taken_flag = False
         game.hp_bar_shake_timer = HP_BAR_SHAKE_DURATION
 
+    # ── Overheal Absorption Burst ── When the Overheal Barrier absorbs a hit,
+    # fire a golden particle burst and expanding ring from the player so the
+    # barrier's protection is clearly visible. Without this, overheal just
+    # silently depletes — the player has no feedback that the barrier saved
+    # them from damage. The burst uses the same golden color as the overheal
+    # ring and HP bar extension for visual cohesion.
+    if p.overheal_absorbed_flag:
+        p.overheal_absorbed_flag = False
+        game._spawn_particles(p.position + Vec3(0, 1, 0), OVERHEAL_RING_COLOR,
+                              count=OVERHEAL_ABSORB_PARTICLE_COUNT)
+        # Expanding golden ring on the ground — standalone entity, no per-frame
+        # update needed (uses Ursina's animate_scale + delayed destroy)
+        absorb_ring = Entity(
+            model='quad',
+            color=color.rgba(255, 200, 60, 120),
+            scale=0.5,
+            position=(p.x, 0.04, p.z),
+            rotation_x=90,
+        )
+        absorb_ring.animate_scale(Vec3(OVERHEAL_ABSORB_RING_MAX_SCALE, 1, OVERHEAL_ABSORB_RING_MAX_SCALE),
+                                   duration=OVERHEAL_ABSORB_RING_DURATION, curve=curve.out_expo)
+        ar, ag, ab = _c255_color(OVERHEAL_RING_COLOR)
+        absorb_ring.animate_color(color.rgba(ar, ag, ab, 0),
+                                   duration=OVERHEAL_ABSORB_RING_DURATION, curve=curve.linear)
+        destroy(absorb_ring, delay=OVERHEAL_ABSORB_RING_DURATION + 0.01)
+
     # Invulnerability timer
     if p.invuln_timer > 0:
         p.invuln_timer -= time.dt
@@ -7546,6 +7625,29 @@ def game_update():
             # Chase player
             # Time Warp slows all enemies
             speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
+            # ── Enemy Enrage at Low HP ── When an enemy's HP drops below
+            # ENRAGE_HP_THRESHOLD (25% of max), it enters an enraged state:
+            # 35% faster movement, a red color shift, and periodic red rage
+            # particles. This only triggers once per enemy (flag prevents
+            # re-triggering) and makes the final moments of a tough fight
+            # more dynamic — enemies fight back harder when cornered. The
+            # enrage speed multiplier stacks with Time Warp, so Time Warp
+            # still slows enraged enemies but they remain faster than
+            # normal enemies under the same debuff.
+            if not enemy.enraged and enemy.hp > 0 and enemy.hp <= enemy.max_hp * ENRAGE_HP_THRESHOLD:
+                enemy.enraged = True
+                # Brief red rage burst on enrage trigger
+                if dist_to_player < VISUAL_CULL_RANGE:
+                    game._spawn_particles(enemy.position, color.rgb(255, 40, 40), count=8)
+            if enemy.enraged:
+                speed_mult *= ENRAGE_SPEED_MULT
+                # Periodic red rage particles while enraged
+                if dist_to_player < VISUAL_CULL_RANGE:
+                    enemy.enrage_particle_timer -= time.dt
+                    if enemy.enrage_particle_timer <= 0:
+                        enemy.enrage_particle_timer = ENRAGE_PARTICLE_INTERVAL
+                        game._spawn_particles(enemy.position + Vec3(0, 0.5, 0),
+                                              color.rgb(255, 30, 30), count=ENRAGE_PARTICLE_COUNT)
             direction = (p.position - enemy.position).normalized()
             direction.y = 0
             new_pos = enemy.position + direction * enemy.speed * speed_mult * time.dt
@@ -7634,6 +7736,16 @@ def game_update():
                     enemy.fuse_active = True
                     enemy.fuse_timer = VOID_BOMBER_FUSE_TIME
                     game.add_message("Void Bomber is about to explode!")
+                    # ── Explosion Radius Warning Ring ── Create a pulsing red
+                    # ground ring showing the blast radius so the player can
+                    # see the danger zone and decide whether to run or stay.
+                    enemy.warning_ring = Entity(
+                        model='quad',
+                        color=color.rgba(255, 50, 50, VOID_BOMBER_WARNING_RING_ALPHA),
+                        scale=VOID_BOMBER_EXPLOSION_RADIUS * 2,
+                        position=(enemy.x, 0.03, enemy.z),
+                        rotation_x=90,
+                    )
                 if enemy.fuse_active:
                     enemy.fuse_timer -= time.dt
                     # Pulsing red glow as fuse counts down
@@ -7647,6 +7759,14 @@ def game_update():
                     else:
                         enemy.color = color.rgb(200, 0, 0)
                     enemy.scale = enemy.original_scale * (1.0 + pulse * 0.4)
+                    # ── Update Warning Ring ── Follow the bomber and pulse
+                    # brighter/faster as the fuse counts down.
+                    if enemy.warning_ring and enemy.warning_ring.enabled:
+                        enemy.warning_ring.x = enemy.x
+                        enemy.warning_ring.z = enemy.z
+                        ring_pulse = 0.5 + 0.5 * math.sin(game.t * (VOID_BOMBER_WARNING_RING_PULSE_SPEED + pulse * 15))
+                        ring_alpha = int(VOID_BOMBER_WARNING_RING_ALPHA * (0.5 + 0.5 * pulse * ring_pulse))
+                        enemy.warning_ring.color = color.rgba(255, 50, 50, ring_alpha)
                     if enemy.fuse_timer <= 0:
                         # EXPLODE!
                         game._spawn_particles(enemy.position, color.rgb(255, 100, 0), count=20)
@@ -7691,6 +7811,10 @@ def game_update():
                         enemy.alive = False
                         enemy.dying = True
                         enemy.death_timer = DEATH_ANIM_DURATION
+                        # Destroy the warning ring — it served its purpose
+                        if enemy.warning_ring and enemy.warning_ring.enabled:
+                            destroy(enemy.warning_ring)
+                            enemy.warning_ring = None
 
             # ── Nebula Phantom: Flying orbit + dive attack ──
             # PERFORMANCE: skip complex orbit/dive AI for distant phantoms
@@ -8037,6 +8161,27 @@ def game_update():
             enemy.hit_flash -= time.dt
             if enemy.hit_flash < 0:
                 enemy.hit_flash = 0
+
+        # ── Enraged Color Tint ── When the enemy is enraged (below 25% HP),
+        # apply a red color shift on top of its original color. This only
+        # applies when no other temporary color effect is active (hit flash,
+        # windup telegraph, Void Bomber fuse, Void Stalker cloak) so it
+        # doesn't fight higher-priority visual states. The tint is a smooth
+        # lerp from the enemy's original color toward red, making the enemy
+        # visibly "angry" without completely hiding its base color.
+        if (enemy.enraged and enemy.hit_flash <= 0
+                and not enemy._attack_windup_active
+                and dist_to_player < VISUAL_CULL_RANGE
+                and not (enemy.is_void_bomber and enemy.fuse_active)
+                and not (enemy.is_void_stalker and enemy.cloak_state == 'cloaked')
+                and not enemy.dying):
+            er, eg, eb = _c255_color(enemy.original_color)
+            mix = ENRAGE_COLOR_MIX
+            enemy.color = color.rgb(
+                min(255, int(er + (255 - er) * mix)),
+                max(0, int(eg * (1 - mix))),
+                max(0, int(eb * (1 - mix))),
+            )
 
         # Void Wisp teleport cooldown decrement
         if enemy.is_void_wisp and enemy.wisp_teleport_cooldown > 0:
