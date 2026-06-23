@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.19.5 — 3D!)
+## Features (v2.19.6 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -362,6 +362,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.19.6 — Attack Windup Telegraph, Impact Flash & Dash FOV Ease
+- **Enemy attack windup telegraph**: In the final 0.25 seconds before an enemy's attack cooldown expires (while in melee range), the enemy now visibly squashes down and brightens toward white — a clear "winding up to hit you!" cue that makes melee attacks readable instead of instantaneous. The windup intensity ramps from 0→1 as the cooldown ticks down, so the squash and brighten are subtle at first and peak right before the strike. On attack, the enemy snaps back to full scale (a forward "lunge" feel). If the enemy moves out of range or gets hit during the windup, the scale and color restore cleanly so the telegraph never lingers. This gives the player a fair chance to dash or sidestep incoming melee hits, making close-range combat feel more fair and reactive
+- **Projectile impact flash**: On every projectile hit, a brief bright flash sphere now pops at the exact contact point and fades over 0.10 seconds — a punchy contact-effect that complements the existing hit ripple (ground ring) and particle burst. Critical hits get a golden flash (matching the crit color theme) while normal hits get a warm white. The flash is a standalone entity with no per-frame update overhead (uses Ursina's built-in color animation + delayed destroy), making it a cheap but high-impact visual upgrade that makes each shot feel like it connected with real force
+- **Dash-end FOV ease-out**: When the dash ends, the FOV now recovers from the wide dash FOV (85°) back to normal (75°) in two phases instead of a flat linear lerp: a fast initial snap covers most of the gap quickly (snappy "landing" from the speed feel), then a slower ease-out for the final 0.5° so the FOV gently settles to normal instead of stopping abruptly. This mirrors the feel of decelerating from a sprint — you don't go from full speed to a dead stop, you ease into it. The two-phase recovery makes dash landings feel more natural and polished
 
 ### v2.19.5 — Eye Blink, Wander Smoothing & Collectible Beacon Pulse
 - **Player eye blinking**: Zorp now periodically blinks both eyes — a quick Y-scale squish that closes and opens the eyes smoothly over ~0.15 seconds at random 3–6 second intervals. The pupils (parented to the eyes) squish along automatically, creating a natural "eyelid closing" effect. This adds personality and makes the character feel more alive, complementing the existing idle breathing and pupil-tracking animations. Each blink uses a triangle wave (0→1→0) so the eye closes and opens naturally rather than snapping

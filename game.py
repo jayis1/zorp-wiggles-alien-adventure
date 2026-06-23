@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.19.5"
+VERSION = "2.19.6"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -56,6 +56,17 @@ ENEMY_SPAWN_BOUNCE_PEAK = 1.08    # Peak scale multiplier during bounce
 ENEMY_ALERT_INDICATOR_DURATION = 0.6   # How long the "!" stays visible
 ENEMY_ALERT_INDICATOR_COLOR = color.rgb(255, 220, 40)  # Bright warning yellow
 ENEMY_ALERT_INDICATOR_SCALE = 1.4      # Text scale (world-space billboard)
+
+# ─── Enemy Attack Windup Telegraph ──────────────────────────────────────────
+# In the final moments before an enemy's attack cooldown expires (while it's
+# in melee range), the enemy briefly squashes down and brightens — a clear
+# "winding up to hit you!" telegraph. This makes melee attacks readable
+# instead of instantaneous, giving the player a fair chance to dash or sidestep.
+# The windup only triggers when the enemy is in attack range and its cooldown
+# is nearly done, so it doesn't fire during the long post-attack cooldown gap.
+ENEMY_ATTACK_WINDUP_TIME = 0.25      # Seconds before attack lands that the windup begins
+ENEMY_ATTACK_WINDUP_SQUASH = 0.15    # Max Y compression during windup (0.15 = squished to 85%)
+ENEMY_ATTACK_WINDUP_BRIGHTNESS = 0.5 # How far to lerp enemy color toward white during windup
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
 ENEMY_WANDER_SPEED_FACTOR = 0.20
@@ -174,6 +185,16 @@ MUZZLE_FLASH_PLAYER_TINT_COLOR = color.rgb(180, 255, 255)  # Bright cyan-white
 # ─── Projectile Glow Aura ──────────────────────────────────────────────────────
 PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
 PROJECTILE_AURA_SCALE = 1.8                           # Aura sphere scale multiplier (relative to projectile)
+# ─── Projectile Impact Flash ──────────────────────────────────────────────────
+# On projectile hit, a brief bright flash sphere pops at the exact impact
+# point and fades quickly — a punchy contact-effect that complements the
+# existing hit ripple (ground ring) and particle burst. The flash is a
+# simple sphere entity that scales up and fades over a fraction of a second,
+# making each shot feel like it connected with real force.
+PROJECTILE_IMPACT_FLASH_DURATION = 0.10  # How long the flash sphere lasts (seconds)
+PROJECTILE_IMPACT_FLASH_SCALE = 0.8       # Peak scale of the flash sphere
+PROJECTILE_IMPACT_FLASH_COLOR = color.rgba(255, 255, 240, 220)  # Bright warm-white
+
 # ─── Projectile Bolt Stretch ──────────────────────────────────────────────────
 # Projectiles are stretched into elongated bolt shapes aligned with their travel
 # direction, making the tentacle laser look like a streaking energy bolt instead
@@ -379,6 +400,16 @@ DASH_TRAIL_PARTICLES = 6
 DASH_FOV_ZOOM = 85          # FOV during dash (wider for speed feel)
 DASH_FOV_NORMAL = 75        # Normal gameplay FOV
 DASH_FOV_LERP_SPEED = 10.0  # How fast FOV transitions back to normal
+# ── Dash-End FOV Ease-Out ── When the dash ends, the FOV transitions from the
+# wide dash FOV back to normal. Instead of a flat linear lerp (which feels
+# mechanical and abrupt), we split the recovery into two phases: a fast
+# initial snap (covers most of the gap quickly for a snappy "landing") then
+# a slower ease-out for the final few degrees (a gentle settle that feels
+# like decelerating from the dash speed). This makes the FOV recovery feel
+# like a natural deceleration rather than a robotic slide.
+DASH_FOV_EASE_FAST_SPEED = 16.0   # Fast initial FOV recovery speed
+DASH_FOV_EASE_SLOW_SPEED = 5.0    # Slower ease-out speed for the final settle
+DASH_FOV_EASE_SPLIT = 0.5          # FOV gap (degrees) at which fast→slow transition occurs
 DASH_CAMERA_LERP_SPEED = 12.0  # Tighter camera follow during dash (faster than normal 6.0)
 DASH_INVULN_DURATION = 0.3  # Seconds of invulnerability during dash — makes dash a dodge tool
 DASH_READY_FLASH_DURATION = 0.4  # How long the dash-ready flash pulse lasts
@@ -1683,6 +1714,7 @@ class Enemy(Entity):
         self.alert_indicator = None           # Billboard "!" Text entity shown on first detection
         self.alert_indicator_timer = 0.0      # How long the alert "!" stays visible
         self.spawn_time = 0.0                  # Set by game_update when spawned — tracks spawn age for grace period
+        self._attack_windup_active = False    # True while attack windup telegraph is visually applying
 
         # Type-specific special behaviors
         self.is_phase_shifter = (enemy_type == 'Phase Shifter')
@@ -4962,6 +4994,33 @@ class Game:
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.5, 1.5)))
 
+    def _spawn_impact_flash(self, pos, col=PROJECTILE_IMPACT_FLASH_COLOR):
+        """Spawn a brief bright flash sphere at an impact point.
+
+        A simple sphere that pops to full scale and fades over
+        PROJECTILE_IMPACT_FLASH_DURATION seconds, giving projectile hits a
+        punchy contact-effect that complements the existing hit ripple and
+        particle burst. The flash is a standalone entity cleaned up via a
+        delayed destroy — no per-frame update needed.
+        """
+        fr, fg, fb = _c255_color(col)
+        fa = _c255(col[3]) if len(col) > 3 else 220
+        flash = Entity(
+            model='sphere',
+            color=color.rgba(fr, fg, fb, fa),
+            scale=0.01,
+            position=pos,
+        )
+        # Pop to full scale instantly, then let destroy() clean it up after
+        # the flash duration. The tiny starting scale + immediate scale set
+        # produces a satisfying "pop" without needing a per-frame animator.
+        flash.scale = PROJECTILE_IMPACT_FLASH_SCALE
+        # Fade out by animating alpha to 0 over the duration, then destroy
+        flash.animate_color(color.rgba(fr, fg, fb, 0),
+                            duration=PROJECTILE_IMPACT_FLASH_DURATION,
+                            curve=curve.linear)
+        destroy(flash, delay=PROJECTILE_IMPACT_FLASH_DURATION + 0.01)
+
     def _spawn_collect_burst(self, pos, col):
         """Spawn a ring burst effect when collecting an item.
 
@@ -6380,7 +6439,19 @@ def game_update():
             target_fov = DASH_FOV_NORMAL
             camera.fov = lerp(camera.fov, target_fov, time.dt * CAMERA_KILL_ZOOM_LERP_SPEED)
         elif abs(camera.fov - DASH_FOV_NORMAL) > 0.5:
-            camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_LERP_SPEED)
+            # ── Dash-End FOV Ease-Out ── Two-phase recovery: fast initial snap
+            # covers most of the FOV gap quickly (snappy "landing" from the
+            # wide dash FOV), then a slower ease-out for the final few degrees
+            # so the FOV gently settles to normal instead of stopping abruptly.
+            # This mirrors the feel of decelerating from a sprint — you don't
+            # go from full speed to dead stop, you ease into it.
+            fov_gap = abs(camera.fov - DASH_FOV_NORMAL)
+            if fov_gap > DASH_FOV_EASE_SPLIT:
+                # Fast phase — snappy recovery
+                camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_EASE_FAST_SPEED)
+            else:
+                # Slow ease-out phase — gentle settle
+                camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_EASE_SLOW_SPEED)
         else:
             camera.fov = DASH_FOV_NORMAL
 
@@ -7463,6 +7534,46 @@ def game_update():
         # Bug fix: cooldown must decrement even when in range, otherwise enemies
         # attack once and then never again while staying next to the player.
         enemy.attack_cd = max(0, enemy.attack_cd - time.dt)
+
+        # ── Enemy Attack Windup Telegraph ── In the final moments before the
+        # enemy's attack cooldown expires (while it's in melee range), the
+        # enemy briefly squashes down and brightens — a clear "winding up to
+        # hit you!" telegraph. This makes melee attacks readable instead of
+        # instantaneous, giving the player a fair chance to dash or sidestep.
+        # The windup intensity ramps from 0→1 as the cooldown ticks down to 0,
+        # so the squash and brighten are subtle at first and peak right before
+        # the strike. Only applies to nearby enemies for performance.
+        _windup_now = (dist_to_player < ENEMY_ATTACK_RANGE and dist_to_player < VISUAL_CULL_RANGE
+                       and 0 < enemy.attack_cd <= ENEMY_ATTACK_WINDUP_TIME
+                       and enemy.hit_scale_punch <= 0 and not enemy.dying)
+        if _windup_now:
+            enemy._attack_windup_active = True
+            windup_t = 1.0 - (enemy.attack_cd / ENEMY_ATTACK_WINDUP_TIME)  # 0→1
+            # Squash: compress Y, bulge XZ (preserving volume feel)
+            squash_y = 1.0 - ENEMY_ATTACK_WINDUP_SQUASH * windup_t
+            enemy.scale = Vec3(
+                enemy.original_scale * (1.0 + ENEMY_ATTACK_WINDUP_SQUASH * 0.6 * windup_t),
+                enemy.original_scale * squash_y,
+                enemy.original_scale * (1.0 + ENEMY_ATTACK_WINDUP_SQUASH * 0.6 * windup_t),
+            )
+            # Brighten toward white for a charging-up glow
+            if enemy.hit_flash <= 0:
+                er, eg, eb = _c255_color(enemy.original_color)
+                b = ENEMY_ATTACK_WINDUP_BRIGHTNESS * windup_t
+                enemy.color = color.rgb(
+                    min(255, int(er + (255 - er) * b)),
+                    min(255, int(eg + (255 - eg) * b)),
+                    min(255, int(eb + (255 - eb) * b)),
+                )
+        elif enemy._attack_windup_active:
+            # Windup ended without an attack (enemy moved away or got hit) —
+            # restore normal scale and color so the telegraph doesn't linger
+            enemy._attack_windup_active = False
+            if enemy.hit_scale_punch <= 0:
+                enemy.scale = enemy.original_scale
+            if enemy.hit_flash <= 0:
+                enemy.color = enemy.original_color
+
         if dist_to_player < ENEMY_ATTACK_RANGE and enemy.attack_cd <= 0:
             # Void Stalker ambush: first hit from decloak deals bonus damage
             effective_damage = enemy.damage
@@ -7486,6 +7597,16 @@ def game_update():
                 if died:
                     game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
+            # ── Attack Lunge ── On attack, the enemy briefly stretches upward
+            # (un-squashes from the windup) as it lunges forward, then the
+            # normal bob/breath/scale-punch logic will settle it back. This
+            # gives the strike a forward "punch" feel that complements the
+            # windup telegraph. Color resets to original since the windup
+            # brighten is no longer needed.
+            enemy._attack_windup_active = False
+            enemy.scale = enemy.original_scale
+            if enemy.hit_flash <= 0:
+                enemy.color = enemy.original_color
 
         # Float enemies (except Nebula Phantom which controls its own Y)
         # PERFORMANCE: skip bob animation for distant enemies (beyond visual cull range)
@@ -7676,6 +7797,14 @@ def game_update():
                 # Pass projectile direction for knockback
                 hit_dir = proj.direction
                 killed = enemy.take_damage(damage, hit_direction=hit_dir)
+                # ── Projectile Impact Flash ── A brief bright flash sphere pops at
+                # the exact contact point, giving each hit a punchy contact-effect
+                # that complements the existing hit ripple and particle burst.
+                # Crits get a golden flash; normal hits get warm white.
+                if is_crit:
+                    game._spawn_impact_flash(enemy.position, col=color.rgba(255, 220, 80, 240))
+                else:
+                    game._spawn_impact_flash(enemy.position)
                 if is_crit:
                     # Critical hit: extra particles and bigger shake
                     game._spawn_particles(enemy.position, color.rgb(255, 200, 0), count=PARTICLE_HIT_COUNT + 5)
