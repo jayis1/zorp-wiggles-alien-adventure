@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.21.1 — 3D!)
+## Features (v2.21.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -371,6 +371,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.21.2 — Size-Scaled Hit Punch, Fizz Ring & Death Screen Stats
+- **Size-scaled enemy hit punch**: The hit scale punch (brief size increase when an enemy is shot) now scales inversely with enemy size — small enemies like Swarm Mites and Void Wisps get a bigger proportional punch (up to 1.6x the base intensity) so hits are clearly visible, while large enemies like Plasma Drakes get a subtler punch (down to 0.7x) to avoid screen-filling distortion. Previously every enemy used the same flat 1.25x multiplier, meaning hits on tiny enemies were nearly invisible while hits on bosses caused jarring visual distortion. This makes combat feedback equally readable across all 18 enemy types, so you always know your shots are connecting regardless of enemy size
+- **Projectile expiry fizz ring**: When a player's shot reaches its maximum range without hitting anything, a brief expanding cyan ring now pops at the expiry point in addition to the existing particle fizz. The ring expands from 0.2 to 1.2 scale over 0.2 seconds with an ease-out curve and fades smoothly. This gives missed shots a clear visual "boundary" — players can see exactly where their max range ends, which helps them learn effective engagement distance. The ring is quick and subtle so it doesn't clutter the screen during rapid fire, but it provides just enough visual closure that long-range misses no longer feel like the shot silently vanished into nothing
+- **Death screen total pickups stat**: The game-over screen now shows the total number of items collected during the run (all pickups including consumed power-ups), alongside the existing inventory count. Previously, the death screen only showed inventory items at the moment of death — so if you'd consumed 30 Health Potions and 10 Speed Boosts during the run, they wouldn't appear in the stats. Now "Total Pickups" gives a complete picture of how much you collected and consumed, making the survival summary more satisfying and informative for players who want to track their performance across runs
 
 ### v2.21.1 — Chase Ramp, Muzzle Ring & Pickup Flash
 - **Enemy chase acceleration ramp**: When an enemy first detects the player, it used to snap from wander speed (20% of base) to full chase speed (100%) instantly — a jarring "teleport-lurch" that made aggroed enemies feel robotic and unfair. Now the chase speed smoothly ramps up over 0.5 seconds via an ease-in curve, starting at 35% speed and accelerating to full. The ramp timer is set when the enemy first alerts (alongside the existing alert flash and "!" indicator) and counts down independently of other speed modifiers (Time Warp, Enrage) so it composes cleanly with them. This makes the transition from idle wander to aggressive chase feel natural and organic — enemies "wind up" into the pursuit instead of exploding into a sprint, giving the player a fraction of a second more reaction time and making the world feel more alive. The effect is subtle for fast enemies like Swarm Mites (who reach full speed quickly) and more noticeable for slower enemies like Crystal Guardians, adding variety to combat pacing

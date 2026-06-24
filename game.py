@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.21.1"
+VERSION = "2.21.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -159,6 +159,14 @@ CAMERA_PITCH_SMOOTH = 10.0  # Lerp speed for pitch smoothing
 ENEMY_HIT_FLASH_DURATION = 0.12        # Slightly longer flash for clearer read (was 0.1)
 ENEMY_HIT_SCALE_PUNCH = 1.25          # Brief scale multiplier on hit for impactful feedback
 ENEMY_HIT_SCALE_RECOVERY = 12.0        # How fast scale returns to normal after hit punch
+# ── Size-Scaled Hit Punch ── The scale punch is more dramatic on small enemies
+# and subtler on large ones. A Swarm Mite (scale 0.5) punching to 1.25x is barely
+# visible, while a Plasma Drake (scale 2.2) at 1.25x is a huge screen-filling
+# distortion. This multiplier scales the punch intensity inversely with enemy
+# size so combat feedback is equally readable across all enemy types.
+ENEMY_HIT_PUNCH_SIZE_BASE = 1.0        # Enemy scale at which punch = ENEMY_HIT_SCALE_PUNCH (no adjustment)
+ENEMY_HIT_PUNCH_SIZE_MULT_MIN = 0.7    # Minimum punch multiplier (for very large enemies)
+ENEMY_HIT_PUNCH_SIZE_MULT_MAX = 1.6    # Maximum punch multiplier (for very small enemies)
 ENEMY_HIT_RIPPLE_DURATION = 0.5       # How long the expanding impact ring lasts on hit
 ENEMY_HIT_RIPPLE_EXPAND_SPEED = 8.0   # How fast the impact ring expands
 ENEMY_HIT_RIPPLE_MAX_SCALE = 3.0      # Maximum scale the impact ring reaches
@@ -261,6 +269,15 @@ PROJECTILE_TRAIL_END_SCALE = 0.02   # Scale at end of trail dot life (shrinks aw
 # empty and communicates the projectile's max range to the player.
 PROJECTILE_FIZZ_PARTICLE_COUNT = 4   # Particles on expiry
 PROJECTILE_FIZZ_COLOR = color.rgba(0, 255, 255, 180)  # Cyan fizz matching the laser
+# ── Projectile Expiry Fizz Ring ── When a projectile's lifetime expires without
+# hitting an enemy (a missed shot), a brief expanding cyan ring now pops at the
+# expiry point in addition to the existing particle fizz. The ring gives the
+# shot a clear visual "boundary" — players can see exactly where their max range
+# ends, which helps them learn effective engagement distance. The ring is quick
+# and subtle so it doesn't clutter the screen during rapid fire.
+PROJECTILE_FIZZ_RING_DURATION = 0.20  # How long the fizz ring expands (seconds)
+PROJECTILE_FIZZ_RING_MAX_SCALE = 1.2  # Max scale the fizz ring reaches
+PROJECTILE_FIZZ_RING_ALPHA = 80       # Starting alpha of the fizz ring
 
 # ─── Player Squish/Stretch ───────────────────────────────────────────────────
 PLAYER_SQUISH_AMOUNT = 0.18   # How much the player squishes on landing/moving
@@ -4769,10 +4786,13 @@ class Game:
         kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
         item_details = '  '.join(f'{k}:{v}' for k, v in p.inventory.items()) if p.inventory else 'None'
         kpm = f'{total_kills / max(1, time_alive / 60):.1f}' if time_alive > 0 else '0'
+        # Include total items collected (tracked across all pickups, not just
+        # inventory — power-ups consumed in play aren't in inventory but still
+        # count toward total collection for a more complete survival summary).
         stats_lines = [
             f'Time Survived: {minutes}m {seconds}s',
             f'Total Kills: {total_kills}   Items Collected: {total_items}',
-            f'Kills Per Minute: {kpm}',
+            f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
             f'Best Combo: x{self.max_combo}',
             f'Missions Completed: {p.completed_missions}',
             f'Enemies Defeated: {kill_details}',
@@ -8401,14 +8421,25 @@ def game_update():
                     destroy(clone)
                 enemy.echo_clone_entities.remove(clone)
 
-        # Hit scale punch: brief size increase on hit for satisfying impact feedback
+        # Hit scale punch: brief size increase on hit for satisfying impact feedback.
+        # The punch intensity is scaled inversely with enemy size — small enemies
+        # (Swarm Mite, Void Wisp) get a bigger proportional punch so hits are
+        # clearly visible, while large enemies (Plasma Drake) get a subtler punch
+        # to avoid screen-filling distortion. This makes combat feedback equally
+        # readable regardless of enemy size.
         if enemy.hit_scale_punch > 0:
             enemy.hit_scale_punch -= time.dt * ENEMY_HIT_SCALE_RECOVERY
             if enemy.hit_scale_punch < 0:
                 enemy.hit_scale_punch = 0
             # Scale eases from punch back to normal
             punch_t = max(0, enemy.hit_scale_punch)
-            scale_mult = 1.0 + (ENEMY_HIT_SCALE_PUNCH - 1.0) * punch_t
+            # Compute size-scaled punch multiplier: enemies smaller than the base
+            # scale get a stronger punch (up to ENEMY_HIT_PUNCH_SIZE_MULT_MAX),
+            # enemies larger get a weaker punch (down to ENEMY_HIT_PUNCH_SIZE_MULT_MIN).
+            size_ratio = ENEMY_HIT_PUNCH_SIZE_BASE / max(0.1, enemy.original_scale)
+            punch_mult = ENEMY_HIT_SCALE_PUNCH * max(ENEMY_HIT_PUNCH_SIZE_MULT_MIN,
+                                                      min(ENEMY_HIT_PUNCH_SIZE_MULT_MAX, size_ratio))
+            scale_mult = 1.0 + (punch_mult - 1.0) * punch_t
             enemy.scale = enemy.original_scale * scale_mult
         elif dist_to_player < VISUAL_CULL_RANGE and not enemy.alerted and enemy.alive and not enemy.dying:
             # ── Idle Breathing ── Enemies that haven't detected the player gently
@@ -8470,7 +8501,24 @@ def game_update():
             # burst at the expiry point so the shot has visual closure instead
             # of silently vanishing. This makes long-range misses feel less empty
             # and subtly communicates the projectile's max range to the player.
+            # ── Fizz Ring ── A brief expanding cyan ring also pops at the expiry
+            # point, giving the shot a clear visual "boundary" that helps players
+            # learn effective engagement distance. The ring is quick and subtle
+            # so it doesn't clutter the screen during rapid fire.
             game._spawn_particles(proj.position, PROJECTILE_FIZZ_COLOR, count=PROJECTILE_FIZZ_PARTICLE_COUNT)
+            fizz_ring = Entity(
+                model='quad',
+                color=color.rgba(0, 255, 255, PROJECTILE_FIZZ_RING_ALPHA),
+                scale=0.2,
+                position=Vec3(proj.x, 0.1, proj.z),
+                rotation_x=90,
+            )
+            fizz_ring.animate_scale(Vec3(PROJECTILE_FIZZ_RING_MAX_SCALE, 1, PROJECTILE_FIZZ_RING_MAX_SCALE),
+                                     duration=PROJECTILE_FIZZ_RING_DURATION, curve=curve.out_expo)
+            fr, fg, fb = _c255_color(PROJECTILE_FIZZ_COLOR)
+            fizz_ring.animate_color(color.rgba(fr, fg, fb, 0),
+                                     duration=PROJECTILE_FIZZ_RING_DURATION, curve=curve.linear)
+            destroy(fizz_ring, delay=PROJECTILE_FIZZ_RING_DURATION + 0.01)
             destroy(proj)
             game.projectiles.remove(proj)
             continue
