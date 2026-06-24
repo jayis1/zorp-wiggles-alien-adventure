@@ -35,13 +35,13 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.21.2 — 3D!)
+## Features (v2.22.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
 - **17 collectible item types** — including **12 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!), **Mirror Shard** (reflects enemy projectiles back at them for 6 seconds!)
 - **18 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!), **Echo Wraith** (spawns decoy clones that confuse the player!)
-- **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact!
+- **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact! **Critical Hit Chain**: land 3+ consecutive crits within 3 seconds to activate a **3x damage bonus** on subsequent crits — the HUD shows a gold "CRIT CHAIN xN" counter that turns orange-red when the bonus is active, rewarding sustained precision fire!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
@@ -79,7 +79,7 @@ python game.py
 - Satisfying collectible pickup burst particles with magnetic pull snap
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
-- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo)
+- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak)
 - Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
 - Enemy respawning and loot drops
@@ -190,6 +190,9 @@ python game.py
 - **Enemy chase acceleration ramp** — when enemies first detect the player, they now smoothly accelerate from wander speed to full chase speed over 0.5 seconds instead of snapping instantly. This eliminates the jarring "teleport-lurch" where an idle enemy would explode into a sprint the moment it spotted you, making aggro transitions feel natural and organic — enemies "wind up" into the chase
 - **Muzzle flash ground ring** — each shot now emits a brief expanding cyan ring on the ground at Zorp's position, complementing the muzzle flash sphere, player tint, and tentacle recoil with a ground-level visual that's visible from the third-person camera. The energy discharge ripples outward from where Zorp is standing, matching the established visual language of footstep ripples, dash landing rings, and heal pulse rings
 - **Collectible pickup ring initial flash** — when a collectible is picked up, the expanding ground ring now briefly flashes bright white at the very start before blending into the item's color — a snappy "pop" of light that gives pickups an extra layer of punch and catches the eye with a burst of energy before settling into the item's hue
+- **Pickup Streak system** — collect items in rapid succession (within 3 seconds of each other) to build a pickup streak! A mint-cyan "PICKUP STREAK xN" counter appears on the HUD with a timer bar showing time remaining before the streak resets. At every 5 pickups in the streak, bonus XP is awarded with a celebratory particle burst — making item-gathering runs feel rewarding and encouraging players to keep moving and collecting. Best pickup streak is tracked on the death screen!
+- **Critical Hit Chain bonus** — land 3+ consecutive critical hits within 3 seconds to activate a **3x damage multiplier** on subsequent crits (up from the normal 2x)! A gold "CRIT CHAIN xN" counter appears on the HUD, turning bright orange-red with "3x DMG!" when the bonus is active. Non-crit hits or letting the timer expire resets the chain. Rewards sustained precision fire and makes crit streaks feel electric!
+- **Enemy spawn direction indicator** — when a new enemy materializes from a spawn warning, a brief orange directional arrow appears on the HUD pointing toward the spawn location! Reuses the damage indicator arrow system but with a distinct orange color and separate tracking. Gives immediate spatial awareness of new threats without needing to scan the full 360° environment — especially helpful during intense combat when multiple enemies spawn from different directions simultaneously
 
 ## The Self-Improving Game
 

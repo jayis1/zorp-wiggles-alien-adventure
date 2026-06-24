@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.21.2"
+VERSION = "2.22.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1296,6 +1296,41 @@ PICKUP_MILESTONE_PARTICLES = 30
 PICKUP_MILESTONE_SCREEN_SHAKE = 0.3
 PICKUP_MILESTONE_ANNOUNCE_DURATION = 2.5
 PICKUP_MILESTONE_COLOR = color.rgb(255, 200, 60)  # Golden celebration color
+
+# ─── Pickup Streak System ────────────────────────────────────────────────────
+# Tracks consecutive rapid item pickups (like the kill combo system, but for
+# collecting items). Each pickup within PICKUP_STREAK_WINDOW seconds extends the
+# streak. At milestone streak counts, bonus XP is awarded, making item-gathering
+# runs feel rewarding and encouraging players to keep moving and collecting
+# rather than picking up one item and pausing.
+PICKUP_STREAK_WINDOW = 3.0           # Seconds between pickups before streak resets
+PICKUP_STREAK_MILESTONE_INTERVAL = 5 # Bonus XP every 5 pickups in the streak
+PICKUP_STREAK_XP_PER_MILESTONE = 15  # Bonus XP per milestone
+PICKUP_STREAK_DISPLAY_LIFETIME = 2.5 # How long the streak text stays visible
+PICKUP_STREAK_BAR_FLASH_DURATION = 0.25  # Green flash on the streak bar on each pickup
+PICKUP_STREAK_COLOR = color.rgb(100, 255, 200)  # Mint-cyan for streak text
+
+# ─── Critical Hit Chain Bonus ───────────────────────────────────────────────
+# Consecutive critical hits within a time window give increasing bonus damage.
+# After CRIT_CHAIN_THRESHOLD consecutive crits, subsequent crits deal CRIT_CHAIN_MULT
+# instead of the normal CRIT_DAMAGE_MULT (3x instead of 2x). This rewards skilled
+# players who land repeated crits and makes crit chains feel electric — the
+# payoff for accuracy ramps up visibly, making sustained precision fire exciting.
+CRIT_CHAIN_WINDOW = 3.0          # Seconds between crits before the chain resets
+CRIT_CHAIN_THRESHOLD = 3         # Consecutive crits needed to activate the bonus
+CRIT_CHAIN_MULT = 3.0            # Damage multiplier for chained crits (vs normal 2x)
+CRIT_CHAIN_DISPLAY_LIFETIME = 2.0  # How long the chain text stays visible
+
+# ─── Enemy Spawn Direction Indicator ─────────────────────────────────────────
+# When a new enemy materializes from a spawn warning, a brief directional arrow
+# on the HUD points toward the spawn location — matching the existing damage
+# indicator system but in a distinct orange color. This gives the player
+# immediate spatial awareness of new threats without needing to scan the full
+# 360° environment, which is especially helpful during intense combat when
+# multiple enemies spawn simultaneously from different directions.
+SPAWN_INDICATOR_DURATION = 1.2       # How long the spawn arrow stays visible
+SPAWN_INDICATOR_MAX_ALPHA = 180      # Peak alpha of the spawn direction arrow
+SPAWN_INDICATOR_COLOR = color.rgba(255, 160, 40, SPAWN_INDICATOR_MAX_ALPHA)  # Orange
 
 # ─── Healing Pulse Ring ─────────────────────────────────────────────────────
 # Whenever the player is healed by any source (Health Potion, Regen Crystal,
@@ -3682,6 +3717,27 @@ class Game:
         self.multi_kill_announce_text = ''    # Current announcement text
         self.multi_kill_announce_scale = 1.0  # Current announcement scale (for pop animation)
 
+        # ── Pickup Streak ── Tracks consecutive rapid item pickups. Each pickup
+        # within PICKUP_STREAK_WINDOW seconds extends the streak. At milestones
+        # (every 5), bonus XP is awarded. Makes item gathering runs feel rewarding.
+        self.pickup_streak = 0               # Current consecutive pickup count
+        self.pickup_streak_timer = 0.0       # Time remaining before streak resets
+        self.pickup_streak_display_timer = 0.0  # How long the streak HUD text stays visible
+        self.max_pickup_streak = 0           # Highest streak this run (for death screen)
+        self.pickup_streak_bar_flash = 0.0   # Green flash timer on the streak bar
+
+        # ── Critical Hit Chain ── Tracks consecutive crits within a time window.
+        # After CRIT_CHAIN_THRESHOLD consecutive crits, subsequent crits deal
+        # CRIT_CHAIN_MULT (3x) instead of the normal CRIT_DAMAGE_MULT (2x).
+        self.crit_chain = 0                  # Current consecutive crit count
+        self.crit_chain_timer = 0.0          # Time remaining before chain resets
+        self.crit_chain_display_timer = 0.0  # How long the chain HUD text stays visible
+
+        # ── Enemy Spawn Direction Indicators ── Reuses the damage arrow entities
+        # but in orange. Spawn indicators are tracked separately so they fade
+        # independently from damage indicators.
+        self.spawn_indicators = []            # List of (arrow_ent, direction, remaining_time)
+
         # Kill feed: list of (timestamp, text) entries
         self.kill_feed = []
 
@@ -4326,6 +4382,7 @@ class Game:
                 destroy(arrow_ent)
         self.dmg_arrow_entities.clear()
         self.damage_indicators.clear()
+        self.spawn_indicators.clear()
         for t in self.msg_texts:
             if t:
                 destroy(t)
@@ -4793,7 +4850,7 @@ class Game:
             f'Time Survived: {minutes}m {seconds}s',
             f'Total Kills: {total_kills}   Items Collected: {total_items}',
             f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
-            f'Best Combo: x{self.max_combo}',
+            f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
             f'Missions Completed: {p.completed_missions}',
             f'Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
@@ -5097,6 +5154,30 @@ class Game:
                                   position=(0.35, 0.255), parent=camera.ui, origin=(0, 0), visible=False)
         self.combo_bar = Entity(model='quad', color=color.yellow, scale=(0.22, 0.012),
                                 position=(0.35, 0.255), parent=camera.ui, origin=(0, 0), visible=False, z=-0.01)
+
+        # ── Pickup Streak HUD ── Displays the current consecutive pickup streak
+        # count and a timer bar showing time remaining before the streak resets.
+        # Positioned below the combo display on the right side of the HUD.
+        self.pickup_streak_text = Text(
+            text='', position=(0.35, 0.20), scale=1.5, color=PICKUP_STREAK_COLOR,
+            visible=False, origin=(0, 0),
+        )
+        self.pickup_streak_bar_bg = Entity(
+            model='quad', color=color.rgba(80, 80, 80, 180), scale=(0.18, 0.01),
+            position=(0.35, 0.165), parent=camera.ui, origin=(0, 0), visible=False,
+        )
+        self.pickup_streak_bar = Entity(
+            model='quad', color=PICKUP_STREAK_COLOR, scale=(0.18, 0.01),
+            position=(0.35, 0.165), parent=camera.ui, origin=(0, 0), visible=False, z=-0.01,
+        )
+
+        # ── Critical Hit Chain HUD ── Displays the current consecutive crit
+        # chain count when active. Shows "CRIT CHAIN xN" in gold, intensifying
+        # when the bonus multiplier is active (3+ consecutive crits).
+        self.crit_chain_text = Text(
+            text='', position=(0.35, 0.12), scale=1.3, color=color.rgb(255, 200, 0),
+            visible=False, origin=(0, 0),
+        )
 
         # Multi-Kill announcement — large dramatic text that pops in when you
         # kill 2+ enemies in rapid succession (Double Kill, Triple Kill, etc.)
@@ -5620,6 +5701,32 @@ class Game:
                 self.add_message(f"★ {milestone} ITEMS COLLECTED! ★")
                 break
 
+    def _register_pickup_streak(self):
+        """Track consecutive rapid item pickups and award bonus XP at milestones.
+
+        Each pickup within PICKUP_STREAK_WINDOW seconds of the last one extends
+        the streak. At every PICKUP_STREAK_MILESTONE_INTERVAL (5) pickups in the
+        streak, bonus XP is awarded. The streak resets if the window expires
+        without a pickup. This makes item-gathering runs feel rewarding and
+        encourages players to keep moving and collecting.
+        """
+        self.pickup_streak += 1
+        self.pickup_streak_timer = PICKUP_STREAK_WINDOW
+        self.pickup_streak_display_timer = PICKUP_STREAK_DISPLAY_LIFETIME
+        self.pickup_streak_bar_flash = PICKUP_STREAK_BAR_FLASH_DURATION
+        self.max_pickup_streak = max(self.max_pickup_streak, self.pickup_streak)
+        # Award bonus XP at milestones (every 5 pickups in the streak)
+        if self.pickup_streak > 1 and self.pickup_streak % PICKUP_STREAK_MILESTONE_INTERVAL == 0:
+            bonus_xp = PICKUP_STREAK_XP_PER_MILESTONE * (self.pickup_streak // PICKUP_STREAK_MILESTONE_INTERVAL)
+            self.player.gain_xp(bonus_xp)
+            self.add_message(f"Pickup Streak x{self.pickup_streak}! +{bonus_xp} bonus XP!")
+            # Small golden particle burst for the milestone
+            self._spawn_particles(
+                self.player.position + Vec3(0, 1, 0),
+                color.rgb(100, 255, 200),
+                count=10,
+            )
+
     def shoot(self):
         """Fire tentacle laser toward the mouse cursor.
 
@@ -6103,6 +6210,62 @@ class Game:
                 self.multi_kill_text.color = color.rgba(255, 100, 50, alpha)
         else:
             self.multi_kill_text.visible = False
+
+        # ── Pickup Streak HUD ── Display the current consecutive pickup streak
+        # count and a timer bar showing time remaining before the streak resets.
+        # Shows when the streak is 2+ and the display timer is still active.
+        if self.pickup_streak >= 2 and self.pickup_streak_display_timer > 0:
+            self.pickup_streak_text.visible = True
+            # Fade out in the last 0.5 seconds
+            streak_alpha = min(1.0, self.pickup_streak_display_timer / 0.5)
+            self.pickup_streak_text.color = color.rgba(100, 255, 200, int(255 * streak_alpha))
+            # Scale slightly with streak count
+            streak_scale = 1.5 + min(self.pickup_streak * 0.05, 0.5)
+            self.pickup_streak_text.scale = streak_scale
+            self.pickup_streak_text.text = f'PICKUP STREAK x{self.pickup_streak}'
+        else:
+            self.pickup_streak_text.visible = False
+
+        # Pickup streak timer bar
+        if self.pickup_streak >= 2 and self.pickup_streak_timer > 0:
+            ratio = max(0, self.pickup_streak_timer / PICKUP_STREAK_WINDOW)
+            bar_width = 0.18 * ratio
+            self.pickup_streak_bar.scale_x = max(0.001, bar_width)
+            self.pickup_streak_bar.x = 0.35 - (0.18 - bar_width) / 2
+            self.pickup_streak_bar.visible = True
+            self.pickup_streak_bar_bg.visible = True
+            # Green flash on each pickup, then normal color based on time remaining
+            if self.pickup_streak_bar_flash > 0:
+                flash_ratio = max(0, self.pickup_streak_bar_flash / PICKUP_STREAK_BAR_FLASH_DURATION)
+                self.pickup_streak_bar.color = color.rgba(200, 255, 255, int(220 * (0.7 + 0.3 * flash_ratio)))
+            elif ratio > 0.5:
+                self.pickup_streak_bar.color = color.rgba(100, 255, 200, 220)
+            elif ratio > 0.25:
+                self.pickup_streak_bar.color = color.rgba(255, 255, 100, 220)
+            else:
+                self.pickup_streak_bar.color = color.rgba(255, 150, 100, 220)
+        else:
+            self.pickup_streak_bar.visible = False
+            self.pickup_streak_bar_bg.visible = False
+
+        # ── Critical Hit Chain HUD ── Display the current consecutive crit
+        # chain count. When the chain bonus is active (3+ consecutive crits),
+        # the text turns bright orange and shows the bonus multiplier.
+        if self.crit_chain >= 2 and self.crit_chain_display_timer > 0:
+            self.crit_chain_text.visible = True
+            chain_alpha = min(1.0, self.crit_chain_display_timer / 0.5)
+            if self.crit_chain >= CRIT_CHAIN_THRESHOLD:
+                # Bonus active — bright orange-red, bigger scale
+                self.crit_chain_text.color = color.rgba(255, 100, 30, int(255 * chain_alpha))
+                self.crit_chain_text.scale = 1.6
+                self.crit_chain_text.text = f'CRIT CHAIN x{self.crit_chain} (3x DMG!)'
+            else:
+                # Building toward bonus — gold
+                self.crit_chain_text.color = color.rgba(255, 200, 0, int(255 * chain_alpha))
+                self.crit_chain_text.scale = 1.3
+                self.crit_chain_text.text = f'CRIT CHAIN x{self.crit_chain}'
+        else:
+            self.crit_chain_text.visible = False
 
         # Weapon upgrade indicator
         if p.weapon_upgrade_timer > 0:
@@ -6677,6 +6840,33 @@ class Game:
         # Track this indicator for fade-out
         direction = Vec3(dx, 0, dz).normalized()
         self.damage_indicators.append((arrow_ent, direction, DAMAGE_INDICATOR_DURATION))
+
+    def _show_spawn_indicator(self, spawn_pos):
+        """Show a brief orange directional arrow on the HUD pointing toward a new enemy spawn.
+
+        Reuses the damage arrow entities but with a distinct orange color and
+        separate tracking so spawn indicators fade independently from damage
+        indicators. This gives the player immediate spatial awareness of new
+        threats without needing to scan the full environment.
+
+        Args:
+            spawn_pos: Vec3 world position where the enemy materialized.
+        """
+        p = self.player
+        dx = spawn_pos.x - p.x
+        dz = spawn_pos.z - p.z
+        dist = math.sqrt(dx * dx + dz * dz)
+        if dist < 0.1:
+            return
+
+        angle = math.degrees(math.atan2(dx, dz)) % 360
+        closest_idx = round(angle / 45) % 8
+        arrow_ent = self.dmg_arrow_entities[closest_idx]
+        arrow_ent.color = SPAWN_INDICATOR_COLOR
+        arrow_ent.scale = 1.6  # Slightly smaller than damage indicators
+
+        direction = Vec3(dx, 0, dz).normalized()
+        self.spawn_indicators.append((arrow_ent, direction, SPAWN_INDICATOR_DURATION))
 
     def _activate_pulse_wave(self):
         """Fire a pulse wave from the player's position.
@@ -7391,6 +7581,49 @@ def game_update():
             game.multi_kill_count = 0  # Window expired, reset the counter
     if game.multi_kill_announce_timer > 0:
         game.multi_kill_announce_timer -= time.dt
+
+    # ── Pickup Streak Timer ── Count down the window between pickups. If it
+    # expires, the streak resets to 0. The display timer fades independently
+    # so the streak text can linger briefly after the streak ends.
+    if game.pickup_streak_timer > 0:
+        game.pickup_streak_timer -= time.dt
+        if game.pickup_streak_timer <= 0:
+            game.pickup_streak = 0
+    if game.pickup_streak_display_timer > 0:
+        game.pickup_streak_display_timer -= time.dt
+    if game.pickup_streak_bar_flash > 0:
+        game.pickup_streak_bar_flash -= time.dt
+
+    # ── Critical Hit Chain Timer ── Count down the window between crits. If
+    # it expires, the chain resets. The display timer fades independently.
+    if game.crit_chain_timer > 0:
+        game.crit_chain_timer -= time.dt
+        if game.crit_chain_timer <= 0:
+            game.crit_chain = 0
+    if game.crit_chain_display_timer > 0:
+        game.crit_chain_display_timer -= time.dt
+
+    # ── Spawn Direction Indicators ── Fade out and remove expired spawn arrows.
+    # Reuses the same arrow entities as damage indicators but tracked separately
+    # so both systems can show arrows simultaneously without conflict.
+    i = 0
+    while i < len(game.spawn_indicators):
+        arrow_ent, direction, remaining = game.spawn_indicators[i]
+        remaining -= time.dt
+        if remaining <= 0:
+            # Only hide if no damage indicator is also using this arrow
+            damage_using = any(d[0] is arrow_ent for d in game.damage_indicators)
+            spawn_using = any(j != i and game.spawn_indicators[j][0] is arrow_ent
+                              for j in range(len(game.spawn_indicators)) if j != i)
+            if not damage_using and not spawn_using:
+                arrow_ent.color = color.rgba(255, 50, 50, 0)
+            game.spawn_indicators.pop(i)
+        else:
+            # Fade alpha based on remaining time
+            fade_ratio = remaining / SPAWN_INDICATOR_DURATION
+            alpha = int(SPAWN_INDICATOR_MAX_ALPHA * fade_ratio)
+            arrow_ent.color = color.rgba(255, 160, 40, alpha)
+            i += 1
 
     # Track whether player is actually moving (for squish/stretch animation)
     p.is_moving = move_dir.length() > 0 and p.dash_timer <= 0
@@ -8545,7 +8778,25 @@ def game_update():
                 # Critical hit system: base 15% chance + Lucky Clover bonus
                 effective_crit_chance = CRIT_CHANCE + (LUCKY_CLOVER_CRIT_BONUS if p.crit_boost_timer > 0 else 0)
                 is_crit = random.random() < effective_crit_chance
-                damage = int(proj.damage * CRIT_DAMAGE_MULT) if is_crit else proj.damage
+                # ── Critical Hit Chain Bonus ── Consecutive crits within the
+                # time window build a chain. After CRIT_CHAIN_THRESHOLD (3)
+                # consecutive crits, subsequent crits deal CRIT_CHAIN_MULT (3x)
+                # instead of the normal CRIT_DAMAGE_MULT (2x). Non-crits reset
+                # the chain. This rewards sustained precision fire.
+                if is_crit:
+                    # Extend or start the crit chain
+                    game.crit_chain += 1
+                    game.crit_chain_timer = CRIT_CHAIN_WINDOW
+                    game.crit_chain_display_timer = CRIT_CHAIN_DISPLAY_LIFETIME
+                    # Check if chain bonus is active
+                    if game.crit_chain >= CRIT_CHAIN_THRESHOLD:
+                        damage = int(proj.damage * CRIT_CHAIN_MULT)
+                    else:
+                        damage = int(proj.damage * CRIT_DAMAGE_MULT)
+                else:
+                    # Non-crit resets the chain
+                    game.crit_chain = 0
+                    damage = proj.damage
                 # Apply monolith damage buff
                 if p.monolith_damage_timer > 0:
                     damage = int(damage * MONOLITH_DAMAGE_MULT)
@@ -9362,6 +9613,8 @@ def game_update():
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
             game.total_items_collected += 1
+            # ── Pickup Streak ── Track consecutive rapid pickups for bonus XP
+            game._register_pickup_streak()
             # ── Collectible Pickup Ground Ring ── A brief expanding ground ring
             # radiates outward from the pickup point in the item's color,
             # complementing the pop animation and particle burst with a
@@ -9570,6 +9823,10 @@ def game_update():
             destroy(flash_s, delay=SPAWN_FLASH_DURATION + 0.01)
             destroy(sw)
             game.spawn_warnings.remove(sw)
+            # ── Spawn Direction Indicator ── Show a brief orange arrow on the
+            # HUD pointing toward the new enemy's spawn location, so the player
+            # has immediate spatial awareness of the new threat.
+            game._show_spawn_indicator(Vec3(ex, 0, ez))
 
     # ── Update Spawn Portal Vortices ── Spin and fade the vortex discs.
     # Vortices are paired with spawn warnings and expire at the same time.
