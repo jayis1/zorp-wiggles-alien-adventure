@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.21.0"
+VERSION = "2.21.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -73,6 +73,17 @@ ENEMY_WANDER_SPEED_FACTOR = 0.20
 ENEMY_WANDER_INTERVAL_MIN = 2.0
 ENEMY_WANDER_INTERVAL_MAX = 5.0
 ENEMY_WANDER_DIR_JITTER = 1.0
+
+# ─── Enemy Chase Acceleration Ramp ────────────────────────────────────────────
+# When an enemy first detects the player, it currently snaps from wander speed
+# (20% of base) to full chase speed instantly — a jarring teleport-like lurch.
+# This ramp smoothly interpolates the chase speed multiplier from a gentle start
+# to full speed over ENEMY_CHASE_RAMP_DURATION seconds, so enemies "wind up" into
+# the chase instead of exploding into sprint. The ramp starts at ENEMY_CHASE_RAMP_START
+# (a fraction of full speed) so the transition from wander (0.2x) to chase feels
+# continuous rather than a step down then up.
+ENEMY_CHASE_RAMP_DURATION = 0.5    # Seconds to reach full chase speed after detecting
+ENEMY_CHASE_RAMP_START = 0.35      # Starting chase speed fraction (between wander 0.2 and full 1.0)
 
 # ─── Enemy Separation ──────────────────────────────────────────────────────────
 # Enemies gently push apart when too close, preventing the "ball of enemies"
@@ -194,6 +205,19 @@ MUZZLE_FLASH_PARTICLES = 4               # Extra particles on each shot
 # detached flash sphere). Complements the crosshair recoil for punchier shooting.
 MUZZLE_FLASH_PLAYER_TINT_DURATION = 0.06  # How long the player tint lasts
 MUZZLE_FLASH_PLAYER_TINT_COLOR = color.rgb(180, 255, 255)  # Bright cyan-white
+
+# ─── Muzzle Flash Ground Ring ──────────────────────────────────────────────────
+# Each shot now emits a brief expanding cyan ring on the ground at Zorp's
+# position, complementing the existing muzzle flash sphere, player tint, and
+# tentacle recoil with a ground-level visual that's visible from the third-person
+# camera. This matches the established visual language of footstep ripples, dash
+# landing rings, and heal pulse rings, making each shot feel like it has real
+# physical presence in the world — you see the energy discharge ripple outward
+# from where Zorp is standing.
+MUZZLE_RING_DURATION = 0.18        # How long the muzzle ring expands (seconds)
+MUZZLE_RING_START_SCALE = 0.4      # Starting scale of the muzzle ring
+MUZZLE_RING_MAX_SCALE = 1.8        # Max scale the muzzle ring reaches
+MUZZLE_RING_ALPHA = 90             # Starting alpha of the muzzle ring
 
 # ─── Projectile Glow Aura ──────────────────────────────────────────────────────
 PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
@@ -842,6 +866,16 @@ COLLECT_PICKUP_RING_DURATION = 0.30    # How long the pickup ring expands
 COLLECT_PICKUP_RING_START_SCALE = 0.3  # Starting scale of the pickup ring
 COLLECT_PICKUP_RING_MAX_SCALE = 2.0    # Max scale the pickup ring reaches
 COLLECT_PICKUP_RING_ALPHA = 100        # Starting alpha of the pickup ring
+
+# ─── Collectible Pickup Ring Initial Flash ─────────────────────────────────────
+# When a collectible is picked up, the expanding ground ring now briefly flashes
+# bright white at the very start before blending into the item's color — a
+# snappy "pop" of light that makes the pickup feel more energetic and
+# satisfying. The flash decays quickly (over the first 30% of the ring's life)
+# so the item color still dominates the visual, but the initial white burst
+# gives the pickup an extra layer of punch that catches the eye.
+COLLECT_PICKUP_RING_FLASH_DURATION_RATIO = 0.30  # Fraction of ring life spent flashing white
+COLLECT_PICKUP_RING_FLASH_ALPHA = 180             # Alpha during the white flash phase
 
 # ─── Collectible Spawn Ground Ring ────────────────────────────────────────────
 # When a collectible finishes its spawn-in animation, a brief expanding ground
@@ -1851,6 +1885,13 @@ class Enemy(Entity):
         self.spawn_time = 0.0                  # Set by game_update when spawned — tracks spawn age for grace period
         self._attack_windup_active = False    # True while attack windup telegraph is visually applying
 
+        # ── Chase Acceleration Ramp ── When the enemy first detects the player,
+        # this timer counts down from ENEMY_CHASE_RAMP_DURATION to 0. While > 0,
+        # the chase speed multiplier is smoothly interpolated from
+        # ENEMY_CHASE_RAMP_START to 1.0, so the enemy "winds up" into the chase
+        # instead of snapping from wander speed to full sprint instantly.
+        self.chase_ramp_timer = 0.0
+
         # Type-specific special behaviors
         self.is_phase_shifter = (enemy_type == 'Phase Shifter')
         self.phase_timer = random.uniform(4, 8) if self.is_phase_shifter else 0
@@ -2553,6 +2594,44 @@ class FootstepRipple(Entity):
         return False
 
 
+# ─── Muzzle Flash Ground Ring ──────────────────────────────────────────────
+class MuzzleFlashRing(Entity):
+    """A brief expanding cyan ring that radiates from Zorp's position on each shot.
+
+    Complements the existing muzzle flash sphere, player tint, and tentacle
+    recoil with a ground-level visual that's visible from the third-person
+    camera — matching the established visual language of footstep ripples,
+    dash landing rings, and heal pulse rings. Each shot feels like it has
+    real physical presence in the world as the energy discharge ripples
+    outward from where Zorp is standing.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='quad',
+            color=color.rgba(0, 255, 255, MUZZLE_RING_ALPHA),
+            scale=MUZZLE_RING_START_SCALE,
+            position=position + Vec3(0, 0.05, 0),
+            rotation_x=90,
+        )
+        self.lifetime = MUZZLE_RING_DURATION
+        self.max_lifetime = MUZZLE_RING_DURATION
+
+    def update_ring(self, dt):
+        """Expand and fade the muzzle ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to max scale with ease-out
+        ease = 1.0 - (1.0 - progress) ** 2
+        self.scale = MUZZLE_RING_START_SCALE + (MUZZLE_RING_MAX_SCALE - MUZZLE_RING_START_SCALE) * ease
+        # Fade alpha out smoothly
+        alpha = max(0, int(MUZZLE_RING_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(0, 255, 255, alpha)
+        return False
+
+
 # ─── Collectible Spawn Ring ────────────────────────────────────────────────
 class CollectibleSpawnRing(Entity):
     """A brief expanding ground ring that radiates outward when a collectible
@@ -2600,13 +2679,18 @@ class CollectiblePickupRing(Entity):
     from the third-person camera — making pickups feel more satisfying and
     grounded. The ring is slightly faster and smaller than the spawn ring
     so pickups feel snappy rather than lingering.
+
+    The ring briefly flashes bright white at the very start (over the first
+    30% of its life) before blending into the item's color — a snappy "pop"
+    of light that gives the pickup an extra layer of punch, catching the eye
+    with a burst of energy before settling into the item's hue.
     """
 
     def __init__(self, position, col):
         cr, cg, cb = _c255_color(col)
         super().__init__(
             model='quad',
-            color=color.rgba(cr, cg, cb, COLLECT_PICKUP_RING_ALPHA),
+            color=color.rgba(255, 255, 255, COLLECT_PICKUP_RING_FLASH_ALPHA),
             scale=COLLECT_PICKUP_RING_START_SCALE,
             position=position + Vec3(0, 0.1, 0),
             rotation_x=90,
@@ -2616,7 +2700,12 @@ class CollectiblePickupRing(Entity):
         self._r, self._g, self._b = cr, cg, cb
 
     def update_ring(self, dt):
-        """Expand and fade the ring. Returns True when expired."""
+        """Expand and fade the ring. Returns True when expired.
+
+        During the initial flash phase (first COLLECT_PICKUP_RING_FLASH_DURATION_RATIO
+        of the ring's life), the ring is bright white. After that, it blends
+        into the item's color and fades normally.
+        """
         self.lifetime -= dt
         if self.lifetime <= 0:
             return True
@@ -2624,9 +2713,24 @@ class CollectiblePickupRing(Entity):
         # Expand from start scale to max scale with ease-out
         ease = 1.0 - (1.0 - progress) ** 2
         self.scale = COLLECT_PICKUP_RING_START_SCALE + (COLLECT_PICKUP_RING_MAX_SCALE - COLLECT_PICKUP_RING_START_SCALE) * ease
-        # Fade alpha out smoothly
-        alpha = max(0, int(COLLECT_PICKUP_RING_ALPHA * (1.0 - progress)))
-        self.color = color.rgba(self._r, self._g, self._b, alpha)
+        # ── Initial White Flash ── During the first fraction of the ring's life,
+        # render bright white for a snappy "pop" of light. Then blend into the
+        # item's color and fade out smoothly.
+        if progress < COLLECT_PICKUP_RING_FLASH_DURATION_RATIO:
+            # White flash phase — high alpha, bright white
+            flash_t = progress / COLLECT_PICKUP_RING_FLASH_DURATION_RATIO  # 0→1
+            # Fade from flash alpha to normal alpha as the flash ends
+            alpha = int(COLLECT_PICKUP_RING_FLASH_ALPHA * (1.0 - flash_t) + COLLECT_PICKUP_RING_ALPHA * flash_t)
+            # Blend from white toward the item color
+            blend_t = flash_t
+            r = int(255 + (self._r - 255) * blend_t)
+            g = int(255 + (self._g - 255) * blend_t)
+            b = int(255 + (self._b - 255) * blend_t)
+            self.color = color.rgba(r, g, b, max(0, alpha))
+        else:
+            # Normal phase — item color, fade out smoothly
+            alpha = max(0, int(COLLECT_PICKUP_RING_ALPHA * (1.0 - progress)))
+            self.color = color.rgba(self._r, self._g, self._b, alpha)
         return False
 
 
@@ -3592,6 +3696,7 @@ class Game:
         self.dash_land_rings = []  # Dash landing impact rings
         self.footstep_ripples = []  # Player footstep ground ripples while running
         self.enemy_death_rings = []  # Enemy death expanding ground rings
+        self.muzzle_flash_rings = []  # Muzzle flash ground rings on each shot
 
         # ── Ability Ready Flash Tracking ── When the Pulse Wave or Vacuum
         # Pulse cooldown ends, a brief colored pulse flashes behind their HUD
@@ -4067,6 +4172,18 @@ class Game:
             if fr and hasattr(fr, 'enabled') and fr.enabled:
                 destroy(fr)
         self.footstep_ripples.clear()
+
+        # Destroy enemy death rings
+        for edr in self.enemy_death_rings:
+            if edr and hasattr(edr, 'enabled') and edr.enabled:
+                destroy(edr)
+        self.enemy_death_rings.clear()
+
+        # Destroy muzzle flash rings
+        for mfr in self.muzzle_flash_rings:
+            if mfr and hasattr(mfr, 'enabled') and mfr.enabled:
+                destroy(mfr)
+        self.muzzle_flash_rings.clear()
 
         # Destroy spawn healing zone ring
         if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
@@ -5540,6 +5657,15 @@ class Game:
         # through the tentacles, not just the muzzle flash and crosshair.
         self.player.tentacle_recoil_timer = TENTACLE_RECOIL_DURATION
 
+        # ── Muzzle Flash Ground Ring ── A brief expanding cyan ring radiates
+        # from Zorp's position on each shot, giving the firing a ground-level
+        # visual that's visible from the third-person camera. This matches the
+        # established visual language of footstep ripples, dash landing rings,
+        # and heal pulse rings — each shot now has real physical presence in
+        # the world as the energy discharge ripples outward from where Zorp
+        # is standing.
+        self.muzzle_flash_rings.append(MuzzleFlashRing(position=Vec3(self.player.x, 0, self.player.z)))
+
         if self.player.weapon_upgrade_timer > 0:
             # Spread shot: fire 3 projectiles in a fan pattern
             base_angle = math.atan2(direction.x, direction.z)
@@ -6741,6 +6867,11 @@ def game_update():
             if edr.update_ring(time.dt):
                 destroy(edr)
                 game.enemy_death_rings.remove(edr)
+        # Update muzzle flash rings during freeze (visual only)
+        for mfr in game.muzzle_flash_rings[:]:
+            if mfr.update_ring(time.dt):
+                destroy(mfr)
+                game.muzzle_flash_rings.remove(mfr)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -7622,9 +7753,26 @@ def game_update():
                         billboard=True,
                     )
                     enemy.alert_indicator_timer = ENEMY_ALERT_INDICATOR_DURATION
+                # ── Chase Acceleration Ramp ── Start the wind-up timer so the
+                # enemy smoothly accelerates from wander speed to full chase
+                # speed instead of snapping instantly.
+                enemy.chase_ramp_timer = ENEMY_CHASE_RAMP_DURATION
             # Chase player
             # Time Warp slows all enemies
             speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
+            # ── Chase Acceleration Ramp ── While the ramp timer is active,
+            # interpolate the chase speed multiplier from ENEMY_CHASE_RAMP_START
+            # to 1.0 so the enemy "winds up" into the chase. This makes the
+            # transition from idle wander (0.2x speed) to full chase (1.0x)
+            # feel smooth and natural instead of a jarring instant sprint.
+            if enemy.chase_ramp_timer > 0:
+                enemy.chase_ramp_timer -= time.dt
+                if enemy.chase_ramp_timer < 0:
+                    enemy.chase_ramp_timer = 0
+                ramp_progress = 1.0 - (enemy.chase_ramp_timer / ENEMY_CHASE_RAMP_DURATION)
+                # Ease-in: start gentle, accelerate to full
+                chase_mult = ENEMY_CHASE_RAMP_START + (1.0 - ENEMY_CHASE_RAMP_START) * (ramp_progress ** 0.7)
+                speed_mult *= chase_mult
             # ── Enemy Enrage at Low HP ── When an enemy's HP drops below
             # ENRAGE_HP_THRESHOLD (25% of max), it enters an enraged state:
             # 35% faster movement, a red color shift, and periodic red rage
@@ -8773,6 +8921,15 @@ def game_update():
         if edr.update_ring(time.dt):
             destroy(edr)
             game.enemy_death_rings.remove(edr)
+
+    # ── Update Muzzle Flash Ground Rings ── Expanding cyan rings from each
+    # shot are updated and removed when expired, providing a ground-level
+    # visual discharge effect that complements the muzzle flash sphere,
+    # player tint, and tentacle recoil for punchier shooting feedback.
+    for mfr in game.muzzle_flash_rings[:]:
+        if mfr.update_ring(time.dt):
+            destroy(mfr)
+            game.muzzle_flash_rings.remove(mfr)
 
     # ── Pulse Wave Ring Update ── BUG FIX: ring update_ring() was only called
     # during hit-stop freeze (a 0.08s window after kills), so in normal gameplay
