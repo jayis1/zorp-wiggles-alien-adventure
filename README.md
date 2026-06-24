@@ -35,14 +35,15 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.22.1 — 3D!)
+## Features (v2.23.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
 - **17 collectible item types** — including **12 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!), **Mirror Shard** (reflects enemy projectiles back at them for 6 seconds!)
 - **18 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!), **Echo Wraith** (spawns decoy clones that confuse the player!)
 - **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact! **Critical Hit Chain**: land 3+ consecutive crits within 3 seconds to activate a **3x damage bonus** on subsequent crits — the HUD shows a gold "CRIT CHAIN xN" counter that turns orange-red when the bonus is active, rewarding sustained precision fire!
-- **Dash ability** — press Space to dodge in your movement direction (2s cooldown)
+- **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool!
+- **Combo Shield** — reach a x15 kill combo to earn a golden one-time shield that absorbs the next hit without resetting your combo streak!
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 5 seconds
@@ -66,6 +67,7 @@ python game.py
 - Distance-based difficulty scaling (harder enemies farther from spawn)
 - **Per-enemy loot drops** — tougher enemies drop more items! Plasma Drake drops 4–6 items, Slime Blobs drop 1–2
 - Minimap with player tracking and enemy dots
+- **Enemy Proximity Radar** — facing-relative radar overlay showing nearby off-screen threats as colored dots (red=close, orange=mid, yellow=far)
 - Enemy HP bars with green→yellow→red color gradient
 - 3D trees in forests, crystal spires in crystal biomes, alien mushrooms in mushroom biomes
 - **Floating Islands biome** — raised platforms with purple crystals and shadow projections
@@ -374,6 +376,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.23.0 — Combo Shield, Dash Strike & Enemy Radar
+- **Combo Shield at x15 combo**: When your kill combo reaches x15 — a major milestone — Zorp gains a one-time golden Combo Shield that absorbs the next instance of damage entirely without reducing HP or resetting the combo. A pulsing golden ring appears around Zorp while the shield is charged, and the HUD power-up display shows "🛡 COMBO SHIELD". When the shield absorbs a hit, a golden particle burst erupts and the combo timer is refreshed, giving you a second chance to keep your streak alive. The shield must be re-earned by reaching x15 again after being consumed — it doesn't refresh at x20, x25, etc. This rewards high-skill sustained kill chains by protecting your investment in a long combo streak
+- **Dash Damage Strike**: Dashing through enemies now deals damage and knockback, turning the Dash from a purely defensive mobility tool into a tactical offensive option. The damage scales with player level (15 base + 3 per level), and each enemy can only be hit once per dash to prevent abuse. Cyan impact particles burst at the struck enemy, and enemies are knocked back in the dash direction for satisfying physical feedback. Dash strike kills award full XP, score, combo, and loot — just like projectile kills — with a "⚡" kill feed entry and "Dash Strike!" message. This makes dashing into a group of weak enemies a viable combat strategy, especially for finishing off low-HP foes
+- **Enemy Proximity Radar**: A subtle circular radar overlay on the HUD shows nearby enemies as colored dots, oriented with Zorp's facing direction as "up" for intuitive spatial awareness. The radar detects enemies within 35 units and colors them by threat level: red (close, within 10 units), orange (mid-range, 10-20 units), yellow (far, 20-35 units). The radar refreshes 10 times per second and shows up to 20 dots, complementing the minimap by providing facing-relative threat tracking for off-screen enemies approaching from behind or the sides. Positioned in the lower-right HUD area, it's always visible without being intrusive
 
 ### v2.22.1 — Attack Sparks, Shrapnel Cone & Mission Progress Notifications
 - **Enemy attack impact sparks**: When an enemy's melee attack lands on the player (or is blocked by a shield), a directional spark burst now fires from the enemy toward the player along the attack direction — a visceral "claw strike" visual that makes melee hits feel impactful and readable. The 6 bright red-orange sparks form a narrow cone and fade quickly, complementing the existing screen shake, omnidirectional damage particles, and HUD damage indicator arrow with a clear directional impact cue. Previously, melee hits had no directional visual — just a generic red particle puff at the player's position, making it hard to tell which enemy struck you. Now the sparks trace the attack path, making every hit feel like a physical strike

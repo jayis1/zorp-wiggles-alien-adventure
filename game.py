@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.22.1"
+VERSION = "2.23.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -751,6 +751,30 @@ SPAWN_WARNING_RING_COLOR = color.rgb(255, 60, 60)
 DASH_VACUUM_RADIUS = 8.0       # How far the dash vacuum reaches
 DASH_VACUUM_PULL_SPEED = 20.0  # How fast items are pulled during dash
 
+# ─── Dash Damage Strike ──────────────────────────────────────────────────────
+# Dashing through an enemy deals damage and knockback, turning the dash from
+# a purely defensive mobility tool into a tactical offensive option. The
+# damage scales with player level so it stays relevant throughout the game.
+# Each enemy can only be hit once per dash to prevent multi-hit abuse.
+DASH_STRIKE_DAMAGE_BASE = 15   # Base damage dealt by dash strike
+DASH_STRIKE_DAMAGE_PER_LEVEL = 3  # Additional damage per player level
+DASH_STRIKE_RADIUS = 2.5       # How close an enemy must be to be hit by the dash
+DASH_STRIKE_KNOCKBACK = 3.0    # Knockback force applied to enemies hit by dash
+
+# ─── Enemy Proximity Radar ──────────────────────────────────────────────────
+# A subtle radar overlay on the HUD that shows nearby off-screen enemies as
+# small colored dots around a central circle. This helps players track threats
+# outside their view — especially enemies approaching from behind or the sides.
+# The radar only shows enemies within RADAR_RANGE and uses the player's facing
+# direction as "up" on the radar for intuitive spatial awareness.
+RADAR_RANGE = 35.0              # How far the radar detects enemies
+RADAR_DOT_SIZE = 0.012          # Size of each enemy dot on the HUD
+RADAR_CENTER_X = 0.82            # HUD X position of radar center
+RADAR_CENTER_Y = 0.20            # HUD Y position of radar center
+RADAR_CIRCLE_RADIUS = 0.06        # Visual radius of the radar circle on HUD
+RADAR_MAX_DOTS = 20              # Maximum dots to show (performance cap)
+RADAR_REFRESH_INTERVAL = 0.1     # How often to refresh radar dot positions
+
 # ─── Combo Damage Buff ────────────────────────────────────────────────────────
 COMBO_DAMAGE_TIER = 10         # Combo count needed to activate damage buff
 COMBO_DAMAGE_MULT = 1.25       # +25% projectile damage at combo x10+
@@ -1123,6 +1147,18 @@ LEVEL_UP_MAGNET_FORCE = 40.0        # How fast collectibles are pulled toward pl
 # ─── Combo Milestone Fireworks ─────────────────────────────────────────────
 COMBO_MILESTONE_INTERVAL = 5        # Combo milestones: x5, x10, x15, etc.
 COMBO_MILESTONE_PARTICLES = 25      # Particle burst count at combo milestones
+
+# ─── Combo Shield ────────────────────────────────────────────────────────────
+# At combo x15 (a major milestone), the player gains a one-time "Combo Shield"
+# that absorbs the next instance of damage WITHOUT resetting the combo. This
+# rewards high-skill sustained kill chains by protecting the player's investment
+# in a long combo streak. The shield is consumed on the next hit and must be
+# re-earned by reaching x15 again (it doesn't refresh at x20, x25, etc. — only
+# when the combo count crosses 15 from below). A golden ring visual appears
+# around Zorp while the shield is active, making the protection visible.
+COMBO_SHIELD_THRESHOLD = 15         # Combo count needed to earn the combo shield
+COMBO_SHIELD_RING_COLOR = color.rgba(255, 215, 50, 100)  # Golden ring visual
+COMBO_SHIELD_RING_SCALE = 2.0      # Ring scale (slightly larger than player)
 
 # ─── Achievement System ────────────────────────────────────────────────────
 ACHIEVEMENT_POPUP_DURATION = 4.0    # How long achievement popup stays visible
@@ -1537,6 +1573,7 @@ class Player(Entity):
         self.dash_timer = 0
         self.dash_cooldown = 0
         self.dash_direction = Vec3(0, 0, 0)
+        self._dash_strike_hit = set()  # Enemy IDs already hit during the current dash
 
         # Movement velocity for smooth acceleration/deceleration
         self.velocity = Vec3(0, 0, 0)
@@ -1686,6 +1723,12 @@ class Player(Entity):
         # springs back to normal, simulating weapon recoil on the character model.
         self.tentacle_recoil_timer = 0.0
 
+        # Combo Shield — earned at combo x15, absorbs one hit without
+        # resetting the combo. The shield is a one-time charge that must be
+        # re-earned by reaching x15 again after being consumed.
+        self.combo_shield_active = False  # True while the shield is charged
+        self.combo_shield_absorbed_flag = False  # Set by take_damage, checked by game_update for VFX
+
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
@@ -1713,6 +1756,10 @@ class Player(Entity):
         decays over time. This makes overhealed Health Potions valuable in
         combat instead of just being a cap-waste.
 
+        The Combo Shield (earned at combo x15) absorbs one hit entirely
+        without reducing HP or resetting the combo — a reward for skillful
+        sustained kill chains.
+
         Args:
             amount: Damage points to subtract from HP.
 
@@ -1720,6 +1767,16 @@ class Player(Entity):
             True if HP dropped to 0 (player is dead), False otherwise.
         """
         if self.invuln_timer > 0:
+            return False
+        # ── Combo Shield Absorption ── If the combo shield is active (earned
+        # at combo x15), it absorbs the next hit entirely — no HP loss, no
+        # invulnerability frames, and critically, the combo is NOT reset.
+        # The shield is consumed and must be re-earned. The combo_shield_active
+        # flag is checked by the caller (game_update) to spawn a golden burst
+        # and prevent combo reset.
+        if self.combo_shield_active:
+            self.combo_shield_active = False
+            self.combo_shield_absorbed_flag = True  # Signal game_update for VFX
             return False
         # ── Overheal Barrier Absorption ── Damage is absorbed by the overheal
         # barrier first, then any remaining damage hits real HP. This gives
@@ -4384,6 +4441,8 @@ class Game:
                 destroy(self.player.overheal_ring)
             if hasattr(self.player, 'adrenaline_ring') and self.player.adrenaline_ring is not None:
                 destroy(self.player.adrenaline_ring)
+            if hasattr(self.player, 'combo_shield_ring') and self.player.combo_shield_ring is not None:
+                destroy(self.player.combo_shield_ring)
             destroy(self.player)
         # Player's children cascade-destroy: tentacles, eyes, pupils, shield_visual
 
@@ -4406,10 +4465,15 @@ class Game:
                       'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
                       'compass_arrow',
                       'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
-                      'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash'):
+                      'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash',
+                      'radar_bg'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
+        # Destroy radar dots
+        for dot in self.radar_dots:
+            if dot and hasattr(dot, 'enabled'):
+                destroy(dot)
         # Destroy damage direction arrows
         for arrow_ent in self.dmg_arrow_entities:
             if arrow_ent and hasattr(arrow_ent, 'enabled'):
@@ -5322,6 +5386,34 @@ class Game:
         )
         self.threat_counter_timer = 0.0  # Recount interval accumulator
 
+        # ── Enemy Proximity Radar ── A small circular radar on the HUD showing
+        # nearby enemies as colored dots, oriented with the player's facing
+        # direction as "up." Helps track off-screen threats. The radar
+        # background is a dark translucent circle, and enemy dots are small
+        # colored quads positioned relative to the radar center.
+        self.radar_bg = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(20, 20, 40, 100),
+            scale=RADAR_CIRCLE_RADIUS * 2.2,
+            position=(RADAR_CENTER_X, RADAR_CENTER_Y),
+            z=0.3,
+        )
+        self.radar_dots = []  # List of (Entity, enemy_ref) for active dots
+        self.radar_refresh_timer = 0.0
+        # Pre-create dot entities (reused each refresh, hidden when not needed)
+        for _ in range(RADAR_MAX_DOTS):
+            dot = Entity(
+                parent=camera.ui,
+                model='quad',
+                color=color.rgba(255, 50, 50, 200),
+                scale=RADAR_DOT_SIZE,
+                position=(RADAR_CENTER_X, RADAR_CENTER_Y),
+                z=0.25,
+                visible=False,
+            )
+            self.radar_dots.append(dot)
+
         # ── Level-Up Golden Screen Flash ── Brief golden screen-edge flash
         # on level-up. Triggered by game_update when level_up_pending fires,
         # decays smoothly in _update_hud.
@@ -5442,6 +5534,61 @@ class Game:
                 ex_norm = (e.x / world_size) - 0.5
                 ez_norm = (e.z / world_size) - 0.5
                 dot.position = (mm_cx + ex_norm * MINIMAP_SIZE, mm_cy + ez_norm * MINIMAP_SIZE)
+                dot.visible = True
+            else:
+                dot.visible = False
+
+    def _update_radar(self):
+        """Update the enemy proximity radar HUD overlay.
+
+        Shows nearby enemies as colored dots on a small circular radar,
+        oriented with the player's facing direction as "up." Enemies
+        beyond RADAR_RANGE are not shown. Dots are colored based on threat
+        level: red for close enemies, orange for mid-range, yellow for far.
+        This complements the minimap by providing facing-relative spatial
+        awareness for off-screen threats.
+        """
+        p = self.player
+        # Get player's facing angle (radians) for radar orientation
+        facing = p.facing
+        facing_angle = math.atan2(facing.x, facing.z)  # Angle in radians
+
+        # Collect nearby enemies sorted by distance
+        nearby = []
+        for enemy in self.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            dx = enemy.x - p.x
+            dz = enemy.z - p.z
+            dist = math.sqrt(dx * dx + dz * dz)
+            if dist < RADAR_RANGE:
+                nearby.append((dist, dx, dz, enemy))
+        nearby.sort(key=lambda x: x[0])
+        nearby = nearby[:RADAR_MAX_DOTS]
+
+        # Update dot positions
+        for i, dot in enumerate(self.radar_dots):
+            if i < len(nearby):
+                dist, dx, dz, enemy = nearby[i]
+                # Rotate the enemy's relative position by the player's facing
+                # angle so the radar is "forward-up" oriented.
+                # Rotation: [cos, sin; -sin, cos] applied to (dx, dz)
+                cos_a = math.cos(-facing_angle)
+                sin_a = math.sin(-facing_angle)
+                rot_x = dx * cos_a + dz * sin_a
+                rot_z = -dx * sin_a + dz * cos_a
+                # Normalize to radar radius (closer = closer to center)
+                radar_ratio = min(1.0, dist / RADAR_RANGE)
+                dot_x = RADAR_CENTER_X + (rot_x / RADAR_RANGE) * RADAR_CIRCLE_RADIUS
+                dot_y = RADAR_CENTER_Y + (rot_z / RADAR_RANGE) * RADAR_CIRCLE_RADIUS
+                dot.position = (dot_x, dot_y)
+                # Color by threat level: red (close), orange (mid), yellow (far)
+                if dist < 10:
+                    dot.color = color.rgba(255, 50, 50, 220)
+                elif dist < 20:
+                    dot.color = color.rgba(255, 150, 50, 200)
+                else:
+                    dot.color = color.rgba(255, 220, 50, 180)
                 dot.visible = True
             else:
                 dot.visible = False
@@ -6165,6 +6312,9 @@ class Game:
         if p.overheal > 0:
             pu_lines.append(f'🛡 OVERHEAL: {int(p.overheal)}')
             # Overheal doesn't expire like a timer, so don't add to pu_timers
+        if p.combo_shield_active:
+            pu_lines.append('🛡 COMBO SHIELD')
+            # Combo shield doesn't expire like a timer, so don't add to pu_timers
         self.powerup_text.text = '  |  '.join(pu_lines)
         if pu_lines:
             # Check if any active buff is about to expire — if so, pulse red
@@ -7283,6 +7433,69 @@ def game_update():
                 vacuum_dir = (p.position - col.position).normalized()
                 col.position += vacuum_dir * DASH_VACUUM_PULL_SPEED * time.dt
                 col.rotation_y += 300 * time.dt  # Spin items as they get vacuumed
+        # ── Dash Damage Strike ── While dashing, Zorp deals damage to any
+        # enemy he passes through, turning the dash from purely defensive
+        # mobility into a tactical offensive tool. Each enemy can only be hit
+        # once per dash (tracked by _dash_strike_hit set). The damage scales
+        # with player level so it stays relevant throughout the game. Enemies
+        # are knocked back in the dash direction for satisfying impact feedback.
+        dash_strike_dmg = DASH_STRIKE_DAMAGE_BASE + p.level * DASH_STRIKE_DAMAGE_PER_LEVEL
+        for enemy in game.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            if id(enemy) in p._dash_strike_hit:
+                continue
+            strike_dist = (enemy.position - p.position).length()
+            if strike_dist < DASH_STRIKE_RADIUS:
+                p._dash_strike_hit.add(id(enemy))
+                killed = enemy.take_damage(dash_strike_dmg, hit_direction=p.dash_direction)
+                # Knockback in the dash direction
+                enemy.knockback_vel = Vec3(
+                    p.dash_direction.x * DASH_STRIKE_KNOCKBACK,
+                    ENEMY_KNOCKBACK_UP * 0.5,
+                    p.dash_direction.z * DASH_STRIKE_KNOCKBACK,
+                )
+                # Visual feedback: cyan impact particles at the enemy position
+                game._spawn_particles(enemy.position + Vec3(0, 1, 0),
+                                      color.rgb(0, 255, 255), count=6)
+                game.damage_numbers.append(DamageNumber(enemy.position, dash_strike_dmg))
+                if killed:
+                    # ── Dash Strike Kill ── Handle the kill the same way projectile
+                    # kills are handled: award XP, score, combo, loot, particles.
+                    p.add_kill(enemy.name)
+                    game.total_kills += 1
+                    game._register_kill()
+                    game.combo_count += 1
+                    game.max_combo = max(game.max_combo, game.combo_count)
+                    game.combo_timer = COMBO_TIMEOUT
+                    game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
+                    combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                    monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                    p.gain_xp(xp_gain)
+                    p.score += int(enemy.max_hp * combo_score_mult)
+                    game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                    game.enemy_death_rings.append(EnemyDeathRing(
+                        position=Vec3(enemy.x, 0, enemy.z),
+                        col=enemy.original_color,
+                        enemy_scale=enemy.original_scale,
+                    ))
+                    game.kill_feed.append((game.t, f"⚡ {enemy.name}"))
+                    game.add_message(f"Dash Strike! Defeated {enemy.name}!")
+                    # Drop loot
+                    loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
+                    loot_count = random.randint(loot_range[0], loot_range[1])
+                    for _ in range(loot_count):
+                        offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
+                        drop_pos = enemy.position + offset
+                        if game._is_walkable(drop_pos.x, drop_pos.z):
+                            c = Collectible(position=drop_pos)
+                            game.collectibles.append(c)
+                    enemy.alive = False
+                    enemy.dying = True
+                    enemy.death_timer = DEATH_ANIM_DURATION
         # FOV zoom during dash for speed feel
         camera.fov = lerp(camera.fov, DASH_FOV_ZOOM, time.dt * DASH_FOV_LERP_SPEED)
         # ── Dash Landing Impact ── When the dash ends, trigger a satisfying
@@ -7309,6 +7522,7 @@ def game_update():
         p.dash_timer = DASH_DURATION
         p.dash_cooldown = DASH_COOLDOWN
         p.invuln_timer = max(p.invuln_timer, DASH_INVULN_DURATION)  # Brief invincibility during dash
+        p._dash_strike_hit.clear()  # Reset the hit set for this dash
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
         # Reset the afterimage accumulator so the first trailing ghost appears
@@ -7499,6 +7713,30 @@ def game_update():
             destroy(p.float_ring)
             p.float_ring = None
 
+    # ── Combo Shield Visual ── While the combo shield is active (earned at
+    # combo x15), a golden ring pulses around Zorp, making the protection
+    # visible. The ring rotates slowly and pulses in scale/alpha for a
+    # protective aura look that stands out from other buff rings.
+    if p.combo_shield_active:
+        if not hasattr(p, 'combo_shield_ring') or p.combo_shield_ring is None:
+            p.combo_shield_ring = Entity(
+                model='quad',
+                color=COMBO_SHIELD_RING_COLOR,
+                scale=COMBO_SHIELD_RING_SCALE,
+                position=(p.x, 0.09, p.z),
+                rotation_x=90,
+            )
+        p.combo_shield_ring.visible = True
+        p.combo_shield_ring.position = (p.x, 0.09, p.z)
+        cs_pulse = 0.5 + 0.5 * math.sin(game.t * 4)
+        cs_alpha = int(70 + 50 * cs_pulse)
+        p.combo_shield_ring.color = color.rgba(255, 215, 50, cs_alpha)
+        p.combo_shield_ring.scale = COMBO_SHIELD_RING_SCALE + 0.3 * cs_pulse
+    else:
+        if hasattr(p, 'combo_shield_ring') and p.combo_shield_ring is not None:
+            destroy(p.combo_shield_ring)
+            p.combo_shield_ring = None
+
     # Monolith buff visual — colored ring around player when any monolith buff is active
     if p.monolith_speed_timer > 0 or p.monolith_damage_timer > 0 or p.monolith_xp_timer > 0:
         if not hasattr(p, 'monolith_ring') or p.monolith_ring is None:
@@ -7673,7 +7911,22 @@ def game_update():
     if game.combo_timer > 0:
         game.combo_timer -= time.dt
         if game.combo_timer <= 0:
-            game.combo_count = 0
+            # ── Combo Shield Absorption ── If the combo shield just absorbed a
+            # hit (combo_shield_absorbed_flag was set by take_damage), the combo
+            # is NOT reset — the shield protected the streak. Spawn a golden
+            # burst and keep the combo alive. The shield consumption VFX fires
+            # here (in the main update loop) rather than in take_damage() so
+            # it only runs once per frame and has access to game state.
+            if p.combo_shield_absorbed_flag:
+                p.combo_shield_absorbed_flag = False
+                # Golden burst to show the shield absorbing the hit
+                game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                      color.rgb(255, 215, 50), count=12)
+                game.add_message("⚡ COMBO SHIELD ABSORBED!")
+                # Refresh combo timer so the streak continues
+                game.combo_timer = COMBO_TIMEOUT
+            else:
+                game.combo_count = 0
     # BUG FIX: combo_display_timer was decremented in both _update_hud() and
     # (implicitly via game global references), causing a double-decrement per frame.
     # Now it's only decremented here in game_update().
@@ -9084,6 +9337,17 @@ def game_update():
                             game._spawn_particles(p.position + burst_offset, burst_color, count=1)
                         game.screen_shake = max(game.screen_shake, 0.4)
                         game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                        # ── Combo Shield at x15 ── At the x15 milestone, grant the
+                        # player a one-time combo shield that absorbs the next hit
+                        # without resetting the combo. Only triggers exactly at 15
+                        # (not 20, 25, etc.) — the player must reach 15 again if the
+                        # shield was consumed. A golden ring visual appears around
+                        # Zorp to make the protection visible.
+                        if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                            p.combo_shield_active = True
+                            game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                            game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                                  color.rgb(255, 215, 50), count=15)
                     combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
                     combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     # Apply monolith XP multiplier buff
@@ -10298,6 +10562,13 @@ def game_update():
     if game.minimap_refresh_timer <= 0 and game.minimap_shown:
         game.minimap_refresh_timer = MINIMAP_REFRESH_INTERVAL
         game._update_minimap_colors()
+
+    # ── Enemy Proximity Radar Refresh ── Updates the position and color of
+    # radar dots to show nearby enemies relative to the player's facing.
+    game.radar_refresh_timer -= time.dt
+    if game.radar_refresh_timer <= 0:
+        game.radar_refresh_timer = RADAR_REFRESH_INTERVAL
+        game._update_radar()
 
     # ── Toggle mission panel ──
     # Bug fix: use getattr instead of not hasattr — same debounce issue
