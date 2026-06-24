@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.22.0 — 3D!)
+## Features (v2.22.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -374,6 +374,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.22.1 — Attack Sparks, Shrapnel Cone & Mission Progress Notifications
+- **Enemy attack impact sparks**: When an enemy's melee attack lands on the player (or is blocked by a shield), a directional spark burst now fires from the enemy toward the player along the attack direction — a visceral "claw strike" visual that makes melee hits feel impactful and readable. The 6 bright red-orange sparks form a narrow cone and fade quickly, complementing the existing screen shake, omnidirectional damage particles, and HUD damage indicator arrow with a clear directional impact cue. Previously, melee hits had no directional visual — just a generic red particle puff at the player's position, making it hard to tell which enemy struck you. Now the sparks trace the attack path, making every hit feel like a physical strike
+- **Projectile impact shrapnel cone**: On projectile hit, directional shrapnel sparks now burst outward perpendicular to the shot's travel direction — like shrapnel flying sideways from a bullet impact. This makes hits feel more visceral and directional than the existing omnidirectional particle burst, communicating the shot direction through the spread of debris. Critical hits get golden shrapnel; normal hits get enemy-tinted shrapnel (matching the existing blended hit particle color). The 5 shrapnel particles are small, fast, and short-lived so they add punch without cluttering the screen, complementing the existing hit flash, particle burst, and ground ripple for a more complete and directional combat feedback system
+- **Mission progress notifications**: When a kill or collection advances an active (not-yet-complete) mission, a brief progress message now appears in the message feed — e.g. " Mission: Beetle B Gone 2/3" — so the player gets immediate feedback that their actions are advancing objectives without needing to open the TAB panel. Previously, mission progress was completely invisible unless you manually checked the missions panel, making it easy to lose track of what you were working toward. The notification fires only on actual progress increments (not every frame), keeping the message feed clean and uncluttered
 
 ### v2.21.2 — Size-Scaled Hit Punch, Fizz Ring & Death Screen Stats
 - **Size-scaled enemy hit punch**: The hit scale punch (brief size increase when an enemy is shot) now scales inversely with enemy size — small enemies like Swarm Mites and Void Wisps get a bigger proportional punch (up to 1.6x the base intensity) so hits are clearly visible, while large enemies like Plasma Drakes get a subtler punch (down to 0.7x) to avoid screen-filling distortion. Previously every enemy used the same flat 1.25x multiplier, meaning hits on tiny enemies were nearly invisible while hits on bosses caused jarring visual distortion. This makes combat feedback equally readable across all 18 enemy types, so you always know your shots are connecting regardless of enemy size

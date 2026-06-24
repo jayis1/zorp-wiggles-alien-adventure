@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.22.0"
+VERSION = "2.22.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1371,6 +1371,38 @@ THREAT_COUNTER_POSITION = (-0.75, 0.09) # HUD position for the threat text
 # level-ups feel like a celebratory moment with full-screen visual impact.
 LEVEL_UP_FLASH_DURATION = 0.6           # How long the golden flash lasts
 LEVEL_UP_FLASH_MAX_ALPHA = 60           # Peak alpha of the golden flash
+
+# ─── Enemy Attack Impact Spark ────────────────────────────────────────────────
+# When an enemy's melee attack lands on the player, a directional spark burst
+# fires from the enemy toward the player along the attack direction — a visceral
+# "claw strike" visual that makes melee hits feel impactful and readable. The
+# sparks are bright red-orange shards that travel from the enemy's position
+# toward the player and fade quickly, complementing the existing screen shake,
+# damage particles, and damage indicator arrow with a clear directional impact.
+ENEMY_ATTACK_SPARK_COUNT = 6            # Number of spark particles per strike
+ENEMY_ATTACK_SPARK_SPEED = 14.0         # How fast sparks travel toward player
+ENEMY_ATTACK_SPARK_SPREAD = 0.4         # Lateral spread (cone half-angle fraction)
+ENEMY_ATTACK_SPARK_COLOR = color.rgb(255, 80, 40)  # Bright red-orange impact sparks
+ENEMY_ATTACK_SPARK_LIFETIME = 0.30      # How long each spark lives (seconds)
+
+# ─── Projectile Impact Shrapnel Cone ─────────────────────────────────────────
+# On projectile hit, a few directional spark particles shoot outward
+# perpendicular to the projectile's travel direction — like shrapnel bursting
+# sideways from a bullet impact. This makes hits feel more visceral and
+# directional than the existing omnidirectional particle burst, communicating
+# the direction of the shot through the particle spread. Crits get golden
+# shrapnel; normal hits get enemy-tinted shrapnel.
+PROJ_SHRAPNEL_COUNT = 5                # Shrapnel particles per hit
+PROJ_SHRAPNEL_SPEED = 12.0             # How fast shrapnel flies outward
+PROJ_SHRAPNEL_LIFETIME = 0.25          # Shrapnel particle lifetime (seconds)
+
+# ─── Mission Progress Notification ───────────────────────────────────────────
+# When a kill or collection advances an active (not-yet-complete) mission, a
+# brief green progress message appears — e.g. "Mission: Beetle B Gone 2/3" —
+# so the player gets immediate feedback that their actions are advancing
+# missions without needing to open the TAB panel. Only fires on actual progress
+# changes (not every frame), keeping the message feed clean.
+MISSION_PROGRESS_NOTIFY_DURATION = 2.0  # How long the progress message is relevant
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -5599,6 +5631,37 @@ class Game:
                             curve=curve.linear)
         destroy(flash, delay=PROJECTILE_IMPACT_FLASH_DURATION + 0.01)
 
+    def _spawn_shrapnel(self, pos, proj_dir, col):
+        """Spawn directional shrapnel sparks perpendicular to a projectile hit.
+
+        On impact, a few spark particles shoot outward perpendicular to the
+        projectile's travel direction — like shrapnel bursting sideways from
+        a bullet impact. This makes hits feel more visceral and directional than
+        the existing omnidirectional particle burst, communicating the shot
+        direction through the spread of debris. The sparks are small, fast,
+        and short-lived so they add punch without cluttering the screen.
+        """
+        if proj_dir.length() < 0.01:
+            return
+        d = proj_dir.normalized()
+        d.y = 0
+        # Two perpendicular vectors in the ground plane
+        perp = Vec3(-d.z, 0, d.x)
+        cr, cg, cb = _c255_color(col)
+        for _ in range(PROJ_SHRAPNEL_COUNT):
+            # Alternate between the two perpendicular directions
+            side = random.choice([-1, 1])
+            spread = random.uniform(0.6, 1.0)
+            vel = (perp * side * spread + d * random.uniform(-0.2, 0.2)).normalized() * PROJ_SHRAPNEL_SPEED
+            vel = Vec3(vel.x, vel.y + random.uniform(1.0, 3.0), vel.z)
+            shard = Entity(
+                model='sphere',
+                color=color.rgb(cr, cg, cb),
+                scale=random.uniform(0.07, 0.13),
+                position=Vec3(pos.x, pos.y, pos.z),
+            )
+            self.particles.append((shard, vel, PROJ_SHRAPNEL_LIFETIME))
+
     def _spawn_collect_burst(self, pos, col):
         """Spawn a ring burst effect when collecting an item.
 
@@ -6724,19 +6787,33 @@ class Game:
                 self.compass_arrow.visible = False
 
     def _update_missions(self):
-        """Check and update mission progress for all active missions."""
+        """Check and update mission progress for all active missions.
+
+        When a mission gains progress (a kill or collection that advances an
+        active, not-yet-complete mission), a brief green notification message
+        is shown so the player gets immediate feedback that their actions are
+        advancing missions — without needing to open the TAB panel. Only fires
+        on actual progress increments, keeping the message feed clean.
+        """
         p = self.player
         for m in self.missions:
             if m.completed and not m.turned_in:
                 continue
             if m.turned_in:
                 continue
+            prev_progress = m.progress
             if m.mission_type == 'collect':
                 # Bug fix: subtract baseline so progress is delta since mission assigned
                 m.progress = max(0, p.inventory.get(m.target, 0) - m.baseline)
             elif m.mission_type == 'kill':
                 # Bug fix: subtract baseline so progress is delta since mission assigned
                 m.progress = max(0, p.kills.get(m.target, 0) - m.baseline)
+            # ── Mission Progress Notification ── When a mission advances
+            # (progress increased but not yet complete), show a brief green
+            # message so the player sees their actions are advancing the
+            # objective. Fires only on actual increments, not every frame.
+            if m.progress > prev_progress and m.progress < m.target_count:
+                self.add_message(f" Mission: {m.title}  {m.progress}/{m.target_count}")
             if m.progress >= m.target_count and not m.completed:
                 m.completed = True
                 self.add_message(f"Mission Complete: {m.title}!")
@@ -6842,6 +6919,33 @@ class Game:
         # Track this indicator for fade-out
         direction = Vec3(dx, 0, dz).normalized()
         self.damage_indicators.append((arrow_ent, direction, DAMAGE_INDICATOR_DURATION))
+
+    def _spawn_attack_sparks(self, enemy_pos):
+        """Spawn directional sparks from an enemy toward the player on melee hit.
+
+        The sparks travel from the enemy's position toward the player along the
+        attack direction, with a small lateral spread so they form a narrow cone
+        — a visceral "claw strike" visual. Complements the existing screen shake,
+        omnidirectional damage particles, and HUD damage indicator arrow.
+        """
+        p = self.player
+        spark_dir = (p.position - enemy_pos).normalized()
+        spark_dir.y = 0
+        if spark_dir.length() < 0.01:
+            return
+        # Perpendicular vector for lateral spread
+        perp = Vec3(-spark_dir.z, 0, spark_dir.x)
+        for i in range(ENEMY_ATTACK_SPARK_COUNT):
+            spread = random.uniform(-ENEMY_ATTACK_SPARK_SPREAD, ENEMY_ATTACK_SPARK_SPREAD)
+            vel = (spark_dir + perp * spread).normalized() * ENEMY_ATTACK_SPARK_SPEED
+            vel = Vec3(vel.x, vel.y + random.uniform(0.5, 2.5), vel.z)
+            spark = Entity(
+                model='sphere',
+                color=ENEMY_ATTACK_SPARK_COLOR,
+                scale=random.uniform(0.08, 0.16),
+                position=Vec3(enemy_pos.x, 1.0, enemy_pos.z),
+            )
+            self.particles.append((spark, vel, ENEMY_ATTACK_SPARK_LIFETIME))
 
     def _show_spawn_indicator(self, spawn_pos):
         """Show a brief orange directional arrow on the HUD pointing toward a new enemy spawn.
@@ -8529,10 +8633,21 @@ def game_update():
                 # Shield absorbs the hit
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)
                 game.add_message("Shield blocked!")
+                # ── Attack Impact Sparks ── Even when blocked by a shield, the
+                # strike's directional sparks fire from the enemy toward the
+                # player — just tinted cyan to match the shield block aesthetic
+                # so the blocked hit still reads as a physical impact.
+                game._spawn_attack_sparks(enemy.position)
             else:
                 died = p.take_damage(effective_damage)
                 game.screen_shake = SCREEN_SHAKE_DAMAGE
                 game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
+                # ── Attack Impact Sparks ── A directional spark burst fires from
+                # the enemy toward the player along the attack direction — a
+                # visceral "claw strike" visual that makes melee hits feel
+                # impactful and readable, complementing the existing screen
+                # shake, omnidirectional damage particles, and damage arrow.
+                game._spawn_attack_sparks(enemy.position)
                 # Show damage direction indicator pointing toward the enemy
                 game._show_damage_indicator(enemy.position)
                 if effective_damage > enemy.damage:
@@ -8819,6 +8934,10 @@ def game_update():
                 # Crits get a golden flash; normal hits get warm white.
                 if is_crit:
                     game._spawn_impact_flash(enemy.position, col=color.rgba(255, 220, 80, 240))
+                    # ── Impact Shrapnel Cone ── Golden directional shrapnel bursts
+                    # perpendicular to the shot direction for crits, making the
+                    # critical hit feel like a powerful piercing strike.
+                    game._spawn_shrapnel(enemy.position, proj.direction, color.rgb(255, 220, 80))
                 else:
                     game._spawn_impact_flash(enemy.position)
                 if is_crit:
@@ -8847,6 +8966,10 @@ def game_update():
                         (eb + 0) // 2,
                     )
                     game._spawn_particles(enemy.position, blended, count=PARTICLE_HIT_COUNT)
+                    # ── Impact Shrapnel Cone ── Enemy-tinted directional shrapnel
+                    # bursts perpendicular to the shot direction, communicating
+                    # the shot direction through the spread of debris.
+                    game._spawn_shrapnel(enemy.position, proj.direction, blended)
                     game.screen_shake = max(game.screen_shake, 0.15)
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False))
                     # White ripple for normal hits
