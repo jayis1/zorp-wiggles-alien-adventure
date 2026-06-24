@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.23.0 — 3D!)
+## Features (v2.23.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -269,8 +269,8 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 ## Combo System
 
 Chain kills within 5.0 seconds to build combos! Each combo tier grants:
-- **+15% XP bonus** per tier (up to 10 tiers)
-- **+8% score bonus** per tier (up to 10 tiers)
+- **+15% XP bonus** per tier (up to 20 tiers)
+- **+8% score bonus** per tier (up to 20 tiers)
 - **+25% projectile damage** at combo x10+!
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
@@ -376,6 +376,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.23.1 — Extended Combo Rewards, Damage Number Pop-In & Shadow Scale Tracking
+- **Combo XP/score cap extended from 10 to 20**: The combo system's XP and score multipliers were capped at tier 10 (`min(combo_count, 10)`), meaning kills beyond a x10 combo gave no additional XP or score reward. This created a plateau where high-skill sustained chains (x11–x20) felt unrewarded despite the game already having mechanics that reward high combos (Combo Shield at x15, combo damage buff at x10+). The cap is now 20, so each kill from x10 to x20 grants an additional +15% XP and +8% score per tier — a x20 combo now yields +285% XP and +152% score (vs the old +135% XP and +72% score cap at x10). This makes maintaining long kill streaks significantly more rewarding and better aligns the XP/score system with the existing high-combo mechanics. The cap is extracted into a named `COMBO_MAX_TIER` constant for maintainability
+- **Damage number pop-in animation**: Floating damage numbers now pop in with a brief scale overshoot instead of appearing at full size instantly. Each number starts at 0.3x scale, ramps up to a 1.15x overshoot peak, then settles to 1.0x over 0.12 seconds — using an ease-out curve for the ramp-up and a linear settle for the recovery. This makes hit and kill feedback feel punchier and more satisfying, matching the polish standard of other visual effects in the game (collectible pop, level-up bounce, hit scale punch). The pop-in applies to all damage number types (normal hits, crits, kills, overkills, heals) and composes cleanly with the existing rise-and-fade animation
+- **Enemy ground shadow scale tracking**: Enemy ground shadows now scale proportionally with the enemy's current scale during hit scale punches, idle breathing, and attack windup telegraphs. Previously the shadow was a static disc that didn't react to the enemy growing or shrinking — a hit punch that enlarged the enemy by 25% left the shadow unchanged, creating a visual disconnect. The shadow now scales with the enemy's current scale ratio so it stays visually cohesive at all times, making combat feedback feel more grounded and polished
 
 ### v2.23.0 — Combo Shield, Dash Strike & Enemy Radar
 - **Combo Shield at x15 combo**: When your kill combo reaches x15 — a major milestone — Zorp gains a one-time golden Combo Shield that absorbs the next instance of damage entirely without reducing HP or resetting the combo. A pulsing golden ring appears around Zorp while the shield is charged, and the HUD power-up display shows "🛡 COMBO SHIELD". When the shield absorbs a hit, a golden particle burst erupts and the combo timer is refreshed, giving you a second chance to keep your streak alive. The shield must be re-earned by reaching x15 again after being consumed — it doesn't refresh at x20, x25, etc. This rewards high-skill sustained kill chains by protecting your investment in a long combo streak

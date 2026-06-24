@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.23.0"
+VERSION = "2.23.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -493,6 +493,7 @@ COMBO_TIMEOUT = 5.0        # seconds before combo resets (slightly more forgivin
 COMBO_XP_BONUS_PER_TIER = 0.15  # +15% XP per combo tier (up from 12% — rewards skillful chains)
 COMBO_SCORE_BONUS_PER_TIER = 0.08  # +8% score per combo tier (up from 6%)
 COMBO_DISPLAY_LIFETIME = 2.5
+COMBO_MAX_TIER = 20  # Combo XP/score multipliers scale up to tier 20 (was 10) — rewards high-skill sustained chains
 COMBO_BAR_REFRESH_FLASH_DURATION = 0.25  # How long the combo timer bar flashes green on each kill that extends the combo
 
 # ─── Weapon Upgrade (Spread Shot) ────────────────────────────────────────────
@@ -3603,11 +3604,27 @@ class EnemyProjectile(Entity):
         return self.lifetime > 0
 
 
+# ─── Damage Number Pop-In Animation ──────────────────────────────────────────
+# Damage numbers now pop in with a brief scale overshoot instead of appearing
+# at full size instantly — a subtle but satisfying improvement that makes hit
+# and kill feedback feel punchier. The pop-in runs over DMG_NUMBER_POPIN_DURATION
+# seconds: the number scales from 0.3x to 1.15x (overshoot) then settles to 1.0x,
+# matching the polish standard of other visual effects in the game.
+DMG_NUMBER_POPIN_DURATION = 0.12   # How long the pop-in animation lasts (seconds)
+DMG_NUMBER_POPIN_START_SCALE = 0.3 # Starting scale (small)
+DMG_NUMBER_POPIN_PEAK_SCALE = 1.15 # Peak overshoot scale
+DMG_NUMBER_POPIN_SETTLE_SCALE = 1.0  # Final settled scale
+
 class DamageNumber:
     """A floating damage number that rises from an enemy on hit and fades out.
 
     Uses a 3D billboard entity with a text overlay for visibility.
     Tracks its own lifetime and handles cleanup.
+
+    The number pops in with a brief scale overshoot on appearance —
+    starting at 0.3x scale, overshooting to 1.15x, and settling to 1.0x
+    over DMG_NUMBER_POPIN_DURATION seconds. This makes damage feedback
+    feel punchier and more satisfying instead of numbers appearing flat.
     """
 
     def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False):
@@ -3667,6 +3684,15 @@ class DamageNumber:
         self.is_overkill = is_overkill
         self.is_heal = is_heal
         self.alive = True
+        # ── Pop-In Animation ── The number scales in from small to an
+        # overshoot peak then settles to normal, making damage feedback
+        # feel punchier instead of appearing at full size instantly.
+        self.popin_timer = DMG_NUMBER_POPIN_DURATION
+        self._base_text_scale = DMG_NUMBER_SCALE * scale_factor * 0.7
+        self._base_bg_scale = 0.6 * scale_factor
+        # Start at the pop-in starting scale
+        self.text_ent.scale = self._base_text_scale * DMG_NUMBER_POPIN_START_SCALE
+        self.bg_dot.scale = self._base_bg_scale * DMG_NUMBER_POPIN_START_SCALE
 
     def update(self, dt):
         """Advance the damage number animation. Returns True when expired."""
@@ -3680,6 +3706,28 @@ class DamageNumber:
         # Simple projection to screen space using camera's view
         screen_pos = camera.screen_point(self.world_pos)
         self.text_ent.position = (screen_pos[0], screen_pos[1])
+        # ── Pop-In Scale Animation ── During the first DMG_NUMBER_POPIN_DURATION
+        # seconds, the number scales from DMG_NUMBER_POPIN_START_SCALE through an
+        # overshoot peak (DMG_NUMBER_POPIN_PEAK_SCALE) and settles to 1.0x. This
+        # uses a triangle wave (0→1→0) mapped to a scale interpolation: first half
+        # ramps from start to peak, second half eases from peak to settle. After
+        # the pop-in completes, the scale stays at 1.0x (base scale).
+        if self.popin_timer > 0:
+            self.popin_timer -= dt
+            if self.popin_timer < 0:
+                self.popin_timer = 0
+            popin_progress = 1.0 - (self.popin_timer / DMG_NUMBER_POPIN_DURATION)  # 0→1
+            if popin_progress < 0.5:
+                # Ramp up from start scale to peak overshoot
+                ramp_t = popin_progress / 0.5
+                # Ease-out: fast start, slows as it reaches peak
+                scale_mult = DMG_NUMBER_POPIN_START_SCALE + (DMG_NUMBER_POPIN_PEAK_SCALE - DMG_NUMBER_POPIN_START_SCALE) * (1.0 - (1.0 - ramp_t) ** 2)
+            else:
+                # Settle from peak to normal
+                settle_t = (popin_progress - 0.5) / 0.5
+                scale_mult = DMG_NUMBER_POPIN_PEAK_SCALE + (DMG_NUMBER_POPIN_SETTLE_SCALE - DMG_NUMBER_POPIN_PEAK_SCALE) * settle_t
+            self.text_ent.scale = self._base_text_scale * scale_mult
+            self.bg_dot.scale = self._base_bg_scale * scale_mult
         # Fade out — defensive: clamp alpha to prevent negative values
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
         # NOTE: r, g, b were previously read from text_ent.color but never used —
@@ -7469,8 +7517,8 @@ def game_update():
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
-                    combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
-                    combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                    combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                    combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                     xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                     p.gain_xp(xp_gain)
@@ -8562,8 +8610,8 @@ def game_update():
                                     game.combo_timer = COMBO_TIMEOUT
                                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
-                                    combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
-                                    combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                                    combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                                    combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                                     xp_gain = int((BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                                     p.gain_xp(xp_gain)
@@ -9095,6 +9143,14 @@ def game_update():
             if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
                 enemy.ground_shadow.x = enemy.x
                 enemy.ground_shadow.z = enemy.z
+                # ── Shadow Scale Tracking ── The shadow now scales with the
+                # enemy's current scale (which includes hit punch, idle breathing,
+                # and attack windup) so it stays visually cohesive instead of
+                # being a static disc while the enemy grows/shrinks above it.
+                # The shadow base size is original_scale * 2.0 (from __init__),
+                # and we scale it proportionally to the enemy's current scale ratio.
+                shadow_scale_ratio = max(0.01, enemy.scale_x / max(0.1, enemy.original_scale))
+                enemy.ground_shadow.scale = max(0.01, enemy.original_scale * 2.0 * shadow_scale_ratio)
             enemy.update_hp_bar()
 
     # ── Update Projectiles ──
@@ -9271,8 +9327,8 @@ def game_update():
                                 # AOE kills now grant XP and score (previously missing —
                                 # made Fireball Scroll's AOE kills unrewarded, making
                                 # the power-up less satisfying for multi-kills)
-                                combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
-                                combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                                combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                                combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                                 monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                                 aoe_xp_gain = int((BASE_KILL_XP + nearby_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                                 p.gain_xp(aoe_xp_gain)
@@ -9348,8 +9404,8 @@ def game_update():
                             game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
                             game._spawn_particles(p.position + Vec3(0, 1, 0),
                                                   color.rgb(255, 215, 50), count=15)
-                    combo_xp_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER
-                    combo_score_mult = 1.0 + (min(game.combo_count, 10) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                    combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                    combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     # Apply monolith XP multiplier buff
                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                     xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
@@ -9678,7 +9734,7 @@ def game_update():
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                     xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) *
-                                  (1.0 + (min(game.combo_count, 10) - 1) * COMBO_XP_BONUS_PER_TIER) *
+                                  (1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER) *
                                   (MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0))
                     p.gain_xp(xp_gain)
                     p.score += enemy.max_hp
