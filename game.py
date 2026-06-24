@@ -3078,11 +3078,14 @@ class AlienMonolith:
         self.cap.scale = pulse
 
         # Rotate ring
-        self.ring.rotation_y += 90 * time.dt if hasattr(self, 'ring') else 0
+        # BUG FIX: Removed unnecessary hasattr checks — self.ring and
+        # self.cooldown are always set in __init__, so the checks were dead
+        # code that added confusion and overhead.
+        self.ring.rotation_y += 90 * time.dt
 
         # If on cooldown, dim everything; otherwise, vibrant glow
         if self.cooldown > 0:
-            self.cooldown -= time.dt if hasattr(self, 'cooldown') else 0
+            self.cooldown -= time.dt
             # Dimmed state — gray and dormant
             dim_alpha = int(40 + 20 * math.sin(t * 2))
             self.cap.color = color.rgb(80, 60, 100)
@@ -4114,9 +4117,13 @@ class Game:
             if enemy.warning_ring.enabled:
                 destroy(enemy.warning_ring)
             enemy.warning_ring = None
-        # Clean up alert indicator if present
+        # Clean up alert "!" indicator if present
+        # BUG FIX: This was previously duplicated — the same alert_indicator
+        # cleanup appeared twice (lines 4117-4121 and 4128-4132). The second
+        # copy was dead code since the first already sets alert_indicator=None.
+        # Removed the duplicate to keep cleanup logic clean and maintainable.
         if hasattr(enemy, 'alert_indicator') and enemy.alert_indicator is not None:
-            if enemy.alert_indicator.enabled:
+            if getattr(enemy.alert_indicator, 'enabled', False):
                 destroy(enemy.alert_indicator)
             enemy.alert_indicator = None
         # Clean up Echo Wraith decoy clones if present
@@ -4125,11 +4132,6 @@ class Game:
                 if clone and hasattr(clone, 'enabled') and clone.enabled:
                     destroy(clone)
             enemy.echo_clone_entities.clear()
-        # Clean up alert "!" indicator if present
-        if hasattr(enemy, 'alert_indicator') and enemy.alert_indicator is not None:
-            if getattr(enemy.alert_indicator, 'enabled', False):
-                destroy(enemy.alert_indicator)
-            enemy.alert_indicator = None
         destroy(enemy.eye_l)
         destroy(enemy.eye_r)
         destroy(enemy.hp_bar_bg)
@@ -7983,7 +7985,9 @@ def game_update():
 
         # Skip AI updates for very distant enemies (performance)
         # Grace period: newly spawned enemies don't detect the player for ENEMY_SPAWN_GRACE_PERIOD seconds
-        spawn_age = game.t - enemy.spawn_time if hasattr(enemy, 'spawn_time') and enemy.spawn_time > 0 else 999
+        # BUG FIX: spawn_age was computed a second time here (first computation
+        # is at line ~7937 for the spawn fade-in). Reusing the same variable
+        # avoids redundant hasattr + arithmetic per enemy per frame.
         if dist_to_player < enemy.detect_range and spawn_age >= ENEMY_SPAWN_GRACE_PERIOD:
             # Alert flash: first time enemy detects the player
             if not enemy.alerted:
