@@ -2302,6 +2302,12 @@ class Enemy(Entity):
             amount: Damage points to subtract from HP.
             hit_direction: Optional direction vector for knockback (from projectile source).
         """
+        # BUG FIX: Defensive guard — if take_damage is called on an enemy that's
+        # already dying or dead, return False immediately. Without this, a second
+        # hit landing in the same frame (e.g. multi-projectile spread, AOE blast)
+        # could re-process the death: double XP, double loot, double combo.
+        if self.dying or not self.alive:
+            return False
         # Void Wisp: chance to teleport away when hit (dodge the damage)
         if self.is_void_wisp and self.wisp_teleport_cooldown <= 0 and self.hp > 0:
             if random.random() < VOID_WISP_TELEPORT_CHANCE:
@@ -6374,7 +6380,10 @@ class Game:
         """Update HUD elements each frame."""
         p = self.player
         # HP bar
-        hp_ratio = max(0, p.hp / p.max_hp)
+        # BUG FIX: Guard against max_hp == 0 to prevent ZeroDivisionError.
+        # All other division sites in the codebase guard with `if max_hp > 0 else 0`
+        # but this one was missing the check.
+        hp_ratio = max(0, p.hp / p.max_hp) if p.max_hp > 0 else 0
         self.hp_bar.scale_x = 0.4 * hp_ratio
         self.hp_bar.x = -0.55 - 0.2 * (1 - hp_ratio)
         # HP bar color gradient: green → yellow → red, with urgent pulse below 25%
@@ -8998,6 +9007,33 @@ def game_update():
                                     p.gain_xp(xp_gain)
                                     p.score += int(other_enemy.max_hp * combo_score_mult)
                                     game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True))
+                                    # BUG FIX: Friendly-fire kills were missing loot drops,
+                                    # death ring, and kill burst particles — every other kill
+                                    # path (projectile, dash, AOE, Pulse Wave) includes these.
+                                    # Without them, Void Bomber chain kills give no rewards
+                                    # beyond XP/score and no visual death feedback.
+                                    loot_range = ENEMY_LOOT_DROPS.get(other_enemy.name, (2, 4))
+                                    for _ in range(random.randint(loot_range[0], loot_range[1])):
+                                        lx = other_enemy.x + random.uniform(-2, 2)
+                                        lz = other_enemy.z + random.uniform(-2, 2)
+                                        lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
+                                        lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
+                                        if game._is_walkable(lx, lz):
+                                            c = Collectible(position=Vec3(lx, 1, lz))
+                                            game.collectibles.append(c)
+                                    game._spawn_particles(other_enemy.position, other_enemy.original_color, count=PARTICLE_KILL_COUNT)
+                                    game._spawn_kill_burst(other_enemy.position, other_enemy.original_color, enemy_max_hp=other_enemy.max_hp)
+                                    game.enemy_death_rings.append(EnemyDeathRing(
+                                        position=Vec3(other_enemy.x, 0, other_enemy.z),
+                                        col=other_enemy.original_color,
+                                        enemy_scale=other_enemy.original_scale,
+                                    ))
+                                    game.kill_feed.append((game.t, f"💥 {other_enemy.name}"))
+                                    # Boss slow-mo for friendly-fire boss kills
+                                    if other_enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                                        game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                                        game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                                        game.add_message("BOSS DOWN! SLOW-MO!")
                         # Kill the bomber
                         enemy.alive = False
                         enemy.dying = True
@@ -10162,7 +10198,12 @@ def game_update():
                                   (1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER) *
                                   (MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0))
                     p.gain_xp(xp_gain)
-                    p.score += enemy.max_hp
+                    # BUG FIX: Apply combo_score_mult to score — every other kill path
+                    # (projectile, dash, AOE, Void Bomber friendly-fire) multiplies score
+                    # by combo_score_mult, but Pulse Wave was awarding raw max_hp, making
+                    # Pulse Wave kills worth less score at high combo tiers.
+                    combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                    p.score += int(enemy.max_hp * combo_score_mult)
                     game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=True))
                     # Drop loot
                     loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
