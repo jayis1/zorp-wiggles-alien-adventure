@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.23.2"
+VERSION = "2.24.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -192,6 +192,21 @@ ENRAGE_SPEED_MULT = 1.35           # Speed multiplier while enraged
 ENRAGE_COLOR_MIX = 0.6              # How far to lerp toward red (0=own color, 1=full red)
 ENRAGE_PARTICLE_INTERVAL = 0.4     # Seconds between rage particle emissions
 ENRAGE_PARTICLE_COUNT = 3          # Particles per emission
+ENRAGE_AURA_ALPHA = 50            # Alpha of the persistent red aura while enraged
+ENRAGE_AURA_SCALE = 1.4           # Scale multiplier for the enrage aura sphere
+
+# ─── Execution Bonus ──────────────────────────────────────────────────────────
+# Killing an enemy that is in its enraged state (below 25% HP) grants bonus XP
+# — turning the enrage mechanic into a risk/reward system. The enemy fights
+# harder when cornered, but finishing it off while enraged rewards the player
+# for aggressive, decisive play. The bonus scales with the enemy's max HP so
+# tougher enemies (which are enraged longer and more dangerous) give a bigger
+# payoff. A golden "EXECUTION!" damage number and extra particles celebrate
+# the kill, making it feel like a skillful finish rather than just another kill.
+EXECUTION_XP_BONUS_BASE = 15       # Base bonus XP for executing an enraged enemy
+EXECUTION_XP_BONUS_PER_HP = 0.1   # Additional XP per point of enemy max HP
+EXECUTION_PARTICLE_COUNT = 12     # Gold particle burst on execution
+EXECUTION_SCREEN_SHAKE = 0.2      # Screen shake on execution
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -1162,6 +1177,8 @@ LEVEL_UP_MAGNET_FORCE = 40.0        # How fast collectibles are pulled toward pl
 # ─── Combo Milestone Fireworks ─────────────────────────────────────────────
 COMBO_MILESTONE_INTERVAL = 5        # Combo milestones: x5, x10, x15, etc.
 COMBO_MILESTONE_PARTICLES = 25      # Particle burst count at combo milestones
+COMBO_MILESTONE_XP_BASE = 20        # Base XP bonus per combo milestone
+COMBO_MILESTONE_XP_PER_TIER = 10    # Extra XP per milestone tier (x5=20, x10=30, x15=40...)
 
 # ─── Combo Shield ────────────────────────────────────────────────────────────
 # At combo x15 (a major milestone), the player gains a one-time "Combo Shield"
@@ -2209,6 +2226,20 @@ class Enemy(Entity):
             rotation_x=90,
         )
 
+        # ── Enrage Aura ── A persistent red aura sphere that becomes visible
+        # when the enemy enters its enraged state (below 25% HP). This makes
+        # enraged enemies instantly identifiable at a glance — you can see
+        # which enemies are in their dangerous "cornered" state without needing
+        # to check their HP bar. The aura is hidden by default and shown/hidden
+        # by the enrage logic in game_update.
+        self.enrage_aura = Entity(
+            model='sphere',
+            color=color.rgba(255, 30, 30, ENRAGE_AURA_ALPHA),
+            scale=ENRAGE_AURA_SCALE,
+            parent=self,
+            visible=False,
+        )
+
     def take_damage(self, amount, hit_direction=None):
         """Apply damage to the enemy. Returns True if killed.
 
@@ -2256,6 +2287,10 @@ class Enemy(Entity):
             self.alive = False
             self.dying = True
             self.death_timer = DEATH_ANIM_DURATION
+            # Hide the enrage aura when the enemy starts dying so it doesn't
+            # linger through the death animation
+            if hasattr(self, 'enrage_aura') and self.enrage_aura:
+                self.enrage_aura.visible = False
             return True
         return False
 
@@ -3672,7 +3707,7 @@ class DamageNumber:
     feel punchier and more satisfying instead of numbers appearing flat.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False):
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False):
         # Color: green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
         if is_heal:
             col = color.rgb(80, 255, 120)
@@ -3682,6 +3717,10 @@ class DamageNumber:
             col = color.rgb(255, 80, 0)
             text_str = f"OVERKILL {amount}!"
             scale_factor = 1.6
+        elif is_execution:
+            col = color.rgb(255, 200, 40)
+            text_str = f"⚡EXECUTE! +{amount} XP"
+            scale_factor = 1.5
         elif is_crit and not is_kill:
             col = CRIT_NUMBER_COLOR
             text_str = f"★{amount}"
@@ -3694,6 +3733,8 @@ class DamageNumber:
         # Scale: crits pop bigger than normal hits, kills pop biggest, overkills biggest
         if is_overkill:
             scale_factor = 1.6
+        elif is_execution:
+            scale_factor = 1.5
         elif is_kill:
             scale_factor = 1.4
         elif is_crit:
@@ -4328,6 +4369,11 @@ class Game:
         destroy(enemy.hp_bar)
         if hasattr(enemy, 'ground_shadow') and enemy.ground_shadow:
             destroy(enemy.ground_shadow)
+        # Clean up enrage aura if present
+        if hasattr(enemy, 'enrage_aura') and enemy.enrage_aura:
+            if hasattr(enemy.enrage_aura, 'enabled') and enemy.enrage_aura.enabled:
+                destroy(enemy.enrage_aura)
+            enemy.enrage_aura = None
 
     def _cleanup(self):
         """Clean up all game entities for a restart. Destroys terrain, enemies,
@@ -8538,11 +8584,26 @@ def game_update():
             # normal enemies under the same debuff.
             if not enemy.enraged and enemy.hp > 0 and enemy.hp <= enemy.max_hp * ENRAGE_HP_THRESHOLD:
                 enemy.enraged = True
+                # Show the persistent red enrage aura so players can identify
+                # enraged enemies at a glance
+                if hasattr(enemy, 'enrage_aura') and enemy.enrage_aura:
+                    enemy.enrage_aura.visible = True
                 # Brief red rage burst on enrage trigger
                 if dist_to_player < VISUAL_CULL_RANGE:
                     game._spawn_particles(enemy.position, color.rgb(255, 40, 40), count=8)
             if enemy.enraged:
                 speed_mult *= ENRAGE_SPEED_MULT
+                # Pulse the enrage aura for a living, threatening visual — the
+                # red aura sphere pulses in alpha and scale so enraged enemies
+                # are immediately identifiable and feel dangerous at a glance.
+                if hasattr(enemy, 'enrage_aura') and enemy.enrage_aura and enemy.enrage_aura.visible:
+                    aura_pulse = 0.5 + 0.5 * math.sin(game.t * 8.0 + id(enemy) % 100 * 0.1)
+                    enemy.enrage_aura.color = color.rgba(
+                        255, int(30 + 40 * aura_pulse), int(30 + 40 * aura_pulse),
+                        int(ENRAGE_AURA_ALPHA * (0.6 + 0.4 * aura_pulse))
+                    )
+                    aura_scale = ENRAGE_AURA_SCALE * (1.0 + 0.08 * aura_pulse)
+                    enemy.enrage_aura.scale = aura_scale
                 # Periodic red rage particles while enraged
                 if dist_to_player < VISUAL_CULL_RANGE:
                     enemy.enrage_particle_timer -= time.dt
@@ -9485,6 +9546,17 @@ def game_update():
                             game._spawn_particles(p.position + burst_offset, burst_color, count=1)
                         game.screen_shake = max(game.screen_shake, 0.4)
                         game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                        # ── Combo Milestone XP Reward ── Each combo milestone
+                        # (x5, x10, x15...) awards bonus XP that scales with the
+                        # milestone tier, making kill streak milestones more
+                        # rewarding beyond just the visual fireworks. x5 gives
+                        # 20 XP, x10 gives 30 XP, x15 gives 40 XP, etc.
+                        milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                        milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                        monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                        milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                        p.gain_xp(milestone_xp)
+                        game.add_message(f"Combo Milestone! +{milestone_xp} XP!")
                         # ── Combo Shield at x15 ── At the x15 milestone, grant the
                         # player a one-time combo shield that absorbs the next hit
                         # without resetting the combo. Only triggers exactly at 15
@@ -9508,6 +9580,19 @@ def game_update():
                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                         game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    # ── Execution Bonus ── If the enemy was in its enraged state
+                    # (below 25% HP) when killed, award bonus XP for finishing off
+                    # a cornered, more dangerous enemy. The bonus scales with the
+                    # enemy's max HP so tougher enemies (which are enraged longer
+                    # and more dangerous) give a bigger payoff. A golden
+                    # "⚡EXECUTE!" damage number celebrates the skillful finish.
+                    if getattr(enemy, 'enraged', False):
+                        exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                        xp_gain += exec_xp
+                        game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                        game._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                        game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                        game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     p.score += int(enemy.max_hp * combo_score_mult)
                     game.screen_shake = SCREEN_SHAKE_KILL

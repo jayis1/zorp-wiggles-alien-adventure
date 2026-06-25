@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.23.2 — 3D!)
+## Features (v2.24.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -199,6 +199,9 @@ python game.py
 - **Enemy projectile trails** — Spore Spitter projectiles now leave a fading orange trail as they fly, matching the player's projectile trail system for visual consistency. The trail makes incoming enemy fire much easier to track and dodge — you can see the arc of the shot and react accordingly
 - **Damage number anti-overlap jitter** — when multiple damage numbers spawn at the same position (rapid-fire, AOE, multi-kills), each gets a small random horizontal offset so they spread out instead of stacking on top of each other, making each number individually readable in intense combat
 - **Enemy death spin** — enemies now spin during their death animation with a randomized direction and accelerating speed, making kills feel more dynamic and chaotic instead of just shrinking in place. Group kills (AOE, Pulse Wave) don't look synchronized
+- **Execution Bonus** — killing an enemy that's in its enraged state (below 25% HP) grants **bonus XP** that scales with the enemy's max HP! A golden **⚡EXECUTE!** damage number and gold particle burst celebrate the skillful finish, making aggressive play rewarding — the enemy fights harder when cornered, but finishing it off while enraged pays off
+- **Enemy enrage aura** — enraged enemies (below 25% HP) now display a persistent **pulsing red aura sphere** around their body, making them instantly identifiable at a glance. The aura pulses in brightness and scale, so you can see which enemies are in their dangerous "cornered" state without needing to check their HP bar — a clear visual warning that the enemy is faster and more desperate
+- **Combo milestone XP rewards** — each combo milestone (x5, x10, x15...) now grants **bonus XP** that scales with the milestone tier (x5 = 20 XP, x10 = 30 XP, x15 = 40 XP...), complementing the existing fireworks particle burst. Kill streaks are now rewarding beyond just the visual celebration — you earn tangible XP for sustained skillful play
 
 ## The Self-Improving Game
 
@@ -279,6 +282,7 @@ Chain kills within 5.0 seconds to build combos! Each combo tier grants:
 - HUD display with escalating colors: yellow → orange → red
 - Combo counter scales up visually as it grows
 - **⚔+25% DMG** indicator appears on the combo HUD at x10+
+- **Combo milestone XP rewards** — at every x5 milestone, bonus XP is awarded (20 XP at x5, 30 XP at x10, 40 XP at x15...) on top of the normal combo multipliers!
 
 ## Critical Hits
 
@@ -380,6 +384,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.24.0 — Execution Bonus, Enrage Aura & Combo Milestone XP
+- **Execution Bonus**: Killing an enemy that's in its enraged state (below 25% HP) now grants bonus XP that scales with the enemy's max HP — turning the enrage mechanic into a risk/reward system. The enemy fights harder when cornered (35% faster, red color shift, rage particles), but finishing it off while enraged rewards the player for aggressive, decisive play. The bonus is 15 base XP + 0.1 XP per point of enemy max HP, all multiplied by the current combo and monolith XP multipliers. A golden "⚡EXECUTE!" damage number pops at the enemy with a gold particle burst and screen shake, making it feel like a skillful finish rather than just another kill. A Plasma Drake killed while enraged grants 50+ bonus XP — a significant reward for the risk of fighting a faster, desperate boss
+- **Enemy enrage aura**: Enraged enemies (below 25% HP) now display a persistent pulsing red aura sphere around their body, making them instantly identifiable at a glance. The aura pulses in alpha (brightness) and scale at 8 Hz with per-enemy phase variation so multiple enraged enemies don't pulse in sync. This gives players a clear visual warning that the enemy is in its dangerous "cornered" state — faster, more desperate, and about to die — without needing to check the HP bar. The aura is hidden when the enemy starts its death animation and is properly cleaned up on entity destruction
+- **Combo milestone XP rewards**: Each combo milestone (x5, x10, x15...) now awards bonus XP that scales with the milestone tier: x5 grants 20 XP, x10 grants 30 XP, x15 grants 40 XP, and so on. This complements the existing milestone fireworks (colorful particle burst + screen shake + announcement) with a tangible progression reward, making kill streaks feel rewarding beyond just the visual celebration. The XP is multiplied by the monolith Wisdom Aura buff if active, and a "Combo Milestone! +N XP!" message appears in the feed alongside the existing "COMBO xN MILESTONE!" announcement
 
 ### v2.23.2 — Particle LOD, Enemy Projectile Trails, Damage Number Jitter & Death Spin
 - **Particle distance LOD**: Particle bursts (hit sparks, kill explosions, collectible bursts) now automatically reduce their particle count based on distance from the player. Full particle count within 30 units, ramping down to 30% at 60+ units. Distant events are barely visible but previously cost the same render/update budget as nearby ones — now the particle budget is reserved for action you can actually see, improving performance in busy combat with many simultaneous events across the map
