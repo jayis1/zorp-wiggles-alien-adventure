@@ -9480,6 +9480,16 @@ def game_update():
                 enemy.pull_ring.z = enemy.z
                 # Float higher than normal enemies
                 enemy.y = 2 + math.sin(game.t * 2 + id(enemy) % 100) * 0.3
+            elif enemy.is_graviton and enemy.alive and not enemy.dying:
+                # BUG FIX: When the Graviton is beyond AI_CULL_RANGE, the pull
+                # AI is skipped for performance — but the pull_ring position and
+                # floating Y were also skipped, leaving the ring at a stale position
+                # and snapping the Graviton to ground level (Y=1) via the general
+                # enemy update below. Now we update the ring position and floating
+                # Y even when the Graviton is far away, so the visual stays correct.
+                enemy.pull_ring.x = enemy.x
+                enemy.pull_ring.z = enemy.z
+                enemy.y = 2 + math.sin(game.t * 2 + id(enemy) % 100) * 0.3
         else:
             # Wander
             enemy.wander_timer -= time.dt
