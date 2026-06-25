@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.26.0 — 3D!)
+## Features (v2.26.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -94,6 +94,9 @@ python game.py
 - **Biome-aware fog** — fog color and density smoothly transition as you walk between biomes
 - **Twinkling starfield** — stars pulse in brightness for an immersive alien sky
 - **Enemy knockback** — enemies get pushed back when hit by projectiles for satisfying combat feel
+- **Enemy attack forward lunge** — when enemies land a melee hit, they physically lunge forward toward you, making attacks feel dynamic and dodgeable instead of stationary swipes
+- **Biome-tinted spawn portals** — enemy spawn vortex discs are tinted to match the biome's ground color, making spawns feel like they're drawing energy from the environment (orange in lava, cyan in crystal, green in toxic bog)
+- **Magnetic pull wobble** — collectibles being magnetically pulled vibrate side-to-side perpendicular to the pull direction, making the magnetic attraction feel organic and energetic instead of a dead-straight line
 - **Elastic collectible pop** — items flash white and scale up with a bouncy overshoot before disappearing
 - **Player-level difficulty scaling** — newly spawned enemies gain HP and damage as you level up, keeping the challenge fresh
 - **Per-type enemy detection ranges** — Swarm Mites detect from further away (swarm behavior), others tuned for fairer encounters
@@ -395,6 +398,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.26.1 — Enemy Attack Lunge, Biome Spawn Portals & Magnetic Pull Wobble
+- **Enemy attack forward lunge**: When enemies land a melee attack, they now physically lunge forward toward the player a short distance instead of staying rooted in place. This makes melee combat feel far more dynamic — enemies commit to a direction when they strike, making attacks readable and dodgeable. The lunge distance scales inversely with enemy size: small fast enemies like Swarm Mites lunge further (up to ~2.3 units) while large enemies like Plasma Drakes barely move (~0.7 units), matching their weight class. Wall-sliding is handled so lunging enemies don't get stuck on obstacles. This single change makes the existing attack windup telegraph twice as useful — you can now see where the enemy is going to strike and dash out of the way, making melee dodging a real skill play
+- **Biome-tinted spawn portals**: Enemy spawn vortex discs are now tinted to match the biome's ground color where the enemy is materializing, creating a cohesive "drawing energy from the environment" visual. Previously every spawn portal was the same generic purple regardless of where you were — a portal in the lava biome looked identical to one in the crystal biome. Now a portal in the lava fields glows orange-red, in the crystal caves it shimmers cyan, in the toxic bog it pulses sickly green. The color is a 60/40 blend of the biome color and the original purple so it still reads as a dimensional rift but carries the environment's hue. This makes enemy spawns feel tied to the world and gives each biome a more distinct visual identity during combat
+- **Magnetic pull wobble**: Collectibles being magnetically pulled toward the player now wobble side-to-side perpendicular to the pull direction — like they're vibrating with magnetic attraction energy. The wobble amplitude scales with closeness: subtle at long range and becoming a satisfying visible "buzz" as the item nears the player. Each item uses its own random phase offset (already initialized per-collectible) so multiple items being pulled simultaneously don't wobble in sync, creating a natural organic effect. This makes the magnetic pull feel energetic and alive instead of items sliding toward you in a dead-straight robotic line
 
 ### v2.26.0 — World Edge Barrier, Alien Fireflies & Critical Hit Pierce
 - **World Edge Energy Barrier**: Glowing translucent purple wall segments now mark the world boundaries, giving the world a clear and attractive perimeter. Without this, the world just faded into the skybox with no visual boundary — players could run to the edge and feel "is this the end?" with no feedback. The barrier is a ring of 32 tall translucent quads (8 per side) that pulse gently in brightness at 2 Hz, creating a living alien energy field effect. The purple color matches the alien sky palette for visual cohesion. The barriers are properly cleaned up on restart

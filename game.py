@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.26.0"
+VERSION = "2.26.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -67,6 +67,19 @@ ENEMY_ALERT_INDICATOR_SCALE = 1.4      # Text scale (world-space billboard)
 ENEMY_ATTACK_WINDUP_TIME = 0.25      # Seconds before attack lands that the windup begins
 ENEMY_ATTACK_WINDUP_SQUASH = 0.15    # Max Y compression during windup (0.15 = squished to 85%)
 ENEMY_ATTACK_WINDUP_BRIGHTNESS = 0.5 # How far to lerp enemy color toward white during windup
+
+# ─── Enemy Attack Forward Lunge ──────────────────────────────────────────────
+# When an enemy lands a melee attack, it physically lunges forward a short
+# distance toward the player instead of staying in place. This makes melee
+# combat feel more dynamic — enemies commit to a direction when they strike,
+# making attacks readable and dodgeable. The lunge distance scales inversely
+# with enemy size so small enemies lunge further (fast attackers) while large
+# enemies barely move (heavy hitters). A lunge speed is applied over a brief
+# duration so the enemy slides forward smoothly rather than teleporting.
+ENEMY_ATTACK_LUNGE_DISTANCE = 1.5    # Base forward lunge distance (world units)
+ENEMY_ATTACK_LUNGE_DURATION = 0.15   # How long the lunge movement lasts (seconds)
+ENEMY_ATTACK_LUNGE_SIZE_BASE = 1.0   # Enemy scale at which lunge = base distance
+ENEMY_ATTACK_LUNGE_SIZE_MULT_MIN = 0.3  # Min lunge multiplier (for very large enemies)
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
 ENEMY_WANDER_SPEED_FACTOR = 0.20
@@ -377,6 +390,19 @@ COLLECT_PULL_TRAIL_INTERVAL = 0.045  # Seconds between trail dot spawns while pu
 COLLECT_PULL_TRAIL_LIFETIME = 0.20    # How long each trail dot lives
 COLLECT_PULL_TRAIL_START_SCALE = 0.20  # Initial scale of trail dot
 COLLECT_PULL_TRAIL_END_SCALE = 0.02    # Scale at end of trail dot life
+
+# ─── Collectible Pull Wobble ─────────────────────────────────────────────────
+# When a collectible is being magnetically pulled toward the player, it
+# wobbles side-to-side perpendicular to the pull direction — like it's
+# vibrating with attraction energy. This makes the magnetic pull feel organic
+# and energetic instead of items sliding in a dead-straight line. The wobble
+# amplitude scales with closeness so it's subtle at long range and more
+# pronounced as the item nears the player, creating a satisfying "buzzing"
+# visual at close range. The wobble uses a per-item random phase so multiple
+# items being pulled don't wobble in sync.
+COLLECT_PULL_WOBBLE_FREQ = 18.0        # How fast the wobble oscillates (Hz)
+COLLECT_PULL_WOBBLE_AMP_BASE = 0.15     # Base wobble amplitude (world units)
+COLLECT_PULL_WOBBLE_AMP_MAX = 0.4      # Max wobble amplitude at point-blank range
 
 # ─── Movement Dust ──────────────────────────────────────────────────────────
 MOVEMENT_DUST_INTERVAL = 0.12       # Seconds between dust puffs while moving
@@ -2812,18 +2838,38 @@ class SpawnPortalVortex(Entity):
     The disc fades in, spins with accelerating speed, then fades out when the
     enemy spawns. Uses a separate quad from the warning ring so the vortex can
     spin independently while the ring shrinks.
+
+    The vortex color is tinted to match the biome where the enemy is spawning,
+    creating a cohesive "drawing energy from the environment" visual — a portal
+    in the lava biome glows orange-red, in the crystal biome it shimmers cyan,
+    in the toxic bog it pulses sickly green. This makes spawns feel tied to the
+    world rather than using a generic out-of-place purple.
     """
 
-    def __init__(self, position):
+    def __init__(self, position, biome_color=None):
+        # Default to the original purple if no biome color provided
+        if biome_color is not None:
+            br, bg, bb = _c255_color(biome_color)
+            # Blend biome color with purple (60% biome, 40% purple) so the
+            # portal still reads as a dimensional rift but carries the
+            # environment's hue — cohesive but otherworldly.
+            vr = int(br * 0.6 + 180 * 0.4)
+            vg = int(bg * 0.6 + 40 * 0.4)
+            vb = int(bb * 0.6 + 200 * 0.4)
+        else:
+            vr, vg, vb = 180, 40, 200
         super().__init__(
             model='quad',
-            color=color.rgba(180, 40, 200, 0),
+            color=color.rgba(vr, vg, vb, 0),
             scale=2.5,
             position=position + Vec3(0, 0.08, 0),
             rotation_x=90,
         )
         self.lifetime = SPAWN_WARNING_DURATION
         self.max_lifetime = SPAWN_WARNING_DURATION
+        self._vortex_r = vr
+        self._vortex_g = vg
+        self._vortex_b = vb
 
     def update_vortex(self, dt):
         """Animate the vortex disc. Returns True when expired."""
@@ -2844,7 +2890,7 @@ class SpawnPortalVortex(Entity):
         # Pulse for energy feel
         pulse = 0.7 + 0.3 * math.sin(self.lifetime * 15)
         alpha = max(0, int(base_alpha * pulse))
-        self.color = color.rgba(180, 40, 200, alpha)
+        self.color = color.rgba(self._vortex_r, self._vortex_g, self._vortex_b, alpha)
         return False
 
 
@@ -9601,6 +9647,32 @@ def game_update():
                 if died:
                     game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
+            # ── Attack Forward Lunge ── On attack, the enemy physically lunges
+            # forward toward the player a short distance instead of staying in
+            # place. This makes melee combat feel more dynamic — enemies commit
+            # to a direction when they strike, making attacks readable and
+            # dodgeable. The lunge distance scales inversely with enemy size so
+            # small fast enemies lunge further while large enemies barely move.
+            lunge_dir = (p.position - enemy.position).normalized()
+            lunge_dir.y = 0
+            if lunge_dir.length() > 0.01:
+                lunge_dir = lunge_dir.normalized()
+                # Scale lunge distance inversely with enemy size
+                size_ratio = ENEMY_ATTACK_LUNGE_SIZE_BASE / max(0.3, enemy.original_scale)
+                lunge_mult = max(ENEMY_ATTACK_LUNGE_SIZE_MULT_MIN, min(1.5, size_ratio))
+                lunge_dist = ENEMY_ATTACK_LUNGE_DISTANCE * lunge_mult
+                lunge_step = lunge_dir * lunge_dist
+                # Try full lunge, wall-slide if blocked
+                lunge_pos = enemy.position + lunge_step
+                if game._is_walkable(lunge_pos.x, lunge_pos.z):
+                    enemy.x = lunge_pos.x
+                    enemy.z = lunge_pos.z
+                else:
+                    # Try sliding along each axis
+                    if game._is_walkable(enemy.x + lunge_step.x, enemy.z):
+                        enemy.x += lunge_step.x
+                    if game._is_walkable(enemy.x, enemy.z + lunge_step.z):
+                        enemy.z += lunge_step.z
             # ── Attack Lunge ── On attack, the enemy briefly stretches upward
             # (un-squashes from the windup) as it lunges forward, then the
             # normal bob/breath/scale-punch logic will settle it back. This
@@ -10768,6 +10840,17 @@ def game_update():
                 if dist < COLLECT_SNAP_RADIUS:
                     pull_strength *= COLLECT_SNAP_STRENGTH
                 col.position += pull_dir * pull_speed * pull_strength * time.dt
+                # ── Magnetic Pull Wobble ── While being pulled, the collectible
+                # wobbles side-to-side perpendicular to the pull direction — like
+                # it's vibrating with magnetic attraction energy. The wobble
+                # amplitude scales with closeness so it's subtle at long range and
+                # becomes a satisfying "buzz" as the item nears the player. Each
+                # item uses its own random phase (bob_offset, already initialized
+                # per-collectible) so multiple items don't wobble in sync.
+                perp_dir = Vec3(-pull_dir.z, 0, pull_dir.x)  # 90° perpendicular
+                wobble_amp = COLLECT_PULL_WOBBLE_AMP_BASE + (COLLECT_PULL_WOBBLE_AMP_MAX - COLLECT_PULL_WOBBLE_AMP_BASE) * closeness
+                wobble_offset = perp_dir * math.sin(game.t * COLLECT_PULL_WOBBLE_FREQ + col.bob_offset) * wobble_amp * time.dt * 10
+                col.position += wobble_offset
                 # Spin faster as pulled — proportional to closeness
                 col.rotation_y += 200 * closeness * time.dt
                 # Visual feedback: items scale up as they approach the player for satisfying snap
@@ -11187,10 +11270,14 @@ def game_update():
                 warning.spawn_x = ex
                 warning.spawn_z = ez
                 game.spawn_warnings.append(warning)
-                # ── Spawn Portal Vortex ── A spinning purple disc appears beneath
-                # the warning ring, creating a dimensional portal effect that
-                # makes enemy spawns feel more dramatic and otherworldly.
-                vortex = SpawnPortalVortex(position=Vec3(ex, 0, ez))
+                # ── Spawn Portal Vortex ── A spinning disc appears beneath
+                # the warning ring, tinted to match the biome's ground color
+                # so the portal feels like it's drawing energy from the
+                # environment — orange in lava, cyan in crystal, green in
+                # toxic bog, etc. Creates a cohesive world-tied spawn visual.
+                spawn_biome = game._get_biome_at(ex, ez)
+                spawn_biome_color = BIOME_COLORS.get(spawn_biome, C_GRASS)
+                vortex = SpawnPortalVortex(position=Vec3(ex, 0, ez), biome_color=spawn_biome_color)
                 game.spawn_vortices.append(vortex)
 
     # ── Update Spawn Warnings & Materialize Enemies ──
