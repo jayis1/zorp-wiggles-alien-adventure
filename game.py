@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.24.1"
+VERSION = "2.25.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1487,6 +1487,45 @@ PROJ_SHRAPNEL_LIFETIME = 0.25          # Shrapnel particle lifetime (seconds)
 # missions without needing to open the TAB panel. Only fires on actual progress
 # changes (not every frame), keeping the message feed clean.
 MISSION_PROGRESS_NOTIFY_DURATION = 2.0  # How long the progress message is relevant
+
+# ─── Biome Entry Banner ────────────────────────────────────────────────────────
+# When the player crosses into a new biome, a large animated banner slides in
+# from the top of the screen showing the biome name, then slides back out after
+# a few seconds. A biome-colored screen flash accompanies the banner for
+# immediate sensory feedback that the environment has changed. This makes
+# exploration feel rewarding — you get a clear, dramatic announcement that
+# you've entered a new area instead of only noticing the subtle ground color
+# shift and biome indicator text change.
+BIOME_BANNER_DURATION = 2.5             # Total time the banner stays visible (seconds)
+BIOME_BANNER_SLIDE_SPEED = 8.0          # How fast the banner slides in/out
+BIOME_BANNER_HOLD_TIME = 1.8            # Time the banner stays at full opacity before sliding out
+BIOME_BANNER_SCALE = 2.8               # Text scale of the biome banner
+BIOME_BANNER_FLASH_DURATION = 0.5       # How long the biome-colored screen flash lasts
+BIOME_BANNER_FLASH_MAX_ALPHA = 50       # Peak alpha of the biome entry flash
+
+# ─── Boss Spawn Warning ───────────────────────────────────────────────────────
+# When a boss-tier enemy (Plasma Drake) materializes from a spawn warning, a
+# dramatic full-screen warning flash and "⚠ BOSS INCOMING!" announcement
+# appears, giving the player a clear heads-up that a major threat has entered
+# the world. This makes boss encounters feel like significant events instead
+# of just another enemy spawn — the player can immediately prepare, reposition,
+# or prioritize the boss. The screen flashes red and the announcement text
+# pulses with urgency.
+BOSS_SPAWN_WARNING_DURATION = 2.0       # How long the boss warning announcement stays
+BOSS_SPAWN_WARNING_SCALE = 3.5          # Scale of the boss warning text
+BOSS_SPAWN_FLASH_DURATION = 0.6         # How long the red screen flash lasts
+BOSS_SPAWN_FLASH_MAX_ALPHA = 80         # Peak alpha of the boss spawn flash
+BOSS_SPAWN_SCREEN_SHAKE = 0.4           # Screen shake intensity on boss spawn
+
+# ─── HP Bar Segment Tick Marks ────────────────────────────────────────────────
+# Subtle vertical tick marks on the HP bar at 25%, 50%, and 75% positions,
+# giving the player a quick visual gauge for reading their health at a glance
+# without needing to parse the exact number. The ticks are thin dark lines
+# that sit on top of the HP bar fill, visible at all times — like the segment
+# markers on a fuel gauge. Makes it easier to judge "am I at half health?"
+# during intense combat when you don't have time to read the HP text.
+HP_BAR_TICK_COLOR = color.rgba(40, 40, 40, 160)  # Dark tick mark color
+HP_BAR_TICK_WIDTH = 0.003                        # Width of each tick mark (UI units)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -4043,6 +4082,24 @@ class Game:
         self._vacuum_was_on_cooldown = False
         self.vacuum_ready_flash_timer = 0.0
 
+        # ── Biome Entry Banner ── Tracks the current biome entry banner
+        # animation state. When the player crosses into a new biome, the
+        # banner text is set and the timer counts down; _update_hud handles
+        # the slide-in/hold/slide-out animation. The flash overlay provides
+        # a biome-colored screen flash on entry.
+        self.biome_banner_timer = 0.0
+        self.biome_banner_text = ''
+        self.biome_banner_color = (255, 255, 255)
+        self.biome_banner_flash_timer = 0.0
+        self.biome_banner_flash_color = (255, 255, 255)
+        self._prev_biome = 'grass'  # Track previous biome for change detection
+
+        # ── Boss Spawn Warning ── When a boss-tier enemy materializes, a
+        # dramatic warning announcement and red screen flash alert the player.
+        # The announcement text pulses and fades over the warning duration.
+        self.boss_spawn_warning_timer = 0.0
+        self.boss_spawn_flash_timer = 0.0
+
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
         self.achievement_popups = []  # list of (unlock_time, achievement) for display
@@ -4641,7 +4698,9 @@ class Game:
                       'compass_arrow',
                       'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
                       'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash',
-                      'radar_bg'):
+                      'radar_bg',
+                      'biome_banner_text_ent', 'biome_banner_flash',
+                      'boss_spawn_warning_text', 'boss_spawn_flash'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -4649,6 +4708,11 @@ class Game:
         for dot in self.radar_dots:
             if dot and hasattr(dot, 'enabled'):
                 destroy(dot)
+        # Destroy HP bar tick marks
+        for tick in getattr(self, 'hp_bar_ticks', []):
+            if tick and hasattr(tick, 'enabled'):
+                destroy(tick)
+        self.hp_bar_ticks = []
         # Destroy damage direction arrows
         for arrow_ent in self.dmg_arrow_entities:
             if arrow_ent and hasattr(arrow_ent, 'enabled'):
@@ -5633,6 +5697,66 @@ class Game:
             color=color.rgba(255, 200, 60, 0), origin=(0, 0), visible=False,
         )
         self.compass_alpha = 0.0  # Current alpha level for smooth fade
+
+        # ── Biome Entry Banner ── Large animated text that slides in from
+        # the top of the screen when the player enters a new biome, showing
+        # the biome name in the biome's color. Slides out after a hold period.
+        # Positioned at the top-center of the screen, above the boss HP bar.
+        self.biome_banner_text_ent = Text(
+            text='', position=(0, 0.35), origin=(0, 0),
+            scale=BIOME_BANNER_SCALE, color=color.rgba(255, 255, 255, 0),
+            visible=False,
+        )
+        # Biome entry flash overlay — biome-colored screen flash on entry
+        self.biome_banner_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 255, 255, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.6,
+        )
+
+        # ── Boss Spawn Warning ── Dramatic announcement text that appears
+        # when a boss-tier enemy (Plasma Drake) spawns into the world.
+        # Pulses with urgency and fades out over the warning duration.
+        self.boss_spawn_warning_text = Text(
+            text='', position=(0, 0.0), origin=(0, 0),
+            scale=BOSS_SPAWN_WARNING_SCALE,
+            color=color.rgba(255, 50, 50, 0),
+            visible=False,
+        )
+        # Boss spawn red screen flash overlay
+        self.boss_spawn_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 0, 0, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.7,  # Above other overlays for maximum visibility
+        )
+
+        # ── HP Bar Segment Tick Marks ── Thin dark vertical lines at 25%,
+        # 50%, and 75% positions on the HP bar, giving the player a quick
+        # visual gauge for reading health at a glance. Positioned relative
+        # to the HP bar (which spans from x=-0.75 to x=-0.35, width 0.4).
+        # The HP bar origin is at the left edge (-0.55 with origin=(-0.5,0)),
+        # so the bar spans from -0.75 to -0.35.
+        hp_bar_left = -0.75   # Left edge of HP bar
+        hp_bar_width = 0.4    # Total HP bar width
+        hp_tick_positions = [0.25, 0.50, 0.75]  # Fractional positions
+        self.hp_bar_ticks = []
+        for frac in hp_tick_positions:
+            tick_x = hp_bar_left + hp_bar_width * frac
+            tick = Entity(
+                parent=camera.ui,
+                model='quad',
+                color=HP_BAR_TICK_COLOR,
+                scale=(HP_BAR_TICK_WIDTH, 0.03),  # Thin, full bar height
+                position=(tick_x, 0.46),
+                z=-0.02,  # On top of the HP bar fill
+            )
+            self.hp_bar_ticks.append(tick)
 
     def _build_minimap(self):
         """Create a minimap with terrain-color texture and enemy dot tracking.
@@ -7149,6 +7273,82 @@ class Game:
                 self.compass_arrow.color = color.rgba(255, 200, 60, int(200 * self.compass_alpha))
             else:
                 self.compass_arrow.visible = False
+
+        # ── Biome Entry Banner ── Animate the slide-in/hold/slide-out
+        # banner when the player enters a new biome. The banner text slides
+        # down from above the screen, holds at center-top, then slides back
+        # up. The biome-colored screen flash decays smoothly alongside.
+        if self.biome_banner_timer > 0:
+            self.biome_banner_timer -= time.dt
+            elapsed = BIOME_BANNER_DURATION - self.biome_banner_timer
+            self.biome_banner_text_ent.visible = True
+            self.biome_banner_text_ent.text = self.biome_banner_text
+            br, bg, bb = self.biome_banner_color
+            # Three-phase animation: slide-in, hold, slide-out
+            if elapsed < (BIOME_BANNER_DURATION - BIOME_BANNER_HOLD_TIME):
+                # Slide-in phase: slide from y=0.55 down to y=0.35
+                slide_phase = elapsed / (BIOME_BANNER_DURATION - BIOME_BANNER_HOLD_TIME)
+                slide_y = lerp(0.55, 0.35, min(1.0, slide_phase * BIOME_BANNER_SLIDE_SPEED))
+                self.biome_banner_text_ent.y = slide_y
+                alpha = int(255 * min(1.0, slide_phase * BIOME_BANNER_SLIDE_SPEED))
+            elif self.biome_banner_timer > 0.5:
+                # Hold phase: stay at full opacity
+                self.biome_banner_text_ent.y = 0.35
+                alpha = 255
+            else:
+                # Slide-out phase: slide back up and fade
+                slide_phase = 1.0 - (self.biome_banner_timer / 0.5)
+                self.biome_banner_text_ent.y = lerp(0.35, 0.55, slide_phase)
+                alpha = int(255 * (1.0 - slide_phase))
+            self.biome_banner_text_ent.color = color.rgba(br, bg, bb, max(0, alpha))
+        else:
+            self.biome_banner_text_ent.visible = False
+
+        # Biome entry flash — biome-colored screen flash that decays
+        if self.biome_banner_flash_timer > 0:
+            self.biome_banner_flash_timer -= time.dt
+            flash_ratio = max(0, self.biome_banner_flash_timer / BIOME_BANNER_FLASH_DURATION)
+            flash_alpha = int(BIOME_BANNER_FLASH_MAX_ALPHA * flash_ratio)
+            fr, fg, fb = self.biome_banner_flash_color
+            self.biome_banner_flash.color = color.rgba(fr, fg, fb, flash_alpha)
+        else:
+            self.biome_banner_flash.color = color.rgba(255, 255, 255, 0)
+
+        # ── Boss Spawn Warning ── Dramatic announcement that pulses and
+        # fades when a boss-tier enemy spawns into the world. The text
+        # pulses in scale and the red screen flash decays smoothly.
+        if self.boss_spawn_warning_timer > 0:
+            self.boss_spawn_warning_timer -= time.dt
+            self.boss_spawn_warning_text.visible = True
+            self.boss_spawn_warning_text.text = '⚠ BOSS INCOMING!'
+            # Pulse the scale for urgency
+            pulse = 0.5 + 0.5 * math.sin(self.t * 10)
+            warning_progress = 1.0 - (self.boss_spawn_warning_timer / BOSS_SPAWN_WARNING_DURATION)
+            # Pop in at start, hold, then fade out at end
+            if warning_progress < 0.15:
+                pop_t = warning_progress / 0.15
+                scale = BOSS_SPAWN_WARNING_SCALE * (0.5 + 0.5 * pop_t)
+                alpha = int(255 * pop_t)
+            elif warning_progress < 0.75:
+                scale = BOSS_SPAWN_WARNING_SCALE * (1.0 + 0.08 * pulse)
+                alpha = 255
+            else:
+                fade_t = (warning_progress - 0.75) / 0.25
+                scale = BOSS_SPAWN_WARNING_SCALE * (1.0 - fade_t * 0.2)
+                alpha = int(255 * (1.0 - fade_t))
+            self.boss_spawn_warning_text.scale = scale
+            self.boss_spawn_warning_text.color = color.rgba(255, 50, 50, max(0, alpha))
+        else:
+            self.boss_spawn_warning_text.visible = False
+
+        # Boss spawn red screen flash — decays smoothly
+        if self.boss_spawn_flash_timer > 0:
+            self.boss_spawn_flash_timer -= time.dt
+            flash_ratio = max(0, self.boss_spawn_flash_timer / BOSS_SPAWN_FLASH_DURATION)
+            flash_alpha = int(BOSS_SPAWN_FLASH_MAX_ALPHA * flash_ratio)
+            self.boss_spawn_flash.color = color.rgba(255, 0, 0, flash_alpha)
+        else:
+            self.boss_spawn_flash.color = color.rgba(255, 0, 0, 0)
 
     def _update_missions(self):
         """Check and update mission progress for all active missions.
@@ -10388,6 +10588,32 @@ def game_update():
     current_biome = game._get_biome_at(p.x, p.z)
     if current_biome != game.current_biome:
         game.current_biome = current_biome
+        # ── Biome Entry Banner ── Trigger the banner animation and
+        # biome-colored screen flash when the player crosses into a new
+        # biome. The banner shows the biome name in the biome's color,
+        # making exploration feel rewarding with a clear dramatic
+        # announcement that the environment has changed.
+        if current_biome != game._prev_biome:
+            biome_names = {
+                'grass': 'Grasslands', 'desert': 'Desert', 'water': 'Ocean',
+                'lava': 'Lava Fields', 'forest': 'Forest', 'crystal': 'Crystal Caves',
+                'snow': 'Tundra', 'swamp': 'Swamp', 'mushroom': 'Mushroom Forest',
+                'floating_islands': 'Floating Islands', 'toxic_bog': 'Toxic Bog',
+            }
+            biome_display_name = biome_names.get(current_biome, current_biome.title())
+            biome_col = BIOME_COLORS.get(current_biome, C_GRASS)
+            bcr, bcg, bcb = _c255_color(biome_col)
+            # Brighten the color for readability
+            banner_r = min(255, bcr + 80)
+            banner_g = min(255, bcg + 80)
+            banner_b = min(255, bcb + 80)
+            game.biome_banner_text = f'~ {biome_display_name} ~'
+            game.biome_banner_color = (banner_r, banner_g, banner_b)
+            game.biome_banner_timer = BIOME_BANNER_DURATION
+            # Biome-colored screen flash
+            game.biome_banner_flash_color = (bcr, bcg, bcb)
+            game.biome_banner_flash_timer = BIOME_BANNER_FLASH_DURATION
+            game._prev_biome = current_biome
 
     # ── Biome-Aware Fog (DISABLED) ──
     # Ursina's fog shader expects 0-1 normalized colors but color.rgb() returns
@@ -10460,6 +10686,17 @@ def game_update():
             game._scale_enemy_to_player_level(e)
             e.spawn_time = game.t  # Track spawn time for grace period
             game.enemies.append(e)
+            # ── Boss Spawn Warning ── When a boss-tier enemy (Plasma Drake)
+            # materializes, trigger a dramatic full-screen warning so the
+            # player immediately knows a major threat has entered the world.
+            # The warning includes a red screen flash, pulsing announcement
+            # text, and screen shake — making boss spawns feel like
+            # significant events instead of just another enemy appearing.
+            if enemy_type == 'Plasma Drake':
+                game.boss_spawn_warning_timer = BOSS_SPAWN_WARNING_DURATION
+                game.boss_spawn_flash_timer = BOSS_SPAWN_FLASH_DURATION
+                game.screen_shake = max(game.screen_shake, BOSS_SPAWN_SCREEN_SHAKE)
+                game.add_message("⚠ A Plasma Drake has appeared!")
             # Spawn flash particles at the materialization point
             game._spawn_particles(Vec3(ex, 1, ez), color.rgb(255, 100, 100), count=6)
             # ── Materialization Burst ── A vertical column of particles shoots
