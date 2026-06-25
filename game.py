@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.25.1"
+VERSION = "2.26.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1545,6 +1545,53 @@ BOSS_SPAWN_SCREEN_SHAKE = 0.4           # Screen shake intensity on boss spawn
 # during intense combat when you don't have time to read the HP text.
 HP_BAR_TICK_COLOR = color.rgba(40, 40, 40, 160)  # Dark tick mark color
 HP_BAR_TICK_WIDTH = 0.003                        # Width of each tick mark (UI units)
+
+# ─── World Edge Energy Barrier ────────────────────────────────────────────────
+# Glowing translucent wall segments at the world boundaries so players can
+# clearly see where the playable area ends. Without this, the world just
+# fades into the skybox with no visual boundary — players can run to the
+# edge and feel "is this the end?" with no feedback. The barrier is a ring
+# of tall translucent quads that pulse gently in an alien energy color,
+# giving the world a clear, attractive perimeter.
+WORLD_EDGE_BARRIER_ALPHA = 40        # Base alpha of barrier wall quads
+WORLD_EDGE_BARRIER_HEIGHT = 25       # Height of barrier wall quads (world units)
+WORLD_EDGE_PULSE_SPEED = 2.0         # How fast the barrier pulses in brightness
+WORLD_EDGE_PULSE_ALPHA_AMPLITUDE = 20  # Alpha variation during pulse (±)
+WORLD_EDGE_COLOR = color.rgb(100, 60, 200)  # Purple alien energy color
+
+# ─── Ambient Alien Fireflies ──────────────────────────────────────────────────
+# Small harmless glowing creatures that drift through the world, adding life
+# and atmosphere to the alien landscape. They bob gently, change direction
+# periodically, and emit a soft pulsing glow — making the world feel alive
+# even when no enemies or collectibles are nearby. Fireflies are purely
+# decorative (no gameplay interaction) and use cheap billboard quads.
+FIREFLY_COUNT = 30                   # Number of fireflies in the world
+FIREFLY_GLOW_RADIUS = 60             # Max distance from player to render fireflies
+FIREFLY_SPEED = 2.5                  # Drift speed (world units/sec)
+FIREFLY_DIR_CHANGE_MIN = 3.0         # Min seconds before direction change
+FIREFLY_DIR_CHANGE_MAX = 7.0         # Max seconds before direction change
+FIREFLY_BOB_SPEED = 4.0              # How fast fireflies bob up and down
+FIREFLY_BOB_AMPLITUDE = 0.8          # Height of bob (world units)
+FIREFLY_BASE_HEIGHT = 3.0            # Average hover height above ground
+FIREFLY_PULSE_SPEED = 3.0            # How fast the glow pulses
+FIREFLY_COLORS = [
+    color.rgb(150, 255, 200),   # Mint green
+    color.rgb(200, 180, 255),   # Soft lavender
+    color.rgb(255, 230, 150),   # Warm gold
+    color.rgb(180, 220, 255),   # Ice blue
+    color.rgb(255, 200, 220),   # Pink
+]
+
+# ─── Critical Hit Projectile Pierce ───────────────────────────────────────────
+# Critical hits have a chance to pierce through the struck enemy and continue
+# flying, potentially hitting enemies behind it. This rewards precision aim —
+# lining up enemies for a piercing crit is a high-skill play that can hit
+# multiple enemies with a single shot. The pierced enemy still takes full
+# damage; the projectile just doesn't get destroyed on crit hits. A visual
+# gold trail effect marks pierced projectiles so the player can see the
+# shot passing through.
+CRIT_PIERCE_CHANCE = 0.40            # 40% chance for a crit to pierce
+CRIT_PIERCE_MAX_HITS = 3             # Max enemies a single piercing shot can hit
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -3701,6 +3748,14 @@ class Projectile(Entity):
         # Trail spawning timer
         self.trail_timer = 0.0
 
+        # ── Critical Hit Pierce ── When a crit triggers a pierce, this set
+        # tracks which enemies the projectile has already passed through so
+        # it doesn't hit the same enemy twice. is_piercing is set to True
+        # by the collision code when a crit pierce is triggered. The aura
+        # turns gold to visually mark the piercing shot.
+        self._pierced_enemies = set()
+        self.is_piercing = False
+
     def move(self, dt, combo_count=0):
         """Move the projectile forward. Returns False when lifetime expires.
 
@@ -4353,6 +4408,68 @@ class Game:
         # Weather particles (rain, snow, embers)
         self._init_weather()
 
+        # ── World Edge Energy Barrier ── Glowing translucent wall segments
+        # at the world boundaries so players can see where the playable area
+        # ends. The barrier is a ring of tall translucent quads that pulse
+        # gently in an alien purple energy color, giving the world a clear,
+        # attractive perimeter instead of just fading into the skybox.
+        self.world_edge_barriers = []
+        world_span = WORLD_SIZE * TILE_SCALE
+        barrier_y = WORLD_EDGE_BARRIER_HEIGHT / 2
+        # North and South edges (run along X axis)
+        for edge_z in [0, world_span]:
+            for seg in range(8):
+                seg_width = world_span / 8
+                seg_x = seg_width / 2 + seg * seg_width
+                barrier = Entity(
+                    model='quad',
+                    color=color.rgba(100, 60, 200, WORLD_EDGE_BARRIER_ALPHA),
+                    scale=(seg_width, WORLD_EDGE_BARRIER_HEIGHT),
+                    position=(seg_x, barrier_y, edge_z),
+                    billboard=False,
+                )
+                self.world_edge_barriers.append(barrier)
+        # East and West edges (run along Z axis)
+        for edge_x in [0, world_span]:
+            for seg in range(8):
+                seg_width = world_span / 8
+                seg_z = seg_width / 2 + seg * seg_width
+                barrier = Entity(
+                    model='quad',
+                    color=color.rgba(100, 60, 200, WORLD_EDGE_BARRIER_ALPHA),
+                    scale=(WORLD_EDGE_BARRIER_HEIGHT, seg_width),
+                    position=(edge_x, barrier_y, seg_z),
+                    billboard=False,
+                )
+                self.world_edge_barriers.append(barrier)
+
+        # ── Ambient Alien Fireflies ── Small harmless glowing creatures that
+        # drift through the world, adding life and atmosphere. Each firefly
+        # is a tiny billboard quad with a random color from the palette, a
+        # random drift direction, and a random bob/pulse phase. They wander
+        # within the world bounds and are only visible when near the player.
+        self.fireflies = []
+        for _ in range(FIREFLY_COUNT):
+            fx = random.uniform(10, world_span - 10)
+            fz = random.uniform(10, world_span - 10)
+            fy = FIREFLY_BASE_HEIGHT + random.uniform(-1, 1)
+            firefly_color = random.choice(FIREFLY_COLORS)
+            ff = Entity(
+                model='quad',
+                color=firefly_color,
+                scale=0.25,
+                position=(fx, fy, fz),
+                billboard=True,
+            )
+            ff._drift_dir = Vec3(
+                random.uniform(-1, 1), 0, random.uniform(-1, 1)
+            ).normalized()
+            ff._dir_timer = random.uniform(FIREFLY_DIR_CHANGE_MIN, FIREFLY_DIR_CHANGE_MAX)
+            ff._bob_phase = random.uniform(0, math.pi * 2)
+            ff._pulse_phase = random.uniform(0, math.pi * 2)
+            ff._base_color = firefly_color
+            self.fireflies.append(ff)
+
         # HUD
         self._create_hud()
 
@@ -4840,6 +4957,20 @@ class Game:
                 if sq and hasattr(sq, 'enabled') and sq.enabled:
                     destroy(sq)
             self.sky_quads.clear()
+
+        # Destroy world edge energy barriers
+        if hasattr(self, 'world_edge_barriers'):
+            for barrier in self.world_edge_barriers:
+                if barrier and hasattr(barrier, 'enabled') and barrier.enabled:
+                    destroy(barrier)
+            self.world_edge_barriers.clear()
+
+        # Destroy ambient fireflies
+        if hasattr(self, 'fireflies'):
+            for ff in self.fireflies:
+                if ff and hasattr(ff, 'enabled') and ff.enabled:
+                    destroy(ff)
+            self.fireflies.clear()
 
     def _build_terrain(self):
         """Build the 3D terrain from the world grid with height variation per biome.
@@ -9867,6 +9998,184 @@ def game_update():
                     game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=20)
                     game.screen_shake = max(game.screen_shake, 0.3)
                     game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(255, 100, 0, 200)))
+                # ── Critical Hit Pierce ── Critical hits have a chance to
+                # pierce through the enemy and continue flying, potentially
+                # hitting enemies behind it. This rewards precision aim —
+                # lining up enemies for a piercing crit can hit multiple
+                # enemies with a single shot. The projectile is NOT destroyed
+                # on a piercing crit; instead it's marked as piercing, the
+                # enemy is added to the pierced set (so it won't be hit again),
+                # and the projectile's aura turns gold to visually mark the
+                # piercing shot. The projectile continues until it hits a
+                # non-crit, reaches max pierce hits, or expires naturally.
+                if is_crit and not proj.is_piercing and random.random() < CRIT_PIERCE_CHANCE:
+                    # Trigger pierce! Don't destroy the projectile
+                    proj.is_piercing = True
+                    proj._pierced_enemies.add(id(enemy))
+                    # Turn the aura gold to visually mark the piercing shot
+                    proj.aura.color = color.rgba(255, 220, 80, 100)
+                    proj.color = color.rgb(255, 220, 80)
+                    game.add_message("⚡ PIERCE!")
+                    # Small gold sparkle burst to mark the pierce activation
+                    game._spawn_particles(enemy.position, color.rgb(255, 220, 80), count=4)
+                    # Don't destroy — let the projectile continue
+                    # Still handle the kill if the enemy died
+                    if killed:
+                        # Handle kill without destroying the projectile
+                        if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                            game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                            game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                            game.add_message("BOSS DOWN! SLOW-MO!")
+                        overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                        is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
+                        p.add_kill(enemy.name)
+                        game.total_kills += 1
+                        game._register_kill()
+                        game.kill_flash_timer = KILL_FLASH_DURATION
+                        game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                        game.combo_count += 1
+                        game.max_combo = max(game.max_combo, game.combo_count)
+                        game.combo_timer = COMBO_TIMEOUT
+                        game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                        game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                        if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                            milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                               color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                            for _ in range(COMBO_MILESTONE_PARTICLES):
+                                burst_color = random.choice(milestone_colors)
+                                burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                                game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                            game.screen_shake = max(game.screen_shake, 0.4)
+                            game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                            milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                            milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                            monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                            milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                            p.gain_xp(milestone_xp)
+                        if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                            p.combo_shield_active = True
+                            game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                            game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
+                        combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                        combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                        monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                        xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                        if is_overkill:
+                            overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                            xp_gain += overkill_xp
+                            game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                            game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                            game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        if getattr(enemy, 'enraged', False):
+                            exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                            xp_gain += exec_xp
+                            game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                            game._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                            game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                            game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
+                        p.gain_xp(xp_gain)
+                        p.score += int(enemy.max_hp * combo_score_mult)
+                        game.screen_shake = SCREEN_SHAKE_KILL
+                        game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                        game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                        camera.fov = CAMERA_KILL_ZOOM_FOV
+                        if is_overkill:
+                            game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True, is_overkill=True))
+                        else:
+                            game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
+                        loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
+                        loot_count = random.randint(loot_range[0], loot_range[1])
+                        for _ in range(loot_count):
+                            offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
+                            drop_pos = enemy.position + offset
+                            if game._is_walkable(drop_pos.x, drop_pos.z):
+                                c = Collectible(position=drop_pos)
+                                game.collectibles.append(c)
+                        game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                        game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                        game.enemy_death_rings.append(EnemyDeathRing(
+                            position=Vec3(enemy.x, 0, enemy.z),
+                            col=enemy.original_color,
+                            enemy_scale=enemy.original_scale,
+                        ))
+                        game.add_message(f"Defeated {enemy.name}!")
+                        game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                        if enemy.is_plasma_serpent:
+                            game.add_message("Plasma Serpent splits!")
+                            game._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
+                            game.screen_shake = max(game.screen_shake, 0.5)
+                            for seg in enemy.segment_entities:
+                                seg_pos = Vec3(seg.x, 1, seg.z)
+                                if game._is_walkable(seg_pos.x, seg_pos.z):
+                                    mini = Enemy(position=seg_pos, enemy_type='Swarm Mite')
+                                    mini.hp = PLASMA_SERPENT_SCATTER_HP
+                                    mini.max_hp = PLASMA_SERPENT_SCATTER_HP
+                                    mini.damage = PLASMA_SERPENT_SCATTER_DAMAGE
+                                    mini.speed = PLASMA_SERPENT_SCATTER_SPEED
+                                    mini.original_color = color.rgb(0, 200, 160)
+                                    mini.color = color.rgb(0, 200, 160)
+                                    game._scale_enemy_to_player_level(mini)
+                                    game.enemies.append(mini)
+                            for seg in enemy.segment_entities:
+                                for child in seg.children:
+                                    if hasattr(child, 'enabled') and child.enabled:
+                                        destroy(child)
+                                destroy(seg)
+                            enemy.segment_entities.clear()
+                    break  # Exit the enemy loop — projectile continues flying
+                # Check if this is a piercing projectile hitting a new enemy
+                if proj.is_piercing and id(enemy) not in proj._pierced_enemies:
+                    proj._pierced_enemies.add(id(enemy))
+                    # Check if we've reached max pierce hits
+                    if len(proj._pierced_enemies) >= CRIT_PIERCE_MAX_HITS:
+                        # Max pierce reached — destroy the projectile now
+                        destroy(proj)
+                        if proj in game.projectiles:
+                            game.projectiles.remove(proj)
+                    else:
+                        # Continue piercing — handle kill without destroying
+                        if killed:
+                            if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                                game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                                game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                                game.add_message("BOSS DOWN! SLOW-MO!")
+                            p.add_kill(enemy.name)
+                            game.total_kills += 1
+                            game._register_kill()
+                            game.kill_flash_timer = KILL_FLASH_DURATION
+                            game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                            game.combo_count += 1
+                            game.max_combo = max(game.max_combo, game.combo_count)
+                            game.combo_timer = COMBO_TIMEOUT
+                            game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                            game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                            combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                            combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                            monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                            xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                            p.gain_xp(xp_gain)
+                            p.score += int(enemy.max_hp * combo_score_mult)
+                            game.screen_shake = SCREEN_SHAKE_KILL
+                            game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
+                            loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
+                            loot_count = random.randint(loot_range[0], loot_range[1])
+                            for _ in range(loot_count):
+                                offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
+                                drop_pos = enemy.position + offset
+                                if game._is_walkable(drop_pos.x, drop_pos.z):
+                                    c = Collectible(position=drop_pos)
+                                    game.collectibles.append(c)
+                            game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                            game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                            game.enemy_death_rings.append(EnemyDeathRing(
+                                position=Vec3(enemy.x, 0, enemy.z),
+                                col=enemy.original_color,
+                                enemy_scale=enemy.original_scale,
+                            ))
+                            game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                        break  # Exit enemy loop — projectile continues
+                    break  # Exit enemy loop (projectile destroyed)
+                # Normal hit (no pierce) — destroy the projectile
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
@@ -10779,6 +11088,57 @@ def game_update():
 
     # ── Weather Effects ──
     game._update_weather(time.dt, p.position)
+
+    # ── World Edge Energy Barrier Pulse ── The translucent wall segments
+    # at the world boundaries gently pulse in brightness for a living energy
+    # field effect. The pulse uses game time with a slow speed so it breathes
+    # naturally, making the perimeter feel like an active alien energy barrier
+    # rather than static geometry.
+    barrier_pulse = 0.5 + 0.5 * math.sin(game.t * WORLD_EDGE_PULSE_SPEED)
+    barrier_alpha = WORLD_EDGE_BARRIER_ALPHA + int(WORLD_EDGE_PULSE_ALPHA_AMPLITUDE * barrier_pulse)
+    for barrier in game.world_edge_barriers:
+        barrier.color = color.rgba(100, 60, 200, barrier_alpha)
+
+    # ── Ambient Alien Fireflies ── Update drift, bob, and glow pulse for
+    # each firefly. Fireflies wander within the world bounds, change direction
+    # periodically, bob up and down, and pulse their glow. They're only
+    # visible when within FIREFLY_GLOW_RADIUS of the player for performance.
+    world_span_ff = WORLD_SIZE * TILE_SCALE
+    for ff in game.fireflies:
+        if not ff.enabled:
+            continue
+        # Direction change timer
+        ff._dir_timer -= time.dt
+        if ff._dir_timer <= 0:
+            ff._drift_dir = Vec3(
+                random.uniform(-1, 1), 0, random.uniform(-1, 1)
+            ).normalized()
+            ff._dir_timer = random.uniform(FIREFLY_DIR_CHANGE_MIN, FIREFLY_DIR_CHANGE_MAX)
+        # Drift
+        new_x = ff.x + ff._drift_dir.x * FIREFLY_SPEED * time.dt
+        new_z = ff.z + ff._drift_dir.z * FIREFLY_SPEED * time.dt
+        # Keep within world bounds — bounce off edges
+        if new_x < 5 or new_x > world_span_ff - 5:
+            ff._drift_dir = Vec3(-ff._drift_dir.x, 0, ff._drift_dir.z)
+            new_x = max(5, min(world_span_ff - 5, new_x))
+        if new_z < 5 or new_z > world_span_ff - 5:
+            ff._drift_dir = Vec3(ff._drift_dir.x, 0, -ff._drift_dir.z)
+            new_z = max(5, min(world_span_ff - 5, new_z))
+        ff.x = new_x
+        ff.z = new_z
+        # Bob up and down
+        ff.y = FIREFLY_BASE_HEIGHT + math.sin(game.t * FIREFLY_BOB_SPEED + ff._bob_phase) * FIREFLY_BOB_AMPLITUDE
+        # Glow pulse — scale and alpha modulate
+        glow_pulse = 0.5 + 0.5 * math.sin(game.t * FIREFLY_PULSE_SPEED + ff._pulse_phase)
+        ff.scale = 0.2 + 0.15 * glow_pulse
+        # Distance-based visibility — only render when near the player
+        ff_dist_sq = (ff.x - p.x) ** 2 + (ff.z - p.z) ** 2
+        if ff_dist_sq < FIREFLY_GLOW_RADIUS * FIREFLY_GLOW_RADIUS:
+            fr, fg, fb = _c255_color(ff._base_color)
+            ff.color = color.rgba(fr, fg, fb, int(120 + 100 * glow_pulse))
+            ff.visible = True
+        else:
+            ff.visible = False
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
