@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.24.0"
+VERSION = "2.24.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -402,6 +402,13 @@ ENEMY_DAMAGE_SCALE_PER_TIER = 0.10    # +10% enemy damage per difficulty tier ab
 DMG_NUMBER_LIFETIME = 1.0
 DMG_NUMBER_RISE_SPEED = 3.0
 DMG_NUMBER_SCALE = 1.2
+# ── Damage Number Horizontal Drift ── Damage numbers don't just rise straight
+# up — they also drift slightly to the side, giving each number a gentle arc
+# instead of a rigid vertical line. The drift direction is random per number
+# and the drift speed decays over the number's lifetime so it eases to a stop,
+# producing a natural floating-leaf feel rather than a mechanical elevator.
+DMG_NUMBER_DRIFT_SPEED = 1.2   # Max horizontal drift speed (world units/sec)
+DMG_NUMBER_DRIFT_DECAY = 2.0   # How fast drift decays (higher = stops sooner)
 
 # ─── Low-HP Danger Overlay ──────────────────────────────────────────────────
 LOW_HP_VIGNETTE_THRESHOLD = 0.30   # HP ratio below which the danger vignette appears
@@ -1021,6 +1028,15 @@ BOSS_TENSION_PULSE_SPEED = 3.0   # How fast the tension vignette pulses
 ENEMY_LOW_HP_THRESHOLD = 0.25    # HP ratio below which the warning pulse activates
 ENEMY_LOW_HP_PULSE_SPEED = 8.0   # How fast the HP bar pulses when low
 ENEMY_LOW_HP_BAR_SCALE_PULSE = 0.15  # Scale jitter amount for the low-HP pulse
+
+# ─── Enemy Combat Breathing ──────────────────────────────────────────────────
+# When an enemy has detected the player and is actively chasing, it gently
+# "pants" — a faster, slightly more intense scale oscillation than the idle
+# breathing. This makes aggroed enemies feel alive and predatory instead of
+# being static shapes gliding across the terrain. The panting is faster and
+# slightly bigger than idle breathing to convey exertion and threat.
+ENEMY_COMBAT_BREATHE_SPEED = 4.0   # Faster than idle (1.8) — conveys exertion
+ENEMY_COMBAT_BREATHE_AMOUNT = 0.05  # 5% scale variation — slightly more visible than idle's 4%
 
 # ─── Collectible Rarity Bob/Spin ──────────────────────────────────────────────
 # Rarer items bob higher and spin faster, making them visually distinct and
@@ -3787,11 +3803,23 @@ class DamageNumber:
         # Start at the pop-in starting scale
         self.text_ent.scale = self._base_text_scale * DMG_NUMBER_POPIN_START_SCALE
         self.bg_dot.scale = self._base_bg_scale * DMG_NUMBER_POPIN_START_SCALE
+        # ── Horizontal Drift ── Each number drifts gently to a random side,
+        # producing a natural floating arc instead of a rigid vertical rise.
+        # The drift direction is randomized per number so grouped hits spread
+        # organically in different directions rather than all leaning the same way.
+        self._drift_dir = random.uniform(-1.0, 1.0)
+        self._drift_decay_timer = 0.0
 
     def update(self, dt):
         """Advance the damage number animation. Returns True when expired."""
         self.lifetime -= dt
-        self.world_pos += Vec3(0, DMG_NUMBER_RISE_SPEED * dt, 0)
+        # ── Horizontal Drift ── The number moves sideways with a decaying
+        # velocity, producing a gentle arc. The drift eases to a stop over
+        # the first ~0.5 seconds so the number settles as it fades.
+        self._drift_decay_timer += dt
+        drift_decay = math.exp(-self._drift_decay_timer * DMG_NUMBER_DRIFT_DECAY)
+        drift_x = self._drift_dir * DMG_NUMBER_DRIFT_SPEED * drift_decay * dt
+        self.world_pos += Vec3(drift_x, DMG_NUMBER_RISE_SPEED * dt, 0)
         self.bg_dot.position = self.world_pos
         # Project world position to UI screen coordinates
         cam = camera
@@ -9254,6 +9282,19 @@ def game_update():
             # idle, non-aggroed, non-hit enemies within visual range.
             breath = 1.0 + 0.04 * math.sin(game.t * 1.8 + id(enemy) % 100 * 0.01)
             enemy.scale = enemy.original_scale * breath
+        elif dist_to_player < VISUAL_CULL_RANGE and enemy.alerted and enemy.alive and not enemy.dying:
+            # ── Combat Breathing ── Aggroed enemies that are actively chasing
+            # the player "pant" with a faster, slightly more intense scale
+            # oscillation than idle breathing. This makes chasing enemies feel
+            # alive and predatory — like they're exerting themselves in pursuit —
+            # instead of being static shapes gliding across the terrain. Faster
+            # speed (4.0 vs 1.8) and slightly bigger amplitude (5% vs 4%) convey
+            # exertion and threat. Only applies when no hit punch or windup is
+            # active so it composes cleanly with those higher-priority effects.
+            if not enemy._attack_windup_active:
+                breath = 1.0 + ENEMY_COMBAT_BREATHE_AMOUNT * math.sin(
+                    game.t * ENEMY_COMBAT_BREATHE_SPEED + id(enemy) % 100 * 0.07)
+                enemy.scale = enemy.original_scale * breath
 
         # ── Alert "!" Indicator Update ── Track the enemy's position and fade
         # out the billboard "!" over ENEMY_ALERT_INDICATOR_DURATION. The indicator
@@ -9951,16 +9992,23 @@ def game_update():
         if col.popping:
             col.pop_timer -= time.dt
             progress = 1.0 - max(0, col.pop_timer / COLLECT_POP_DURATION)
-            # Elastic overshoot: scale peaks above max then settles
-            # Uses a sine-based elastic curve for a bouncy feel
+            # Elastic overshoot: scale peaks above max then settles with a bounce
+            # Uses a sine-based elastic curve for a bouncy feel. The settle phase
+            # uses an elastic undershoot — the scale dips slightly below the
+            # base before springing back — giving the pop a satisfying bouncy
+            # "boing" instead of a flat linear settle.
             if progress < 0.6:
                 # Scale up with acceleration toward peak
                 elastic = (progress / 0.6) ** 0.5  # ease-out quad for initial rise
                 col.scale = 0.6 * (1.0 + elastic * (COLLECT_POP_MAX_SCALE - 1.0))
             else:
-                # Settle back down with a slight bounce
+                # Settle back with an elastic bounce — slight undershoot then
+                # spring back to normal, like a rubber ball settling after a drop
                 settle = (progress - 0.6) / 0.4  # 0 to 1 in settle phase
-                col.scale = 0.6 * (COLLECT_POP_MAX_SCALE - (COLLECT_POP_MAX_SCALE - 1.0) * settle)
+                # Elastic settle: overshoot downward then spring back
+                # sine wave from 1.0 → slight undershoot → back to 1.0
+                elastic_settle = 1.0 - 0.08 * math.sin(settle * math.pi)
+                col.scale = 0.6 * (1.0 + (COLLECT_POP_MAX_SCALE - 1.0) * (1.0 - settle) * elastic_settle)
             # Flash white at the start of pop
             if progress < 0.3:
                 col.color = color.white
