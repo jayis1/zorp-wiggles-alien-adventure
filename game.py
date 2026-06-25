@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.25.0"
+VERSION = "2.25.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1029,6 +1029,14 @@ ENEMY_LOW_HP_THRESHOLD = 0.25    # HP ratio below which the warning pulse activa
 ENEMY_LOW_HP_PULSE_SPEED = 8.0   # How fast the HP bar pulses when low
 ENEMY_LOW_HP_BAR_SCALE_PULSE = 0.15  # Scale jitter amount for the low-HP pulse
 
+# ─── Enemy HP Bar Smooth Drain ────────────────────────────────────────────────
+# The enemy HP bar smoothly lerps toward the actual HP value instead of
+# snapping instantly, making damage feel more impactful — you see the green
+# bar visibly shrink over a few frames as it "drains". Only lerps downward
+# (on damage); healing snaps instantly. A lerp speed of 12 gives a quick but
+# visible drain (full to empty in ~0.15s at 60fps).
+ENEMY_HP_BAR_DRAIN_SPEED = 12.0
+
 # ─── Enemy Combat Breathing ──────────────────────────────────────────────────
 # When an enemy has detected the player and is actively chasing, it gently
 # "pants" — a faster, slightly more intense scale oscillation than the idle
@@ -1064,6 +1072,17 @@ RARITY_SPIN_SPEED = {
 # making the character feel alive rather than frozen between movements.
 PLAYER_IDLE_BREATHE_SPEED = 1.5  # How fast the breathing cycle is (slower = calmer)
 PLAYER_IDLE_BREATHE_AMOUNT = 0.03  # 3% scale variation — subtle but perceptible
+
+# ─── Player Glow Ring Pickup Pulse ──────────────────────────────────────────
+# When Zorp picks up a collectible, his green ground glow ring briefly
+# flashes in the item's color and expands, giving ground-level player feedback
+# visible from the third-person camera. This makes pickups feel more tactile —
+# you see the energy of the item ripple outward from Zorp's position on the
+# ground, complementing the existing pop animation, particle burst, and pickup
+# ground ring (which fires at the item's position, not the player's).
+PLAYER_GLOW_PICKUP_PULSE_DURATION = 0.30  # How long the glow ring flash lasts
+PLAYER_GLOW_PICKUP_PULSE_SCALE = 3.5     # Peak scale multiplier during the flash
+PLAYER_GLOW_PICKUP_PULSE_ALPHA = 180     # Peak alpha during the flash
 
 # ─── Player Eye Blink ──────────────────────────────────────────────────────────
 # Zorp periodically blinks — a quick Y-scale squish of both eyes that adds
@@ -1816,6 +1835,12 @@ class Player(Entity):
         self.combo_shield_active = False  # True while the shield is charged
         self.combo_shield_absorbed_flag = False  # Set by take_damage, checked by game_update for VFX
 
+        # ── Glow Ring Pickup Pulse ── When the player picks up a collectible,
+        # the green ground glow ring briefly flashes in the item's color and
+        # expands. Set by game_update on pickup, decays in animate_bob.
+        self.glow_pulse_timer = 0.0
+        self.glow_pulse_color = None  # (r, g, b) tuple in 0-255 range
+
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
@@ -2262,6 +2287,11 @@ class Enemy(Entity):
         hp_bar_scaled_height = max(0.06, min(0.3, hp_bar_base_height / max(0.3, self.original_scale)))
         self.hp_bar_base_width = hp_bar_scaled_width  # Store for update_hp_bar
         self.hp_bar_base_height = hp_bar_scaled_height
+        # ── Smooth HP Bar Drain ── The displayed HP smoothly lerps toward the
+        # actual HP each frame, so the green HP bar visibly "drains" instead of
+        # snapping instantly. This makes each hit feel more impactful — you see
+        # the bar shrink in real-time, giving a stronger sense of damage dealt.
+        self.displayed_hp = float(self.hp)
         # Position the bar above the enemy, also scaled so it sits at a consistent
         # height above the model regardless of enemy scale
         hp_bar_y = 1.5 / max(0.3, self.original_scale)
@@ -2358,12 +2388,32 @@ class Enemy(Entity):
     def update_hp_bar(self):
         """Update the HP bar scale and color based on current health ratio.
 
+        Uses a smoothly-interpolated 'displayed_hp' that lerps toward the
+        actual HP each frame, so the green HP bar visibly drains instead of
+        snapping instantly. This makes each hit feel more impactful — you
+        see the bar shrink in real-time, giving a stronger sense of the
+        damage dealt.
+
         When HP drops below ENEMY_LOW_HP_THRESHOLD (25%), the HP bar pulses
         bright red with a subtle scale jitter — a clear "finish them off"
         visual cue that helps players prioritize near-death targets.
         """
+        # ── Smooth HP Bar Drain ── Lerp the displayed HP toward actual HP so
+        # the bar smoothly shrinks over a few frames instead of snapping. The
+        # lerp speed is high enough that the drain is quick (feels responsive)
+        # but slow enough that the eye tracks the shrink. Only lerps DOWNWARD
+        # (on damage); healing snaps instantly so the bar never appears to
+        # lag behind recovery.
+        if self.displayed_hp > self.hp:
+            self.displayed_hp = lerp(self.displayed_hp, float(self.hp),
+                                    min(1.0, ENEMY_HP_BAR_DRAIN_SPEED * time.dt))
+            # Clamp to avoid floating-point drift
+            if abs(self.displayed_hp - self.hp) < 0.5:
+                self.displayed_hp = float(self.hp)
+        else:
+            self.displayed_hp = float(self.hp)
         # Defensive: guard against division by zero if max_hp is somehow 0
-        ratio = max(0, self.hp / self.max_hp) if self.max_hp > 0 else 0
+        ratio = max(0, self.displayed_hp / self.max_hp) if self.max_hp > 0 else 0
         # Use the per-enemy scaled base width so the HP bar shrinks correctly
         # regardless of enemy size (set during __init__)
         base_w = getattr(self, 'hp_bar_base_width', 2.0)
@@ -3983,6 +4033,8 @@ class Game:
         self.traders = []          # Wandering Trader NPCs
         self.monoliths = []        # Alien Monoliths — world structures granting buffs
         self.shrines = []           # Healing Crystal Shrines — instant heal structures
+        self.water_overlays = []   # Water surface shimmer quads (for animation)
+        self.lava_overlays = []     # Lava glow shimmer quads (for animation)
         self.trader_spawn_timer = TRADER_RESPAWN_TIME / 2  # Initial spawn delay
         self.time_warp_timer = 0   # Time Warp slow-mo for enemies
         self.missions = []
@@ -4640,6 +4692,16 @@ class Game:
                 destroy(c)
         self.crystal_entities.clear()
 
+        # Destroy water and lava overlay shimmer quads
+        for overlay in self.water_overlays:
+            if overlay and overlay.enabled:
+                destroy(overlay)
+        self.water_overlays.clear()
+        for overlay in self.lava_overlays:
+            if overlay and overlay.enabled:
+                destroy(overlay)
+        self.lava_overlays.clear()
+
         # Destroy stars
         for s in self.stars:
             if s and s.enabled:
@@ -4827,7 +4889,8 @@ class Game:
                         scale=TILE_SCALE,
                         rotation_x=90,
                     )
-                    self.crystal_entities.append(water_overlay)
+                    water_overlay._shimmer_offset = random.uniform(0, math.pi * 2)
+                    self.water_overlays.append(water_overlay)
 
                 # Lava glow overlay — orange glow disc above lava tiles
                 if biome == 'lava':
@@ -4838,7 +4901,8 @@ class Game:
                         scale=TILE_SCALE * 0.9,
                         rotation_x=90,
                     )
-                    self.crystal_entities.append(lava_glow)
+                    lava_glow._shimmer_offset = random.uniform(0, math.pi * 2)
+                    self.lava_overlays.append(lava_glow)
 
         # Single invisible ground plane collider for mouse.world_point ray hits
         # This replaces 6400 individual box colliders with ONE collider
@@ -8538,6 +8602,29 @@ def game_update():
     if hasattr(p, 'glow_ring') and p.glow_ring:
         p.glow_ring.x = p.x
         p.glow_ring.z = p.z
+        # ── Glow Ring Pickup Pulse ── When the glow pulse timer is active
+        # (set by collectible pickup), the green glow ring flashes in the
+        # item's color and expands for satisfying ground-level player feedback.
+        if p.glow_pulse_timer > 0:
+            p.glow_pulse_timer -= time.dt
+            if p.glow_pulse_timer < 0:
+                p.glow_pulse_timer = 0
+            progress = 1.0 - (p.glow_pulse_timer / PLAYER_GLOW_PICKUP_PULSE_DURATION)
+            # Ease-out: fast flash then gentle settle
+            ease = 1.0 - (1.0 - progress) ** 2
+            pulse_scale = 2.5 + (PLAYER_GLOW_PICKUP_PULSE_SCALE - 2.5) * (1.0 - ease) * ease * 2
+            pulse_alpha = int(PLAYER_GLOW_PICKUP_PULSE_ALPHA * (1.0 - ease))
+            if p.glow_pulse_color:
+                gr, gg, gb = p.glow_pulse_color
+                p.glow_ring.color = color.rgba(gr, gg, gb, max(0, pulse_alpha))
+                p.glow_ring.scale = max(2.5, pulse_scale)
+            if p.glow_pulse_timer <= 0:
+                # Restore normal green glow
+                p.glow_ring.color = color.rgba(0, 200, 80, 50)
+                p.glow_ring.scale = 2.5
+        else:
+            p.glow_ring.color = color.rgba(0, 200, 80, 50)
+            p.glow_ring.scale = 2.5
 
     # ── HP Bar Damage Shake Trigger ── When the player takes damage, trigger
     # the HP bar shake timer so _update_hud can apply the jitter effect.
@@ -10533,6 +10620,13 @@ def game_update():
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
             game.total_items_collected += 1
+            # ── Player Glow Ring Pickup Pulse ── Zorp's green ground glow ring
+            # briefly flashes in the item's color and expands, giving ground-
+            # level player feedback visible from the third-person camera. This
+            # complements the pickup ground ring (at the item's position) with a
+            # pulse at Zorp's position, making pickups feel tactile.
+            p.glow_pulse_timer = PLAYER_GLOW_PICKUP_PULSE_DURATION
+            p.glow_pulse_color = _c255_color(col.item_color)
             # ── Pickup Streak ── Track consecutive rapid pickups for bonus XP
             game._register_pickup_streak()
             # ── Collectible Pickup Ground Ring ── A brief expanding ground ring
@@ -10667,6 +10761,21 @@ def game_update():
     # b = lerp(scene.fog_color[2], target_fog_color[2], time.dt * FOG_TRANSITION_SPEED)
     # scene.fog_color = color.rgb(int(r), int(g), int(b))
     # scene.fog_density = lerp(scene.fog_density, target_fog_density, time.dt * FOG_TRANSITION_SPEED)
+
+    # ── Water & Lava Surface Shimmer ── Water and lava overlay quads gently
+    # pulse in brightness and scale, making these biomes feel alive and dynamic
+    # instead of being flat static decals. Each tile has a random phase offset
+    # so the shimmer ripples naturally across the surface rather than pulsing
+    # in sync. The effect is subtle (±15 alpha, ±0.1 scale) so it enhances
+    # atmosphere without being distracting.
+    for overlay in game.water_overlays:
+        shimmer = 0.5 + 0.5 * math.sin(game.t * 1.5 + overlay._shimmer_offset)
+        base_alpha = 80
+        overlay.color = color.rgba(30, 80, 220, int(base_alpha + 15 * shimmer))
+    for overlay in game.lava_overlays:
+        shimmer = 0.5 + 0.5 * math.sin(game.t * 2.5 + overlay._shimmer_offset)
+        base_alpha = 60
+        overlay.color = color.rgba(255, 120, 30, int(base_alpha + 25 * shimmer))
 
     # ── Weather Effects ──
     game._update_weather(time.dt, p.position)
