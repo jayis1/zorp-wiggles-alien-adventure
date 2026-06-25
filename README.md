@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.23.1 — 3D!)
+## Features (v2.23.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -195,6 +195,10 @@ python game.py
 - **Pickup Streak system** — collect items in rapid succession (within 3 seconds of each other) to build a pickup streak! A mint-cyan "PICKUP STREAK xN" counter appears on the HUD with a timer bar showing time remaining before the streak resets. At every 5 pickups in the streak, bonus XP is awarded with a celebratory particle burst — making item-gathering runs feel rewarding and encouraging players to keep moving and collecting. Best pickup streak is tracked on the death screen!
 - **Critical Hit Chain bonus** — land 3+ consecutive critical hits within 3 seconds to activate a **3x damage multiplier** on subsequent crits (up from the normal 2x)! A gold "CRIT CHAIN xN" counter appears on the HUD, turning bright orange-red with "3x DMG!" when the bonus is active. Non-crit hits or letting the timer expire resets the chain. Rewards sustained precision fire and makes crit streaks feel electric!
 - **Enemy spawn direction indicator** — when a new enemy materializes from a spawn warning, a brief orange directional arrow appears on the HUD pointing toward the spawn location! Reuses the damage indicator arrow system but with a distinct orange color and separate tracking. Gives immediate spatial awareness of new threats without needing to scan the full 360° environment — especially helpful during intense combat when multiple enemies spawn from different directions simultaneously
+- **Particle distance LOD** — particle bursts (hit sparks, kill explosions, collectible bursts) automatically reduce their particle count based on distance from the player: full count within 30 units, ramping down to 30% at 60+ units. This reserves the particle budget for nearby action you can actually see, improving performance in busy combat with many simultaneous events across the map
+- **Enemy projectile trails** — Spore Spitter projectiles now leave a fading orange trail as they fly, matching the player's projectile trail system for visual consistency. The trail makes incoming enemy fire much easier to track and dodge — you can see the arc of the shot and react accordingly
+- **Damage number anti-overlap jitter** — when multiple damage numbers spawn at the same position (rapid-fire, AOE, multi-kills), each gets a small random horizontal offset so they spread out instead of stacking on top of each other, making each number individually readable in intense combat
+- **Enemy death spin** — enemies now spin during their death animation with a randomized direction and accelerating speed, making kills feel more dynamic and chaotic instead of just shrinking in place. Group kills (AOE, Pulse Wave) don't look synchronized
 
 ## The Self-Improving Game
 
@@ -376,6 +380,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.23.2 — Particle LOD, Enemy Projectile Trails, Damage Number Jitter & Death Spin
+- **Particle distance LOD**: Particle bursts (hit sparks, kill explosions, collectible bursts) now automatically reduce their particle count based on distance from the player. Full particle count within 30 units, ramping down to 30% at 60+ units. Distant events are barely visible but previously cost the same render/update budget as nearby ones — now the particle budget is reserved for action you can actually see, improving performance in busy combat with many simultaneous events across the map
+- **Enemy projectile trails**: Spore Spitter projectiles now leave a fading orange trail behind them as they fly, matching the player's projectile trail system for visual consistency. The trail makes incoming enemy fire much easier to track and dodge — you can see the arc of the shot and react accordingly, instead of a flat orange sphere appearing from nowhere. Trails use the same ProjectileTrail class as player projectiles with an orange tint for instant visual distinction
+- **Damage number anti-overlap jitter**: When multiple damage numbers spawn at the same position (e.g., from rapid-fire hits, AOE explosions, or multi-enemy Pulse Wave kills), they used to stack perfectly on top of each other, making only the topmost number readable. Each damage number now gets a small random horizontal offset (±0.8 world units) so they spread out and each is individually visible, making rapid hit feedback much more readable in intense combat
+- **Enemy death spin**: Enemies now spin during their death animation, with a randomized spin direction per enemy and speed that accelerates as they shrink. This makes kills feel more dynamic and chaotic — instead of the enemy just shrinking in place, it twirls apart. The random direction ensures group kills (AOE, Pulse Wave) don't look synchronized, adding organic variety to multi-kill scenarios
 
 ### v2.23.1 — Extended Combo Rewards, Damage Number Pop-In & Shadow Scale Tracking
 - **Combo XP/score cap extended from 10 to 20**: The combo system's XP and score multipliers were capped at tier 10 (`min(combo_count, 10)`), meaning kills beyond a x10 combo gave no additional XP or score reward. This created a plateau where high-skill sustained chains (x11–x20) felt unrewarded despite the game already having mechanics that reward high combos (Combo Shield at x15, combo damage buff at x10+). The cap is now 20, so each kill from x10 to x20 grants an additional +15% XP and +8% score per tier — a x20 combo now yields +285% XP and +152% score (vs the old +135% XP and +72% score cap at x10). This makes maintaining long kill streaks significantly more rewarding and better aligns the XP/score system with the existing high-combo mechanics. The cap is extracted into a named `COMBO_MAX_TIER` constant for maintainability

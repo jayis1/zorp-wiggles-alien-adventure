@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.23.1"
+VERSION = "2.23.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -786,6 +786,20 @@ COLLECTIBLE_CULL_RANGE = 60  # Skip animate/pull for collectibles beyond this di
 COLLECTIBLE_CULL_RANGE_SQ = COLLECTIBLE_CULL_RANGE * COLLECTIBLE_CULL_RANGE  # Pre-squared for fast comparison
 AI_CULL_RANGE = 50       # Skip complex special AI (phase shift, spit, orbit, etc.) beyond this distance
 PROJECTILE_COLLISION_PRECHECK_SQ = 2500  # Squared distance: skip full collision math for enemies >50 units from projectile
+
+# ─── Particle Distance LOD ──────────────────────────────────────────────────
+# Particle bursts spawned far from the player are barely visible but cost the
+# same performance — each particle is an Entity with a model that must be
+# rendered, moved, and culled. This LOD system scales particle counts down
+# based on distance from the player: full count within PARTICLE_LOD_FULL_RANGE,
+# ramping down to PARTICLE_LOD_MIN_FACTOR at PARTICLE_LOD_MAX_RANGE and beyond.
+# This keeps the particle budget available for nearby action (where particles
+# are actually visible and impactful) while still giving distant events a
+# subtle visual presence. Affects _spawn_particles, _spawn_kill_burst, and
+# _spawn_collect_burst — all the major particle spawning paths.
+PARTICLE_LOD_FULL_RANGE = 30.0    # Full particle count within this distance
+PARTICLE_LOD_MAX_RANGE = 60.0     # Particles reduced to min factor at this distance
+PARTICLE_LOD_MIN_FACTOR = 0.3     # Minimum particle count multiplier (30% of full)
 
 # ─── Dash Landing Impact ──────────────────────────────────────────────────────
 DASH_LAND_SQUISH_AMOUNT = 0.55   # How much Y compresses on dash landing (0.55 = very flat)
@@ -2296,6 +2310,11 @@ class Enemy(Entity):
         1. Pop (0–25%): enemy bounces upward dramatically
         2. Flash & shrink (25–70%): alternates white/original color while shrinking
         3. Dissolve (70–100%): fades to transparent with enemy's tinted color
+
+        The enemy also spins during the death animation — a randomized rotation
+        that accelerates as it shrinks, making kills feel more dynamic and
+        chaotic instead of the enemy just shrinking in place. The spin direction
+        is random per enemy so group kills don't look synchronized.
         """
         if not self.dying:
             return True
@@ -2311,6 +2330,15 @@ class Enemy(Entity):
         ease_progress = 1.0 - (1.0 - progress) ** 2
         shrink = max(0.01, self.original_scale * (1.0 - ease_progress))
         self.scale = shrink
+        # ── Death Spin ── The enemy spins during death, accelerating as it
+        # shrinks. The spin direction is randomized per enemy so multiple
+        # simultaneous deaths (AOE kills, Pulse Wave) don't look synchronized.
+        # Spin speed ramps from a gentle start to a fast twirl as the enemy
+        # dissolves, making the death feel chaotic and dynamic.
+        if not hasattr(self, '_death_spin_dir'):
+            self._death_spin_dir = random.choice([-1, 1])
+        spin_speed = 180 + 420 * progress  # 180°/s at start → 600°/s at end
+        self.rotation_y += self._death_spin_dir * spin_speed * dt
         # Flash between white and original color, dissolving at end
         # BUG FIX: Use _c255_color() to normalize — original_color may be a named
         # color (0-1 range) or color.rgb() (0-255 range). Arithmetic on 0-1 values
@@ -3553,6 +3581,16 @@ class Projectile(Entity):
         return self.lifetime > 0
 
 
+# ─── Enemy Projectile Trail ──────────────────────────────────────────────────
+# Enemy projectiles now leave a brief fading trail (matching the player's
+# projectile trail system) so incoming fire is easy to track and dodge. The
+# trail uses the same ProjectileTrail class with an orange tint instead of
+# cyan, maintaining visual consistency between player and enemy projectiles
+# while making them instantly distinguishable by color.
+ENEMY_PROJ_TRAIL_INTERVAL = 0.04  # Seconds between trail dot spawns
+ENEMY_PROJ_TRAIL_COLOR = color.rgba(255, 120, 20, 140)  # Orange trail (matching projectile color)
+
+
 class EnemyProjectile(Entity):
     """A projectile fired by Spore Spitter enemies toward the player.
 
@@ -3586,12 +3624,17 @@ class EnemyProjectile(Entity):
         )
         self.aura_base_alpha = ENEMY_PROJECTILE_AURA_COLOR[3]
         self._aura_phase = random.uniform(0, math.pi * 2)
+        # Trail spawning timer — leaves a fading orange trail so the projectile
+        # is easy to track and dodge, matching the player projectile trail system
+        self.trail_timer = 0.0
 
     def move(self, dt):
         """Move the enemy projectile forward. Returns False when lifetime expires.
 
         Also pulses the glow aura's alpha for a living, threatening visual
         that makes the projectile easy to track as it flies toward the player.
+        Accumulates a trail timer so the caller can spawn trail dots at a
+        regular interval (matching the player projectile trail system).
         """
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
@@ -3601,6 +3644,8 @@ class EnemyProjectile(Entity):
         a = max(20, min(255, int(self.aura_base_alpha * (0.5 + 0.5 * pulse))))
         r, g, b = _c255_color(ENEMY_PROJECTILE_AURA_COLOR)
         self.aura.color = color.rgba(r, g, b, a)
+        # Accumulate trail timer — the caller reads this to spawn trail dots
+        self.trail_timer += dt
         return self.lifetime > 0
 
 
@@ -3660,11 +3705,19 @@ class DamageNumber:
         # BUG FIX: col may be a named color (0-1 .r/.g/.b) or color.rgb() (0-255).
         # Use _c255_color() to normalize before passing to color.rgba().
         cr, cg, cb = _c255_color(col)
+        # ── Anti-Overlap Jitter ── When multiple damage numbers spawn at the
+        # same position (e.g., a multi-hit AOE or rapid-fire burst), they stack
+        # perfectly on top of each other, making only the topmost readable. A
+        # small random horizontal offset (±0.8 world units) spreads them out so
+        # each number is individually visible, making rapid hit feedback much
+        # more readable in intense combat.
+        jitter_x = random.uniform(-0.8, 0.8)
+        jitter_z = random.uniform(-0.4, 0.4)
         self.bg_dot = Entity(
             model='quad',
             color=color.rgba(cr, cg, cb, 120),
             scale=0.6 * scale_factor,
-            position=Vec3(position.x, position.y + 2.0, position.z),
+            position=Vec3(position.x + jitter_x, position.y + 2.0, position.z + jitter_z),
             billboard=True,
         )
         # UI Text anchored to the camera for crisp rendering
@@ -3678,7 +3731,7 @@ class DamageNumber:
         )
         self.lifetime = DMG_NUMBER_LIFETIME
         self.max_lifetime = DMG_NUMBER_LIFETIME
-        self.world_pos = Vec3(position.x, position.y + 2.0, position.z)
+        self.world_pos = Vec3(position.x + jitter_x, position.y + 2.0, position.z + jitter_z)
         self.is_kill = is_kill
         self.is_crit = is_crit
         self.is_overkill = is_overkill
@@ -5775,12 +5828,46 @@ class Game:
             else:
                 wp.visible = False
 
+    def _particle_lod_count(self, pos, count):
+        """Scale a particle count down based on distance from the player.
+
+        Particle bursts far from the player are barely visible but cost the
+        same render/update budget. This returns a reduced count (as an int)
+        for distant positions: full count within PARTICLE_LOD_FULL_RANGE,
+        ramping down to PARTICLE_LOD_MIN_FACTOR at PARTICLE_LOD_MAX_RANGE.
+
+        Args:
+            pos: World position of the particle event.
+            count: Requested particle count (before LOD).
+
+        Returns:
+            int: LOD-adjusted particle count (at least 1 if count > 0).
+        """
+        if not hasattr(self, 'player') or self.player is None:
+            return count
+        dx = pos.x - self.player.x
+        dz = pos.z - self.player.z
+        dist = math.sqrt(dx * dx + dz * dz)
+        if dist <= PARTICLE_LOD_FULL_RANGE:
+            return count
+        if dist >= PARTICLE_LOD_MAX_RANGE:
+            return max(1, int(count * PARTICLE_LOD_MIN_FACTOR))
+        # Linear ramp between full and min
+        t = (dist - PARTICLE_LOD_FULL_RANGE) / (PARTICLE_LOD_MAX_RANGE - PARTICLE_LOD_FULL_RANGE)
+        factor = 1.0 + (PARTICLE_LOD_MIN_FACTOR - 1.0) * t
+        return max(1, int(count * factor))
+
     def _spawn_particles(self, pos, col, count=8):
         """Spawn burst particles at a position. Respects MAX_PARTICLES limit.
 
         Each particle gets a slight random color variation from the base color
         for a more natural, non-uniform look rather than identical spheres.
+
+        Particle counts are reduced for distant events via the particle LOD
+        system — far bursts use fewer particles since they're barely visible
+        but still cost the same render/update budget.
         """
+        count = self._particle_lod_count(pos, count)
         count = min(count, MAX_PARTICLES - len(self.particles))
         if count <= 0:
             return
@@ -5862,8 +5949,12 @@ class Game:
 
         Each particle gets a slight random color variation for a more
         vibrant, natural-looking burst rather than identical orbs.
+
+        Particle counts are reduced for distant events via the particle LOD
+        system.
         """
-        count = min(PARTICLE_COLLECT_COUNT, MAX_PARTICLES - len(self.particles))
+        lod_count = self._particle_lod_count(pos, PARTICLE_COLLECT_COUNT)
+        count = min(lod_count, MAX_PARTICLES - len(self.particles))
         for i in range(count):
             angle = (i / count) * math.pi * 2
             spread = random.uniform(1.5, 3.5)
@@ -5902,7 +5993,8 @@ class Game:
             hp_ratio = enemy_max_hp / DEATH_BURST_HP_BASE
             scale_mult = max(DEATH_BURST_SCALE_MIN, min(DEATH_BURST_SCALE_MAX, 0.5 + 0.5 * math.log2(max(1.0, hp_ratio))))
             spread_mult = 1.0 + (scale_mult - 1.0) * (DEATH_BURST_SPREAD_MULT - 1.0) / (DEATH_BURST_SCALE_MAX - 1.0) if scale_mult > 1.0 else 1.0
-        count = min(int(KILL_BURST_PARTICLE_COUNT * scale_mult), MAX_PARTICLES - len(self.particles))
+        raw_count = int(KILL_BURST_PARTICLE_COUNT * scale_mult)
+        count = min(self._particle_lod_count(pos, raw_count), MAX_PARTICLES - len(self.particles))
         if count <= 0:
             return
         cr, cg, cb = _c255_color(col)
@@ -9500,6 +9592,13 @@ def game_update():
             destroy(eproj)
             game.enemy_projectiles.remove(eproj)
             continue
+        # ── Enemy Projectile Trail ── Spawn a fading orange trail dot at
+        # regular intervals so incoming fire is easy to track and dodge,
+        # matching the player projectile trail system for visual consistency.
+        if eproj.trail_timer >= ENEMY_PROJ_TRAIL_INTERVAL:
+            eproj.trail_timer = 0.0
+            trail = ProjectileTrail(position=Vec3(eproj.x, eproj.y, eproj.z), col=ENEMY_PROJ_TRAIL_COLOR)
+            game.projectile_trails.append(trail)
         # Check collision with player
         dist = (eproj.position - p.position).length()
         if dist < ENEMY_PROJECTILE_HIT_RADIUS:
