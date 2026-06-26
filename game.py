@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.27.1"
+VERSION = "2.27.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -22,7 +22,7 @@ TILE_SCALE = 4
 # ─── Player ───────────────────────────────────────────────────────────────────
 PLAYER_SPEED = 12
 PLAYER_ACCELERATION = 45.0         # How fast the player accelerates (higher = snappier)
-PLAYER_DECELERATION = 25.0          # How fast the player decelerates (lower = more slide)
+PLAYER_DECELERATION = 32.0          # How fast the player decelerates (lower = more slide)
 PLAYER_INVULN_DURATION = 0.5
 PLAYER_BLINK_RATE = 20
 PLAYER_START_XP = 80               # Smoother early-game: first level-up comes sooner (was 100)
@@ -147,7 +147,7 @@ LEVEL_UP_HEAL_AMOUNT = 40              # Base heal — rewards survival and leve
 LEVEL_UP_HEAL_PERCENT = 0.15           # Heals 15% of max HP on level-up (scales with level)
 LEVEL_UP_HP_BONUS = 12                 # More HP per level — 120→132→144→... feels meaningful
 LEVEL_UP_SPEED_BONUS = 0.4             # Slightly more speed per level for better kite feel
-XP_SCALE_FACTOR = 1.40                 # Flatter XP curve — levels come faster in late game
+XP_SCALE_FACTOR = 1.35                 # Flatter XP curve — levels keep flowing at a satisfying pace in mid-late game
 BASE_KILL_XP = 30                       # Higher base kill XP — kills feel rewarding earlier
 KILL_XP_HP_DIVISOR = 8                 # Tougher enemies give proportionally more XP
 
@@ -4457,6 +4457,7 @@ class Game:
             star.twinkle_speed = twinkle_speed
             star.twinkle_offset = twinkle_offset
             star.base_color = star_base_color  # Store for twinkling updates
+            star.base_scale = star_size  # Store for scale twinkling
             self.stars.append(star)
 
         # Nebula clouds — large translucent colored quads for atmospheric depth
@@ -8158,6 +8159,10 @@ def game_update():
             # of their proper colors. Use _c255_color() to normalize.
             sr, sg, sb = _c255_color(bc)
             star.color = color.rgba(sr, sg, sb, alpha)
+            # Subtle scale twinkle — stars gently pulse in size as well as
+            # brightness, making the starfield feel more dynamic and alive
+            # instead of static dots that only change in opacity.
+            star.scale = star.base_scale * (0.85 + 0.3 * twinkle)
         game._update_hud()
         return
 
@@ -8168,8 +8173,14 @@ def game_update():
         game.cam_target_pitch -= mouse.velocity[1] * CAMERA_PITCH_SPEED
         game.cam_target_pitch = max(CAMERA_PITCH_MIN, min(CAMERA_PITCH_MAX, game.cam_target_pitch))
     # Smooth camera rotation
-    game.cam_yaw = lerp(game.cam_yaw, game.cam_target_yaw, time.dt * CAMERA_YAW_SMOOTH)
-    game.cam_pitch = lerp(game.cam_pitch, game.cam_target_pitch, time.dt * CAMERA_PITCH_SMOOTH)
+    # Frame-rate-independent exponential smoothing — the old lerp(a, b, dt * rate)
+    # formula overshot at high framerates (144Hz camera snapped ~1.4x faster than
+    # 60Hz). The exp form is exact at any framerate, matching the fix already
+    # applied to player movement.
+    yaw_alpha = 1.0 - math.exp(-CAMERA_YAW_SMOOTH * time.dt)
+    pitch_alpha = 1.0 - math.exp(-CAMERA_PITCH_SMOOTH * time.dt)
+    game.cam_yaw = lerp(game.cam_yaw, game.cam_target_yaw, yaw_alpha)
+    game.cam_pitch = lerp(game.cam_pitch, game.cam_target_pitch, pitch_alpha)
     game._update_camera_orbit()
 
     # ── Player Movement (camera-relative) ──
@@ -11377,6 +11388,10 @@ def game_update():
         # from 0-1 to 0-255 with _c255_color() before passing to color.rgba().
         sr, sg, sb = _c255_color(bc)
         star.color = color.rgba(sr, sg, sb, alpha)
+        # Subtle scale twinkle — stars gently pulse in size as well as
+        # brightness, making the starfield feel more dynamic and alive
+        # instead of static dots that only change in opacity.
+        star.scale = star.base_scale * (0.85 + 0.3 * twinkle)
 
     # ── Nebula Cloud Drift ──
     for cloud in game.nebula_clouds:

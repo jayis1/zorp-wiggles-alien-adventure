@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.27.1 — 3D!)
+## Features (v2.27.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -402,6 +402,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.27.2 — Frame-Rate Independent Camera, XP Curve Tuning & Visual Polish
+- **Frame-rate independent camera smoothing**: The orbit camera's yaw and pitch smoothing now uses proper exponential smoothing (`1 - exp(-rate * dt)`) instead of the frame-rate-dependent `lerp(a, b, dt * rate)` formula. Previously, high-refresh-rate monitors (144Hz) made the camera smooth ~1.4x faster than at 60Hz, causing the camera to feel snappy on some hardware and sluggish on others. Now the camera feels identical whether running at 30, 60, 144, or 240 FPS — matching the fix already applied to player movement in v2.25.1
+- **Flatter XP progression curve**: The XP-to-next-level scaling factor has been reduced from 1.40 to 1.35, keeping level-ups flowing at a more satisfying pace in the mid-to-late game. At level 10, the XP needed drops from ~1653 to ~1245 — a meaningful reduction that makes sustained play sessions feel more rewarding without making early game too fast. The curve is still exponential so late levels remain challenging, but the wall is less steep and each level feels earned rather than grueling
+- **Snappier player deceleration**: Player deceleration increased from 25.0 to 32.0, making stops feel more responsive while preserving the alien's signature squishy slide. The stop squish animation (added in v2.24.1) now triggers more reliably since the player drops below the stop-squish threshold faster, making the \"landing\" feel on stops more consistent and weighty
+- **Star scale twinkling**: The alien starfield now twinkles in size as well as brightness — each star gently pulses between 85% and 115% of its base scale in sync with its existing brightness oscillation. Previously stars only changed in opacity (alpha), which was subtle and easy to miss. The added scale oscillation makes the sky feel more dynamic and alive, complementing the existing per-star twinkle speed and color variety for a richer atmospheric experience
 
 ### v2.27.0 — Combo Break Shatter, Enemy Pack Aggro & Speed Boost FOV
 - **Combo Break Shatter**: When a kill combo of x3 or higher expires (the 5-second timer runs out without a kill to refresh it), a dramatic red "COMBO BROKEN! xN" announcement now pops in the center of the screen with shatter particles and screen shake — making losing a high combo feel impactful instead of the combo silently vanishing. The announcement uses the same pop-in/hold/fade-out animation pattern as the multi-kill announcement for visual consistency. Previously, a combo just disappeared with no feedback; now the player gets a clear, visceral cue that their streak ended, which makes maintaining combos feel more meaningful and rewarding. The effect only triggers for combos of x3+ so early small combos don't clutter the screen
