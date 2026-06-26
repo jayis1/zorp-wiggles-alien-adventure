@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.26.1"
+VERSION = "2.27.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -543,6 +543,41 @@ COMBO_SCORE_BONUS_PER_TIER = 0.08  # +8% score per combo tier (up from 6%)
 COMBO_DISPLAY_LIFETIME = 2.5
 COMBO_MAX_TIER = 20  # Combo XP/score multipliers scale up to tier 20 (was 10) — rewards high-skill sustained chains
 COMBO_BAR_REFRESH_FLASH_DURATION = 0.25  # How long the combo timer bar flashes green on each kill that extends the combo
+# ── Combo Break Shatter ── When a combo of x3+ expires (timer runs out without
+# a kill to refresh it), a red "COMBO BROKEN!" text pops and shatter particles
+# burst from Zorp. This makes losing a high combo feel impactful instead of
+# the combo silently disappearing — the player gets clear feedback that their
+# streak ended, which makes maintaining combos feel more meaningful. Only
+# triggers for combos of x3 or higher so early small combos don't spam the
+# screen. The announcement uses the same pop-in/hold/fade-out animation
+# pattern as the multi-kill announcement for visual consistency.
+COMBO_BREAK_MIN_TIER = 3          # Minimum combo count to trigger the break effect
+COMBO_BREAK_ANNOUNCE_DURATION = 1.2  # How long the "COMBO BROKEN!" text stays visible
+COMBO_BREAK_PARTICLE_COUNT = 14   # Red shatter particles on combo break
+COMBO_BREAK_SCREEN_SHAKE = 0.25   # Screen shake intensity on combo break
+
+# ─── Enemy Pack Aggro ──────────────────────────────────────────────────────────
+# When an enemy detects the player, nearby idle (non-alerted) enemies within
+# PACK_AGGRO_RADIUS also get alerted — creating dynamic pack behavior where
+# aggroing one enemy can cascade to nearby enemies. This makes combat more
+# tactical: the player must consider which enemies are near each other before
+# engaging, and dense enemy clusters become more dangerous than isolated foes.
+# Only alerts enemies that are already within their own detect range of the
+# player, so far-away enemies don't magically aggro through walls. The chain
+# has a cooldown per source enemy so it doesn't fire every frame.
+PACK_AGGRO_RADIUS = 12.0          # How far aggro chains to nearby idle enemies
+PACK_AGGRO_MAX_CHAIN = 4          # Max additional enemies alerted per trigger
+PACK_AGGRO_COOLDOWN = 3.0         # Cooldown before an enemy can chain-aggro again
+
+# ─── Speed Boost FOV Widening ──────────────────────────────────────────────────
+# When the Speed Boost power-up is active, the camera FOV slightly widens to
+# create a subtle "rushing forward" speed sensation — complementing the
+# existing dash FOV zoom but gentler and persistent for the buff duration.
+# The FOV smoothly transitions to the boosted value when the buff activates
+# and back to normal when it expires, using the same lerp pattern as the
+# dash FOV system for consistency.
+SPEED_BOOST_FOV = 80              # FOV during speed boost (slightly wider than 75 normal)
+SPEED_BOOST_FOV_LERP_SPEED = 6.0  # How fast FOV transitions to/from boosted value
 
 # ─── Weapon Upgrade (Spread Shot) ────────────────────────────────────────────
 WEAPON_UPGRADE_DURATION = 8.0
@@ -2210,6 +2245,12 @@ class Enemy(Entity):
         self.alert_indicator_timer = 0.0      # How long the alert "!" stays visible
         self.spawn_time = 0.0                  # Set by game_update when spawned — tracks spawn age for grace period
         self._attack_windup_active = False    # True while attack windup telegraph is visually applying
+
+        # ── Pack Aggro Cooldown ── Cooldown before this enemy can chain-aggro
+        # nearby idle enemies when it detects the player. Prevents every frame
+        # from re-triggering the chain. Set to 0 initially so the first
+        # detection can chain immediately.
+        self.pack_aggro_cd = 0.0
 
         # ── Chase Acceleration Ramp ── When the enemy first detects the player,
         # this timer counts down from ENEMY_CHASE_RAMP_DURATION to 0. While > 0,
@@ -4169,6 +4210,13 @@ class Game:
         self.max_combo = 0  # Track highest combo reached in this run
         self.combo_bar_refresh_flash = 0.0  # Timer for combo bar green flash on each kill
 
+        # ── Combo Break Shatter ── When a combo of x3+ expires, a red
+        # "COMBO BROKEN!" announcement appears with shatter particles.
+        # Tracks the announcement timer and the combo count that was broken
+        # (for display in the text).
+        self.combo_break_announce_timer = 0.0
+        self.combo_break_count = 0  # The combo count that was lost
+
         # Multi-Kill system — tracks rapid kills within a short window for
         # dramatic announcements ("DOUBLE KILL!", "TRIPLE KILL!", etc.)
         self.multi_kill_count = 0           # Kills in the current window
@@ -4922,7 +4970,7 @@ class Game:
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
-                      'boss_tension_vignette', 'multi_kill_text',
+                      'boss_tension_vignette', 'multi_kill_text', 'combo_break_text',
                       'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
                       'heal_flash', 'combo_edge_glow', 'threat_counter_text',
                       'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
@@ -5767,6 +5815,15 @@ class Game:
         # kill 2+ enemies in rapid succession (Double Kill, Triple Kill, etc.)
         self.multi_kill_text = Text(
             text='', position=(0, 0.12), scale=3.0, color=color.rgba(255, 100, 50, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # Combo Break announcement — red "COMBO BROKEN!" text that appears when
+        # a combo of x3+ expires, using the same pop/hold/fade animation pattern
+        # as the multi-kill announcement. Positioned slightly below the multi-kill
+        # text so they don't overlap if both happen to be showing.
+        self.combo_break_text = Text(
+            text='', position=(0, 0.04), scale=2.5, color=color.rgba(255, 50, 50, 0),
             origin=(0, 0), visible=False,
         )
 
@@ -7014,6 +7071,38 @@ class Game:
         else:
             self.multi_kill_text.visible = False
 
+        # ── Combo Break Announcement ── Display a red "COMBO BROKEN!" text when
+        # a combo of x3+ expires, using the same pop-in/hold/fade-out animation
+        # pattern as the multi-kill announcement for visual consistency. The
+        # text shows the lost combo count so the player knows what they lost.
+        if self.combo_break_announce_timer > 0:
+            self.combo_break_text.visible = True
+            self.combo_break_text.text = f'COMBO BROKEN! x{self.combo_break_count}'
+            announce_progress = 1.0 - (self.combo_break_announce_timer / COMBO_BREAK_ANNOUNCE_DURATION)
+            # Three-phase animation: pop-in, hold, fade-out
+            if announce_progress < 0.2:
+                # Pop in with slight overshoot
+                pop_t = announce_progress / 0.2
+                scale = 2.5 * (0.5 + 0.5 * pop_t) * (1.0 + 0.25 * math.sin(pop_t * math.pi))
+            elif announce_progress < 0.7:
+                # Hold steady
+                scale = 2.5
+            else:
+                # Fade out and shrink slightly
+                fade_t = (announce_progress - 0.7) / 0.3
+                scale = 2.5 * (1.0 - fade_t * 0.2)
+            self.combo_break_text.scale = scale
+            # Alpha: full for first 70%, then fade out
+            if announce_progress < 0.7:
+                alpha = 255
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                alpha = int(255 * (1.0 - fade_t))
+            # Red color, brighter for higher lost combos
+            self.combo_break_text.color = color.rgba(255, 50, 50, alpha)
+        else:
+            self.combo_break_text.visible = False
+
         # ── Pickup Streak HUD ── Display the current consecutive pickup streak
         # count and a timer bar showing time remaining before the streak resets.
         # Shows when the streak is 2+ and the display timer is still active.
@@ -8203,27 +8292,35 @@ def game_update():
         destroy(afterimage, delay=DASH_AFTERIMAGE_DURATION)
     else:
         # Return FOV to normal when not dashing and not in kill zoom
+        # ── Speed Boost FOV Widening ── When the Speed Boost power-up is
+        # active, the camera FOV slightly widens for a "rushing forward"
+        # speed sensation. This is gentler than the dash FOV zoom and
+        # persists for the buff duration. Takes priority over the normal
+        # FOV recovery but yields to kill zoom (which is a higher-priority
+        # cinematic effect). When speed boost expires, the FOV smoothly
+        # lerps back to normal using the same ease-out pattern.
+        speed_boost_fov_active = p.speed_boost_timer > 0
+        target_fov_normal = SPEED_BOOST_FOV if speed_boost_fov_active else DASH_FOV_NORMAL
         if game.kill_fov_timer > 0:
             game.kill_fov_timer -= time.dt
             # Lerp back to normal FOV after kill zoom punch
-            target_fov = DASH_FOV_NORMAL
-            camera.fov = lerp(camera.fov, target_fov, time.dt * CAMERA_KILL_ZOOM_LERP_SPEED)
-        elif abs(camera.fov - DASH_FOV_NORMAL) > 0.5:
+            camera.fov = lerp(camera.fov, target_fov_normal, time.dt * CAMERA_KILL_ZOOM_LERP_SPEED)
+        elif abs(camera.fov - target_fov_normal) > 0.5:
             # ── Dash-End FOV Ease-Out ── Two-phase recovery: fast initial snap
             # covers most of the FOV gap quickly (snappy "landing" from the
             # wide dash FOV), then a slower ease-out for the final few degrees
             # so the FOV gently settles to normal instead of stopping abruptly.
             # This mirrors the feel of decelerating from a sprint — you don't
             # go from full speed to dead stop, you ease into it.
-            fov_gap = abs(camera.fov - DASH_FOV_NORMAL)
+            fov_gap = abs(camera.fov - target_fov_normal)
             if fov_gap > DASH_FOV_EASE_SPLIT:
                 # Fast phase — snappy recovery
-                camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_EASE_FAST_SPEED)
+                camera.fov = lerp(camera.fov, target_fov_normal, time.dt * DASH_FOV_EASE_FAST_SPEED)
             else:
                 # Slow ease-out phase — gentle settle
-                camera.fov = lerp(camera.fov, DASH_FOV_NORMAL, time.dt * DASH_FOV_EASE_SLOW_SPEED)
+                camera.fov = lerp(camera.fov, target_fov_normal, time.dt * DASH_FOV_EASE_SLOW_SPEED)
         else:
-            camera.fov = DASH_FOV_NORMAL
+            camera.fov = target_fov_normal
 
     # Shield visual update
     p.shield_visual.visible = p.shield_timer > 0
@@ -8590,6 +8687,21 @@ def game_update():
                 # Refresh combo timer so the streak continues
                 game.combo_timer = COMBO_TIMEOUT
             else:
+                # ── Combo Break Shatter ── When a combo of x3+ expires without
+                # being refreshed, trigger a dramatic "COMBO BROKEN!" announcement
+                # with red shatter particles and screen shake. This makes losing
+                # a high combo feel impactful instead of the combo silently
+                # vanishing — the player gets clear feedback that their streak
+                # ended. Only triggers for combos >= COMBO_BREAK_MIN_TIER so
+                # early small combos don't clutter the screen.
+                if game.combo_count >= COMBO_BREAK_MIN_TIER:
+                    game.combo_break_announce_timer = COMBO_BREAK_ANNOUNCE_DURATION
+                    game.combo_break_count = game.combo_count
+                    # Red shatter particles burst from the player
+                    game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                          color.rgb(255, 50, 50),
+                                          count=COMBO_BREAK_PARTICLE_COUNT)
+                    game.screen_shake = max(game.screen_shake, COMBO_BREAK_SCREEN_SHAKE)
                 game.combo_count = 0
     # BUG FIX: combo_display_timer was decremented in both _update_hud() and
     # (implicitly via game global references), causing a double-decrement per frame.
@@ -8604,6 +8716,10 @@ def game_update():
             game.multi_kill_count = 0  # Window expired, reset the counter
     if game.multi_kill_announce_timer > 0:
         game.multi_kill_announce_timer -= time.dt
+
+    # Combo break announcement timer — counts down the display duration
+    if game.combo_break_announce_timer > 0:
+        game.combo_break_announce_timer -= time.dt
 
     # ── Pickup Streak Timer ── Count down the window between pickups. If it
     # expires, the streak resets to 0. The display timer fades independently
@@ -9058,6 +9174,50 @@ def game_update():
                 # enemy smoothly accelerates from wander speed to full chase
                 # speed instead of snapping instantly.
                 enemy.chase_ramp_timer = ENEMY_CHASE_RAMP_DURATION
+                # ── Pack Aggro ── When this enemy detects the player, nearby
+                # idle (non-alerted) enemies within PACK_AGGRO_RADIUS also get
+                # alerted — creating dynamic pack behavior where aggroing one
+                # enemy can cascade to nearby enemies. Only chains to enemies
+                # that are within their own detect range of the player (so
+                # far-away enemies don't magically aggro) and have passed their
+                # spawn grace period. Limited to PACK_AGGRO_MAX_CHAIN additional
+                # enemies per trigger. The source enemy gets a cooldown so it
+                # doesn't chain-aggro every frame. This makes combat more
+                # tactical: dense enemy clusters are more dangerous than
+                # isolated foes, and the player must consider positioning.
+                if enemy.pack_aggro_cd <= 0:
+                    enemy.pack_aggro_cd = PACK_AGGRO_COOLDOWN
+                    chain_count = 0
+                    for other in game.enemies:
+                        if chain_count >= PACK_AGGRO_MAX_CHAIN:
+                            break
+                        if other is enemy or not other.alive or other.dying:
+                            continue
+                        if other.alerted:
+                            continue
+                        # Check spawn grace period for the other enemy
+                        other_spawn_age = game.t - other.spawn_time if hasattr(other, 'spawn_time') and other.spawn_time > 0 else 999
+                        if other_spawn_age < ENEMY_SPAWN_GRACE_PERIOD:
+                            continue
+                        # Only chain to enemies that can detect the player
+                        other_dist = (other.position - p.position).length()
+                        if other_dist > other.detect_range:
+                            continue
+                        # Check proximity to the source enemy
+                        pack_dist = (other.position - enemy.position).length()
+                        if pack_dist < PACK_AGGRO_RADIUS:
+                            other.alerted = True
+                            other.alert_flash_timer = ENEMY_ALERT_FLASH_DURATION
+                            other.color = color.yellow
+                            invoke(setattr, other, 'color', other.original_color, delay=ENEMY_ALERT_FLASH_DURATION)
+                            other.chase_ramp_timer = ENEMY_CHASE_RAMP_DURATION
+                            chain_count += 1
+                            # Subtle visual cue — small orange particle puff
+                            game._spawn_particles(other.position + Vec3(0, 0.5, 0),
+                                                  color.rgb(255, 160, 40), count=3)
+            # Decrement pack aggro cooldown
+            if enemy.pack_aggro_cd > 0:
+                enemy.pack_aggro_cd -= time.dt
             # Chase player
             # Time Warp slows all enemies
             speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0

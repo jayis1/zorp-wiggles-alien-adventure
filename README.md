@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.26.1 — 3D!)
+## Features (v2.27.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -44,10 +44,12 @@ python game.py
 - **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact! **Critical Hit Chain**: land 3+ consecutive crits within 3 seconds to activate a **3x damage bonus** on subsequent crits — the HUD shows a gold "CRIT CHAIN xN" counter that turns orange-red when the bonus is active, rewarding sustained precision fire! **Critical Hit Pierce**: critical hits have a 40% chance to pierce through the struck enemy and continue flying — the projectile turns gold and can hit up to 3 enemies in a line, rewarding precision aim when enemies are lined up!
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool!
 - **Combo Shield** — reach a x15 kill combo to earn a golden one-time shield that absorbs the next hit without resetting your combo streak!
+- **Combo Break Shatter** — when a combo of x3+ expires, a dramatic red "COMBO BROKEN!" announcement pops with shatter particles and screen shake, making losing a streak feel impactful instead of silently vanishing!
+- **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 5 seconds
-- **Speed Boost** — 1.8x speed for 6 seconds
+- **Speed Boost** — 1.8x speed for 6 seconds with subtle FOV widening for a rushing sensation
 - **Health Potion** — restores 55 HP instantly; excess healing at full HP converts to a temporary **Overheal Barrier** (up to 60 extra HP that decays over time)!
 - **Magnet Core** — boosts item pull radius 2.5x and pull speed 2x for 6 seconds!
 - **Time Warp** — slows ALL enemies to 30% speed for 6 seconds! Enemies tint blue while affected
@@ -398,6 +400,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.27.0 — Combo Break Shatter, Enemy Pack Aggro & Speed Boost FOV
+- **Combo Break Shatter**: When a kill combo of x3 or higher expires (the 5-second timer runs out without a kill to refresh it), a dramatic red "COMBO BROKEN! xN" announcement now pops in the center of the screen with shatter particles and screen shake — making losing a high combo feel impactful instead of the combo silently vanishing. The announcement uses the same pop-in/hold/fade-out animation pattern as the multi-kill announcement for visual consistency. Previously, a combo just disappeared with no feedback; now the player gets a clear, visceral cue that their streak ended, which makes maintaining combos feel more meaningful and rewarding. The effect only triggers for combos of x3+ so early small combos don't clutter the screen
+- **Enemy Pack Aggro**: When an enemy detects the player, nearby idle (non-alerted) enemies within 12 units also get alerted — creating dynamic pack behavior where aggroing one enemy can cascade to nearby enemies. Up to 4 additional enemies are alerted per trigger, and each enemy has a 3-second cooldown before it can chain-aggro again. Only enemies that are within their own detect range of the player and have passed their spawn grace period can be chain-aggroed, so far-away enemies don't magically sense the player through walls. This makes combat more tactical: dense enemy clusters are more dangerous than isolated foes, and the player must consider which enemies are near each other before engaging. A small orange particle puff on each chain-aggroed enemy provides a visual cue for the cascade
+- **Speed Boost FOV Widening**: When the Speed Boost power-up is active, the camera FOV slightly widens from 75° to 80°, creating a subtle "rushing forward" speed sensation that complements the existing dash FOV zoom but is gentler and persists for the entire buff duration. The FOV smoothly transitions to the boosted value when the buff activates and lerps back to normal when it expires, using the same ease-out pattern as the dash FOV system for consistency. This makes the Speed Boost feel more visceral — you can see and feel the speed increase through the camera, not just through movement
 
 ### v2.26.1 — Enemy Attack Lunge, Biome Spawn Portals & Magnetic Pull Wobble
 - **Enemy attack forward lunge**: When enemies land a melee attack, they now physically lunge forward toward the player a short distance instead of staying rooted in place. This makes melee combat feel far more dynamic — enemies commit to a direction when they strike, making attacks readable and dodgeable. The lunge distance scales inversely with enemy size: small fast enemies like Swarm Mites lunge further (up to ~2.3 units) while large enemies like Plasma Drakes barely move (~0.7 units), matching their weight class. Wall-sliding is handled so lunging enemies don't get stuck on obstacles. This single change makes the existing attack windup telegraph twice as useful — you can now see where the enemy is going to strike and dash out of the way, making melee dodging a real skill play
