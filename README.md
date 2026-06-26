@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.27.2 — 3D!)
+## Features (v2.28.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -45,6 +45,9 @@ python game.py
 - **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool! **Dash Strike kills** now trigger the full kill feedback suite — hit-stop freeze, FOV punch, screen shake, kill flash, combo milestone fireworks, combo shield, overkill/execution bonuses, and boss slow-mo — making dash kills just as satisfying as ranged kills
 - **Combo Shield** — reach a x15 kill combo to earn a golden one-time shield that absorbs the next hit without resetting your combo streak!
 - **Combo Break Shatter** — when a combo of x3+ expires, a dramatic red "COMBO BROKEN!" announcement pops with shatter particles and screen shake, making losing a streak feel impactful instead of silently vanishing!
+- **Flawless Kill Streak** — track consecutive kills made without taking any damage! At every 5 flawless kills, bonus XP is awarded with a golden "✦ FLAWLESS!" announcement and particle burst. Taking damage resets the streak (with a "Flawless streak broken!" message if you had 3+). The gold HUD counter shows your current streak, and the death screen reports your best flawless streak. Rewards skillful dodging and damage avoidance!
+- **Emergency Health Potion Magnet** — when your HP drops below 25%, all Health Potions within 18 units are magnetically pulled toward you at accelerated speed — a survival instinct that prevents frustrating deaths where a potion was just out of reach!
+- **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs!
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
@@ -83,7 +86,7 @@ python game.py
 - Satisfying collectible pickup burst particles with magnetic pull snap
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
-- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak)
+- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak, best flawless streak)
 - Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
 - Enemy respawning and loot drops

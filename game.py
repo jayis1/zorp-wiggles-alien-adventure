@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.27.2"
+VERSION = "2.28.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -220,6 +220,43 @@ EXECUTION_XP_BONUS_BASE = 15       # Base bonus XP for executing an enraged enem
 EXECUTION_XP_BONUS_PER_HP = 0.1   # Additional XP per point of enemy max HP
 EXECUTION_PARTICLE_COUNT = 12     # Gold particle burst on execution
 EXECUTION_SCREEN_SHAKE = 0.2      # Screen shake on execution
+
+# ─── Flawless Kill Streak ──────────────────────────────────────────────────────
+# Tracks consecutive kills made WITHOUT taking any damage. At milestones (every
+# FLAWLESS_MILESTONE kills), bonus XP is awarded with a unique "FLAWLESS!"
+# announcement and golden particle burst. Taking any damage resets the streak to 0.
+# This rewards skillful dodging and damage avoidance — the player who never gets
+# hit builds up an impressive streak and earns significantly more XP. The streak
+# runs parallel to the combo system but is specifically about NOT taking damage,
+# complementing the combo (which is about rapid kills) and multi-kill (which is
+# about simultaneous kills).
+FLAWLESS_MILESTONE = 5             # Kills per milestone (every 5 flawless kills = bonus)
+FLAWLESS_XP_PER_MILESTONE = 50    # Bonus XP per milestone tier
+FLAWLESS_DISPLAY_LIFETIME = 3.0   # How long the flawless streak HUD text stays visible
+FLAWLESS_COLOR = color.rgb(255, 215, 0)  # Gold — visually distinct from combo/multikill
+FLAWLESS_MAX_TIER = 20            # Cap on streak for display/XP scaling
+
+# ─── Emergency Health Potion Magnet ───────────────────────────────────────────
+# When the player's HP drops below EMERGENCY_HP_THRESHOLD, all Health Potions
+# within EMERGENCY_POTION_PULL_RADIUS are magnetically pulled toward the player
+# — a much larger radius than the normal pull. This is a "survival instinct"
+# mechanic: when near death, Zorp can sense health potions from far away and
+# they rush toward him. The emergency pull uses a stronger pull speed so the
+# potion arrives quickly in a clutch moment. This prevents frustrating deaths
+# where a health potion was just out of reach.
+EMERGENCY_HP_THRESHOLD = 0.25      # HP fraction below which emergency magnet activates
+EMERGENCY_POTION_PULL_RADIUS = 18.0  # How far the emergency pull reaches (much larger than normal)
+EMERGENCY_POTION_PULL_SPEED = 22.0  # Faster pull speed for emergency potions
+
+# ─── Pickup Streak Score Multiplier ────────────────────────────────────────────
+# When the player is on a pickup streak of PICKUP_STREAK_SCORE_TIER1 (10+), each
+# collectible is worth 1.5x score. At PICKUP_STREAK_SCORE_TIER2 (20+), 2x score.
+# This rewards the item-gathering playstyle and makes long collection runs feel
+# increasingly lucrative — synergizing with the existing pickup streak bonus XP.
+PICKUP_STREAK_SCORE_TIER1 = 10    # Streak needed for 1.5x score multiplier
+PICKUP_STREAK_SCORE_TIER2 = 20    # Streak needed for 2x score multiplier
+PICKUP_STREAK_SCORE_MULT_TIER1 = 1.5
+PICKUP_STREAK_SCORE_MULT_TIER2 = 2.0
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -1791,6 +1828,7 @@ class Player(Entity):
         self.level_up_pending = False
         self.damage_taken_flag = False  # Set by take_damage, checked by game_update for HP bar shake
         self.xp_gained_flag = False      # Set by gain_xp, checked by _update_hud for XP bar flash
+        self.flawless_reset_flag = False  # Set by take_damage, checked by game_update to reset flawless streak
 
         # Dash ability
         self.dash_timer = 0
@@ -2024,6 +2062,10 @@ class Player(Entity):
         self.hp -= amount
         self.invuln_timer = PLAYER_INVULN_DURATION
         self.damage_taken_flag = True  # Flag for HP bar shake trigger
+        # Flawless streak reset flag — game_update checks this to reset the
+        # flawless kill streak. Using a flag instead of direct game reference
+        # because Player doesn't hold a reference to the Game object.
+        self.flawless_reset_flag = True
         # Damage scale punch — trigger a brief squish reaction so the player
         # model visibly reacts to being hit, not just the HP bar
         self.damage_scale_punch = 1.0
@@ -4245,12 +4287,22 @@ class Game:
         self.max_combo = 0  # Track highest combo reached in this run
         self.combo_bar_refresh_flash = 0.0  # Timer for combo bar green flash on each kill
 
-        # ── Combo Break Shatter ── When a combo of x3+ expires, a red
+        # Combo Break Shatter: When a combo of x3+ expires, a red
         # "COMBO BROKEN!" announcement appears with shatter particles.
         # Tracks the announcement timer and the combo count that was broken
         # (for display in the text).
         self.combo_break_announce_timer = 0.0
         self.combo_break_count = 0  # The combo count that was lost
+
+        # ── Flawless Kill Streak ── Tracks consecutive kills made without
+        # taking any damage. At milestones (every FLAWLESS_MILESTONE kills),
+        # bonus XP is awarded with a golden "FLAWLESS!" announcement. Taking
+        # ANY damage resets the streak to 0. The display timer controls how
+        # long the streak text stays visible on the HUD. max_flawless tracks
+        # the highest streak achieved this run for the death screen summary.
+        self.flawless_streak = 0              # Current consecutive flawless kills
+        self.flawless_display_timer = 0.0    # How long the streak HUD text stays visible
+        self.max_flawless = 0                 # Highest flawless streak this run
 
         # Multi-Kill system — tracks rapid kills within a short window for
         # dramatic announcements ("DOUBLE KILL!", "TRIPLE KILL!", etc.)
@@ -5015,7 +5067,9 @@ class Game:
                       'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash',
                       'radar_bg',
                       'biome_banner_text_ent', 'biome_banner_flash',
-                      'boss_spawn_warning_text', 'boss_spawn_flash'):
+                      'boss_spawn_warning_text', 'boss_spawn_flash',
+                      'pickup_streak_text', 'pickup_streak_bar_bg', 'pickup_streak_bar',
+                      'crit_chain_text', 'flawless_text'):
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -5519,7 +5573,7 @@ class Game:
             f'Total Kills: {total_kills}   Items Collected: {total_items}',
             f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
             f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
-            f'Missions Completed: {p.completed_missions}',
+            f'Best Flawless Streak: x{self.max_flawless}   Missions Completed: {p.completed_missions}',
             f'Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
         ]
@@ -5850,6 +5904,15 @@ class Game:
         # when the bonus multiplier is active (3+ consecutive crits).
         self.crit_chain_text = Text(
             text='', position=(0.35, 0.12), scale=1.3, color=color.rgb(255, 200, 0),
+            visible=False, origin=(0, 0),
+        )
+
+        # ── Flawless Kill Streak HUD ── Displays the current consecutive
+        # flawless kill streak (kills without taking damage). Shows
+        # "✦ FLAWLESS xN" in gold when the streak is 2+. Positioned below
+        # the crit chain display for a clean stack of secondary stats.
+        self.flawless_text = Text(
+            text='', position=(0.35, 0.08), scale=1.3, color=FLAWLESS_COLOR,
             visible=False, origin=(0, 0),
         )
 
@@ -7201,6 +7264,27 @@ class Game:
         else:
             self.crit_chain_text.visible = False
 
+        # ── Flawless Kill Streak HUD ── Display the current consecutive
+        # flawless kill streak (kills without taking damage). Shows at 2+
+        # kills. The gold text pulses subtly to draw attention. The display
+        # timer keeps it visible for a few seconds after the last kill, then
+        # it fades out. Higher streaks get slightly bigger text.
+        if self.flawless_streak >= 2 and self.flawless_display_timer > 0:
+            self.flawless_text.visible = True
+            # Fade out in the last 0.5 seconds
+            flawless_alpha = min(1.0, self.flawless_display_timer / 0.5)
+            # Subtle pulse for visual interest
+            pulse = 0.85 + 0.15 * math.sin(self.t * 6)
+            self.flawless_text.color = color.rgba(255, 215, 0, int(255 * flawless_alpha * pulse))
+            # Scale slightly with streak count
+            flawless_scale = 1.3 + min(self.flawless_streak * 0.03, 0.4)
+            self.flawless_text.scale = flawless_scale
+            self.flawless_text.text = f'✦ FLAWLESS x{self.flawless_streak}'
+            # Count down the display timer
+            self.flawless_display_timer -= time.dt
+        else:
+            self.flawless_text.visible = False
+
         # Weapon upgrade indicator
         if p.weapon_upgrade_timer > 0:
             self.weapon_text.text = f'SPREAD SHOT: {p.weapon_upgrade_timer:.1f}s'
@@ -7802,6 +7886,9 @@ class Game:
         Called from every kill site (projectile, fireball AOE, pulse wave).
         Counts kills within a MULTI_KILL_WINDOW-second window and triggers
         a dramatic announcement when 2+ kills happen in rapid succession.
+
+        Also delegates to _register_flawless_kill() so every kill is counted
+        toward the Flawless Kill Streak (kills without taking damage).
         """
         self.multi_kill_count += 1
         self.multi_kill_timer = MULTI_KILL_WINDOW
@@ -7817,6 +7904,31 @@ class Game:
                 self._spawn_particles(self.player.position + Vec3(0, 2, 0),
                                       color.rgb(255, 100, 50), count=8)
                 self.screen_shake = max(self.screen_shake, 0.2)
+        # Track flawless kill streak (resets on taking damage)
+        self._register_flawless_kill()
+
+    def _register_flawless_kill(self):
+        """Track a flawless kill (kill without taking damage) for the Flawless
+        Kill Streak system. At every FLAWLESS_MILESTONE (5) kills, award bonus
+        XP with a golden "FLAWLESS!" announcement and particle burst. The
+        streak is reset to 0 whenever the player takes damage.
+        """
+        self.flawless_streak += 1
+        self.flawless_display_timer = FLAWLESS_DISPLAY_LIFETIME
+        self.max_flawless = max(self.max_flawless, self.flawless_streak)
+        # Award bonus XP at milestones (every 5 flawless kills)
+        if self.flawless_streak > 0 and self.flawless_streak % FLAWLESS_MILESTONE == 0:
+            tier = self.flawless_streak // FLAWLESS_MILESTONE
+            bonus_xp = FLAWLESS_XP_PER_MILESTONE * tier
+            self.player.gain_xp(bonus_xp)
+            self.add_message(f"✦ FLAWLESS x{self.flawless_streak}! +{bonus_xp} bonus XP!")
+            # Golden particle burst around the player
+            self._spawn_particles(
+                self.player.position + Vec3(0, 1.5, 0),
+                FLAWLESS_COLOR,
+                count=15 + min(tier, 4) * 3,
+            )
+            self.screen_shake = max(self.screen_shake, 0.25)
 
     def _check_achievements(self):
         """Check all achievement conditions and unlock any that are met."""
@@ -9051,6 +9163,16 @@ def game_update():
     if p.damage_taken_flag:
         p.damage_taken_flag = False
         game.hp_bar_shake_timer = HP_BAR_SHAKE_DURATION
+
+    # ── Flawless Kill Streak Reset ── When the player takes damage (that
+    # actually reduces HP, not absorbed by shield/overheal), the flawless
+    # kill streak resets to 0. If the streak was 3+ and gets reset, show a
+    # brief "FLAWLESS BROKEN!" message so the player knows what they lost.
+    if p.flawless_reset_flag:
+        p.flawless_reset_flag = False
+        if game.flawless_streak >= 3:
+            game.add_message(f"✦ Flawless streak broken! (was x{game.flawless_streak})")
+        game.flawless_streak = 0
 
     # ── Overheal Absorption Burst ── When the Overheal Barrier absorbs a hit,
     # fire a golden particle burst and expanding ring from the player so the
@@ -11113,6 +11235,19 @@ def game_update():
             level_pull_bonus = (p.level - 1) * COLLECT_PULL_RADIUS_PER_LEVEL
             pull_radius = (COLLECT_PULL_RADIUS + level_pull_bonus) * (MAGNET_PULL_RADIUS_MULT if p.magnet_timer > 0 else 1.0)
             pull_speed = COLLECT_PULL_SPEED * (MAGNET_PULL_SPEED_MULT if p.magnet_timer > 0 else 1.0)
+            # ── Emergency Health Potion Magnet ── When the player's HP is
+            # critically low (below EMERGENCY_HP_THRESHOLD), Health Potions
+            # within a much larger radius are magnetically drawn toward the
+            # player at an accelerated speed. This is a survival mechanic:
+            # when near death, Zorp can sense health potions from far away
+            # and they rush to him, preventing frustrating deaths where a
+            # potion was just out of reach. The emergency pull overrides the
+            # normal pull radius for Health Potions specifically.
+            if (col.name == 'Health Potion' and col.spawn_timer <= 0 and not col.popping
+                    and p.hp < p.max_hp * EMERGENCY_HP_THRESHOLD
+                    and dist < EMERGENCY_POTION_PULL_RADIUS and dist > 0.1):
+                pull_radius = max(pull_radius, EMERGENCY_POTION_PULL_RADIUS)
+                pull_speed = max(pull_speed, EMERGENCY_POTION_PULL_SPEED)
             if dist < pull_radius and dist > 0.1:
                 pull_dir = (p_pos - col.position).normalized()
                 # Acceleration curve: pull gets dramatically stronger as item approaches
@@ -11280,7 +11415,18 @@ def game_update():
                 game.screen_shake = max(game.screen_shake, 0.15)
             else:
                 p.add_item(col.name)
-                p.score += col.value
+                # ── Pickup Streak Score Multiplier ── When on a pickup streak of
+                # 10+, each collectible is worth bonus score (1.5x at 10+, 2x at
+                # 20+). This rewards sustained item-gathering runs and synergizes
+                # with the existing pickup streak bonus XP system. The multiplier
+                # is computed from the current streak BEFORE this pickup is
+                # registered, so reaching x10 starts the bonus on the NEXT pickup.
+                pickup_score_mult = 1.0
+                if game.pickup_streak >= PICKUP_STREAK_SCORE_TIER2:
+                    pickup_score_mult = PICKUP_STREAK_SCORE_MULT_TIER2
+                elif game.pickup_streak >= PICKUP_STREAK_SCORE_TIER1:
+                    pickup_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
+                p.score += int(col.value * pickup_score_mult)
                 p.gain_xp(max(1, col.value // 10))
                 # ── Rarity-Scaled Pickup Burst ── More valuable items produce a
                 # bigger particle burst — grabbing a Plasma Core should feel
@@ -11300,10 +11446,16 @@ def game_update():
                     bp = Entity(model='sphere', color=color.rgb(r_var, g_var, b_var),
                                 scale=random.uniform(0.15, 0.35), position=col.position)
                     game.particles.append((bp, bvel, random.uniform(0.4, 1.0)))
-                game.add_message(f"Found {col.name}! +{col.value} pts")
+                game.add_message(f"Found {col.name}! +{int(col.value * pickup_score_mult)} pts" + (" ✦x2!" if pickup_score_mult >= 2.0 else (" ★1.5x!" if pickup_score_mult >= 1.5 else "")))
             # For power-ups, also give points
             if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover', 'Mirror Shard'):
-                p.score += col.value
+                # Apply pickup streak score multiplier to power-ups too
+                p_score_mult = 1.0
+                if game.pickup_streak >= PICKUP_STREAK_SCORE_TIER2:
+                    p_score_mult = PICKUP_STREAK_SCORE_MULT_TIER2
+                elif game.pickup_streak >= PICKUP_STREAK_SCORE_TIER1:
+                    p_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
+                p.score += int(col.value * p_score_mult)
                 p.gain_xp(max(1, col.value // 10))
             # Start pop animation instead of immediate destroy
             col.popping = True
