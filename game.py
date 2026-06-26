@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.27.0"
+VERSION = "2.27.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1144,6 +1144,15 @@ PLAYER_IDLE_BREATHE_AMOUNT = 0.03  # 3% scale variation — subtle but perceptib
 PLAYER_GLOW_PICKUP_PULSE_DURATION = 0.30  # How long the glow ring flash lasts
 PLAYER_GLOW_PICKUP_PULSE_SCALE = 3.5     # Peak scale multiplier during the flash
 PLAYER_GLOW_PICKUP_PULSE_ALPHA = 180     # Peak alpha during the flash
+# ── Pickup Scale Punch ── When Zorp picks up a collectible, the character model
+# briefly pops up in scale (Y stretch + slight XZ bulge) and settles back — a
+# tactile "yum!" reaction that makes pickups feel physically rewarding instead
+# of just spawning particles. The punch is a quick 0.18s elastic pop, gentler
+# than the damage punch so it composes cleanly with other scale animations.
+PLAYER_PICKUP_PUNCH_DURATION = 0.18   # How long the pickup scale punch lasts (seconds)
+PLAYER_PICKUP_PUNCH_STRETCH = 0.12   # Max Y stretch (0.12 = 12% taller at peak)
+PLAYER_PICKUP_PUNCH_BULGE = 0.06     # Max XZ bulge (0.06 = 6% wider at peak)
+PLAYER_PICKUP_PUNCH_RECOVERY = 12.0  # How fast the punch recovers to normal
 
 # ─── Player Eye Blink ──────────────────────────────────────────────────────────
 # Zorp periodically blinks — a quick Y-scale squish of both eyes that adds
@@ -1948,6 +1957,9 @@ class Player(Entity):
         # expands. Set by game_update on pickup, decays in animate_bob.
         self.glow_pulse_timer = 0.0
         self.glow_pulse_color = None  # (r, g, b) tuple in 0-255 range
+        # Pickup scale punch — brief Y stretch + XZ bulge on collectible pickup
+        # for tactile "got it!" feedback on the character model itself.
+        self.pickup_punch = 0.0  # Decays from 1.0 to 0; while > 0, animate_bob applies the punch
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
@@ -2172,6 +2184,29 @@ class Player(Entity):
                 self.scale_x * stop_xz_bulge,
                 self.scale_y * stop_y_comp,
                 self.scale_z * stop_xz_bulge,
+            )
+
+        # ── Pickup Scale Punch ── When the player collects an item, Zorp briefly
+        # stretches upward (Y) and bulges slightly (XZ) — a tactile "yum!" pop
+        # that makes pickups feel physically rewarding on the character model,
+        # complementing the glow ring pulse and particle burst. The punch uses
+        # a sine-based elastic curve (peaks early, settles smoothly) so it feels
+        # bouncy rather than linear. Decays quickly so rapid pickups chain into
+        # a satisfying sequence of pops. Composes on top of any existing scale.
+        if self.pickup_punch > 0:
+            self.pickup_punch -= time.dt * PLAYER_PICKUP_PUNCH_RECOVERY
+            if self.pickup_punch < 0:
+                self.pickup_punch = 0
+            # punch_t goes from 1.0 → 0.0; use a sine curve so the pop peaks
+            # near the start and settles smoothly (more elastic than linear decay)
+            punch_t = self.pickup_punch
+            elastic = math.sin(punch_t * math.pi * 0.5)  # 0→1→0 smooth arc
+            y_stretch = 1.0 + PLAYER_PICKUP_PUNCH_STRETCH * elastic
+            xz_bulge = 1.0 + PLAYER_PICKUP_PUNCH_BULGE * elastic
+            self.scale = Vec3(
+                self.scale_x * xz_bulge,
+                self.scale_y * y_stretch,
+                self.scale_z * xz_bulge,
             )
 
     def set_facing_from_mouse(self, cam_pivot):
@@ -8236,19 +8271,72 @@ def game_update():
                 if killed:
                     # ── Dash Strike Kill ── Handle the kill the same way projectile
                     # kills are handled: award XP, score, combo, loot, particles.
+                    # IMPROVED: Now includes all the same kill feedback as projectile
+                    # kills — boss slow-mo, overkill/execution bonuses, combo
+                    # milestone fireworks, combo shield, kill flash, hit-stop freeze,
+                    # FOV punch, and combo bar refresh flash — so dashing through
+                    # an enemy to kill it feels just as satisfying as shooting it.
+                    if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                        game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                        game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                        game.add_message("BOSS DOWN! SLOW-MO!")
+                    overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                    is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                     p.add_kill(enemy.name)
                     game.total_kills += 1
                     game._register_kill()
+                    game.kill_flash_timer = KILL_FLASH_DURATION
+                    game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                    if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                        milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                           color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                        for _ in range(COMBO_MILESTONE_PARTICLES):
+                            burst_color = random.choice(milestone_colors)
+                            burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                            game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                        game.screen_shake = max(game.screen_shake, 0.4)
+                        game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                        milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                        milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                        monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                        milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                        p.gain_xp(milestone_xp)
+                    if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                        p.combo_shield_active = True
+                        game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                     combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                     combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                     xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                    if is_overkill:
+                        overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                        xp_gain += overkill_xp
+                        game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                        game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                        game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    if getattr(enemy, 'enraged', False):
+                        exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                        xp_gain += exec_xp
+                        game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                        game._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                        game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                        game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     p.score += int(enemy.max_hp * combo_score_mult)
+                    game.screen_shake = SCREEN_SHAKE_KILL
+                    game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                    game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                    camera.fov = CAMERA_KILL_ZOOM_FOV
+                    if is_overkill:
+                        game.damage_numbers.append(DamageNumber(enemy.position, dash_strike_dmg, is_kill=True, is_overkill=True))
+                    else:
+                        game.damage_numbers.append(DamageNumber(enemy.position, dash_strike_dmg, is_kill=True))
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
                     game.enemy_death_rings.append(EnemyDeathRing(
@@ -8843,23 +8931,30 @@ def game_update():
         # ── Smooth Acceleration/Deceleration ──
         # Instead of instant start/stop, accelerate toward desired velocity and
         # decelerate smoothly for a more polished, weighty movement feel.
+        # IMPROVED: Uses frame-rate-independent exponential smoothing via
+        # 1 - exp(-rate * dt). The old lerp(v, target, dt * rate) formula
+        # overshot at high framerates (144Hz player moved ~1.4x faster than at
+        # 60Hz) and undershot at low framerates. The exp form is exact at any
+        # framerate, so the game feels identical whether running at 30 or 240 FPS.
         target_vel = Vec3(0, 0, 0)
         if move_dir.length() > 0:
             target_vel = move_dir.normalized() * effective_speed
 
         if target_vel.length() > 0.1:
-            # Accelerate toward desired direction
+            # Accelerate toward desired direction (frame-rate-independent)
+            accel_alpha = 1.0 - math.exp(-PLAYER_ACCELERATION * time.dt)
             p.velocity = Vec3(
-                lerp(p.velocity.x, target_vel.x, time.dt * PLAYER_ACCELERATION),
+                lerp(p.velocity.x, target_vel.x, accel_alpha),
                 0,
-                lerp(p.velocity.z, target_vel.z, time.dt * PLAYER_ACCELERATION),
+                lerp(p.velocity.z, target_vel.z, accel_alpha),
             )
         else:
-            # Decelerate to zero
+            # Decelerate to zero (frame-rate-independent)
+            decel_alpha = 1.0 - math.exp(-PLAYER_DECELERATION * time.dt)
             p.velocity = Vec3(
-                lerp(p.velocity.x, 0, time.dt * PLAYER_DECELERATION),
+                lerp(p.velocity.x, 0, decel_alpha),
                 0,
-                lerp(p.velocity.z, 0, time.dt * PLAYER_DECELERATION),
+                lerp(p.velocity.z, 0, decel_alpha),
             )
 
         # Apply velocity if significant
@@ -11210,6 +11305,11 @@ def game_update():
             # pulse at Zorp's position, making pickups feel tactile.
             p.glow_pulse_timer = PLAYER_GLOW_PICKUP_PULSE_DURATION
             p.glow_pulse_color = _c255_color(col.item_color)
+            # ── Pickup Scale Punch ── Trigger a brief character-model pop so
+            # pickups feel tactile on Zorp himself, not just via particles and
+            # ground rings. The punch composes cleanly with other scale
+            # animations (squish, damage punch, stop squish) in animate_bob.
+            p.pickup_punch = 1.0
             # ── Pickup Streak ── Track consecutive rapid pickups for bonus XP
             game._register_pickup_streak()
             # ── Collectible Pickup Ground Ring ── A brief expanding ground ring

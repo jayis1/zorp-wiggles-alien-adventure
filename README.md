@@ -35,14 +35,14 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.27.0 — 3D!)
+## Features (v2.27.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
 - **17 collectible item types** — including **12 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!), **Mirror Shard** (reflects enemy projectiles back at them for 6 seconds!)
 - **18 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!), **Echo Wraith** (spawns decoy clones that confuse the player!)
 - **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact! **Critical Hit Chain**: land 3+ consecutive crits within 3 seconds to activate a **3x damage bonus** on subsequent crits — the HUD shows a gold "CRIT CHAIN xN" counter that turns orange-red when the bonus is active, rewarding sustained precision fire! **Critical Hit Pierce**: critical hits have a 40% chance to pierce through the struck enemy and continue flying — the projectile turns gold and can hit up to 3 enemies in a line, rewarding precision aim when enemies are lined up!
-- **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool!
+- **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool! **Dash Strike kills** now trigger the full kill feedback suite — hit-stop freeze, FOV punch, screen shake, kill flash, combo milestone fireworks, combo shield, overkill/execution bonuses, and boss slow-mo — making dash kills just as satisfying as ranged kills
 - **Combo Shield** — reach a x15 kill combo to earn a golden one-time shield that absorbs the next hit without resetting your combo streak!
 - **Combo Break Shatter** — when a combo of x3+ expires, a dramatic red "COMBO BROKEN!" announcement pops with shatter particles and screen shake, making losing a streak feel impactful instead of silently vanishing!
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
@@ -218,6 +218,8 @@ python game.py
 - **Water & lava surface shimmer** — water and lava overlay quads gently pulse in brightness with a per-tile random phase offset, making these biomes feel alive and dynamic instead of being flat static decals. Water shimmers calmly while lava pulses more urgently, matching the temperament of each biome
 - **Enemy HP bar smooth damage drain** — enemy HP bars smoothly lerp toward the actual HP value instead of snapping instantly, making each hit feel more impactful as you see the green bar visibly drain over a few frames. Only lerps downward (on damage); healing snaps instantly
 - **Player glow ring pickup pulse** — when Zorp picks up a collectible, his green ground glow ring briefly flashes in the item's color and expands, giving ground-level player feedback at Zorp's position (complementing the pickup ring at the item's position). The player's ground glow now reflects what they just collected
+- **Player pickup scale punch** — when Zorp collects an item, the character model itself briefly pops upward (Y stretch + slight XZ bulge) with an elastic bounce, giving pickups a tactile "yum!" reaction on the character's body — not just particles and ground rings, but Zorp himself visibly responds to each pickup
+- **Frame-rate independent movement** — player acceleration and deceleration now use proper exponential smoothing (`1 - exp(-rate * dt)`) instead of the frame-rate-dependent `lerp(v, target, dt * rate)` formula, so the game feels identical whether running at 30, 60, 144, or 240 FPS. Previously, high-refresh-rate monitors made Zorp accelerate faster and low-refresh monitors made him feel sluggish — now movement is consistent across all hardware
 
 ## The Self-Improving Game
 
