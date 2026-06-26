@@ -5566,7 +5566,13 @@ class Game:
         """
         templates = list(MISSION_TEMPLATES)
         random.shuffle(templates)
-        for template in templates[:count]:
+        # BUG FIX: Filter out templates for missions that are already active
+        # (not turned in). Without this, the player could have two identical
+        # missions (e.g., two "Beetle B Gone") active simultaneously, which is
+        # confusing and doubles the progress tracking for the same objective.
+        active_targets = {m.target for m in self.missions if not m.turned_in}
+        available = [t for t in templates if t[2] not in active_targets]
+        for template in available[:count]:
             m = Mission(template[0], template[1], template[2], template[5], template[4], template[3])
             # Bug fix: capture baseline kills/collects at assignment time so progress
             # is computed as delta from this point, not lifetime total.
@@ -7384,6 +7390,15 @@ class Game:
                 arrow_ent.color = color.rgba(255, 50, 50, 0)
         self.damage_indicators = new_indicators
         # Show the most recent achievement popup for ACHIEVEMENT_POPUP_DURATION seconds
+        # BUG FIX: Prune expired popups so the list doesn't grow unbounded over long
+        # sessions. Only the most recent popup is displayed, but old entries were
+        # never removed — a minor memory leak. Now we filter out entries older than
+        # the display duration each frame.
+        if self.achievement_popups:
+            self.achievement_popups = [
+                (t, a) for t, a in self.achievement_popups
+                if self.t - t < ACHIEVEMENT_POPUP_DURATION
+            ]
         if self.achievement_popups:
             unlock_time, ach = self.achievement_popups[-1]
             age = self.t - unlock_time
@@ -7521,12 +7536,18 @@ class Game:
         # ── Overheal Barrier HP Bar ── Golden extension to the right of the
         # normal HP bar, showing how much overheal buffer the player has.
         # The bar grows from the right edge of the HP bar outward.
+        # BUG FIX: Position the overheal bar at the HP bar's current right edge,
+        # not a fixed -0.15. When the player has both overheal AND reduced HP
+        # (damage exceeded overheal and hit real HP), the HP bar is shorter and
+        # the old fixed position left a visible gap between the two bars.
         if p.overheal > 0:
             overheal_ratio = min(1.0, p.overheal / OVERHEAL_MAX)
             bar_w = 0.4 * overheal_ratio  # Max width matches the HP bar
-            # Position: starts at the right edge of HP bar (-0.15) and extends right
+            # Position: starts at the right edge of the HP bar and extends right.
+            # HP bar right edge = -0.55 + 0.4 * hp_ratio (left-anchored at -0.55).
+            hp_right_edge = -0.55 + 0.4 * hp_ratio
             self.overheal_bar.scale_x = max(0.001, bar_w)
-            self.overheal_bar.x = -0.15
+            self.overheal_bar.x = hp_right_edge
             self.overheal_bar.visible = True
             # Gentle golden pulse so it's visually distinct from regular HP
             pulse = 0.7 + 0.3 * math.sin(self.t * 4)
