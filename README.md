@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.28.0 — 3D!)
+## Features (v2.28.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -405,6 +405,13 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.28.1 — Level-Up Speed Burst, Loot Fan Spread, Death Tilt & Kill Score Floor
+- **Level-Up Speed Burst**: Leveling up now grants a brief 2-second movement speed surge (1.3x multiplier), making each level feel immediately empowering rather than just a passive stat increase. You literally surge with energy after leveling — the speed boost composes multiplicatively with other speed buffs (Speed Boost, Monolith, Adrenaline) so it stacks on top of active buffs for a satisfying "level-up moment" in your movement, not just the HUD. The burst is short enough to be a tactical tempo shift rather than a permanent power creep
+- **Loot Drop Fan Spread**: Loot drops from killed enemies now spread in a fanned arc pattern instead of a tight random cluster. Each item gets a sequential angle around the kill point with slightly randomized spread radius, producing a ring/scatter pattern that's easier to vacuum-pickup while moving. Previously, all loot dropped within a ±3 unit box, causing items to stack on top of each other — now they fan out naturally so you can grab them in a smooth sweep instead of running back and forth over the same spot
+- **Enemy Death Tilt Wobble**: During the death animation, enemies now get a wobbling X/Z axis tilt in addition to the existing Y-axis spin, making kills look more chaotic and dynamic — like the enemy is tumbling rather than just spinning flat. The tilt amplitude follows a sine curve (gentle at start, peaks mid-death, fades at the end as the enemy dissolves). Each enemy uses a per-instance random phase offset so group kills don't wobble in sync, preserving the visual chaos of multi-kills
+- **Minimum Kill Score**: Even the weakest enemies (Swarm Mite: 12 HP) now grant a minimum of 30 score per kill, so early-game combat feels rewarding instead of giving negligible points. Previously, a Swarm Mite kill gave only 12 points — barely noticeable. The floor applies before the combo multiplier, so combo bonuses still scale on top of the minimum. This makes early-game kills feel worthwhile and speeds up early score progression
+- **Bug Fix**: Fixed a pre-existing syntax error (escaped quotes in an f-string) on the Pulse Wave kill message that prevented the game from starting
 
 ### v2.27.2 — Frame-Rate Independent Camera, XP Curve Tuning & Visual Polish
 - **Frame-rate independent camera smoothing**: The orbit camera's yaw and pitch smoothing now uses proper exponential smoothing (`1 - exp(-rate * dt)`) instead of the frame-rate-dependent `lerp(a, b, dt * rate)` formula. Previously, high-refresh-rate monitors (144Hz) made the camera smooth ~1.4x faster than at 60Hz, causing the camera to feel snappy on some hardware and sluggish on others. Now the camera feels identical whether running at 30, 60, 144, or 240 FPS — matching the fix already applied to player movement in v2.25.1

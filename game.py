@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.28.0"
+VERSION = "2.28.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -150,6 +150,11 @@ LEVEL_UP_SPEED_BONUS = 0.4             # Slightly more speed per level for bette
 XP_SCALE_FACTOR = 1.35                 # Flatter XP curve — levels keep flowing at a satisfying pace in mid-late game
 BASE_KILL_XP = 30                       # Higher base kill XP — kills feel rewarding earlier
 KILL_XP_HP_DIVISOR = 8                 # Tougher enemies give proportionally more XP
+# ── Minimum Kill Score ── Even the weakest enemies (Swarm Mite: 12 HP) grant a
+# minimum score reward so early-game kills feel worthwhile. Without this, a
+# Swarm Mite kill gives only 12 points — barely noticeable. The floor ensures
+# every kill feels rewarding regardless of enemy toughness.
+KILL_SCORE_MIN = 30                    # Minimum score awarded per kill (before combo mult)
 
 # ─── Visual Effects ───────────────────────────────────────────────────────────
 DEATH_ANIM_DURATION = 0.5             # Slightly longer death for better readability
@@ -368,6 +373,11 @@ PLAYER_DAMAGE_PUNCH_RECOVERY = 10.0  # How fast the punch recovers to normal
 
 # ─── Hit-Stop ────────────────────────────────────────────────────────────────
 HIT_STOP_KILL_DURATION = 0.08  # Slightly longer freeze — more dramatic kill impact
+# ── Death Tilt Wobble ── During the death animation, the enemy's model gets a
+# slight X and Z axis tilt that wobbles as it spins, making kills look more
+# chaotic and dynamic — like the enemy is tumbling rather than just spinning flat.
+DEATH_TILT_MAX = 25.0          # Max tilt angle (degrees) on X/Z axes during death
+DEATH_TILT_WOBBLE_SPEED = 8.0  # How fast the tilt wobbles back and forth
 
 # ─── Camera Kill Zoom ────────────────────────────────────────────────────────
 CAMERA_KILL_ZOOM_FOV = 65      # FOV to zoom to on kill (tighter than 75 normal) — punch-in effect
@@ -377,6 +387,11 @@ CAMERA_KILL_ZOOM_LERP_SPEED = 12.0  # How fast the zoom snaps back to normal FOV
 # ─── Enemy Knockback ──────────────────────────────────────────────────────────
 ENEMY_KNOCKBACK_FORCE = 4.0    # How far enemies get pushed on hit
 ENEMY_KNOCKBACK_UP = 2.0       # Upward component of knockback
+# ── Loot Drop Fan Spread ── Loot drops now spread in a fanned arc instead of a
+# tight random cluster. Each drop gets a sequential angle around the kill point,
+# producing a ring/scatter pattern that's easier to vacuum-pickup while moving.
+# The spread radius is also slightly randomized so the fan isn't perfectly rigid.
+LOOT_DROP_FAN_SPREAD = 4.0    # Base radius for the loot drop fan (world units)
 
 # ─── Collectible Pop ──────────────────────────────────────────────────────────
 COLLECT_POP_DURATION = 0.18    # Tighter pop for snappier feedback
@@ -485,6 +500,13 @@ LEVEL_UP_SCALE_BOUNCE_FACTOR = 1.6      # Peak scale multiplier on level-up boun
 LEVEL_UP_TEXT_SCALE = 3.5               # Larger text for level-up announcement
 LEVEL_UP_COLOR_FLASH_DURATION = 0.5     # How long the player model flashes yellow on level-up
 LEVEL_UP_SCREEN_SHAKE = 0.2             # Small screen shake on level-up for impact
+# ── Level-Up Speed Burst ── On level-up, the player gets a brief movement speed
+# burst — making leveling feel immediately empowering rather than just a passive
+# stat increase. The burst is short (2s) and modest (1.3x) so it's a satisfying
+# "surge of energy" without being overpowered. Uses a dedicated timer so it
+# composes cleanly with other speed buffs (Speed Boost, Monolith, Adrenaline).
+LEVEL_UP_SPEED_BURST_DURATION = 2.0     # How long the speed burst lasts (seconds)
+LEVEL_UP_SPEED_BURST_MULT = 1.3         # Speed multiplier during the burst
 
 # ─── Death Screen ────────────────────────────────────────────────────────────
 DEATH_SCREEN_TITLE_COLOR = color.rgb(255, 40, 40)    # Brighter red for more impact
@@ -1998,6 +2020,9 @@ class Player(Entity):
         # Pickup scale punch — brief Y stretch + XZ bulge on collectible pickup
         # for tactile "got it!" feedback on the character model itself.
         self.pickup_punch = 0.0  # Decays from 1.0 to 0; while > 0, animate_bob applies the punch
+        # Level-up speed burst — brief movement speed surge on level-up for an
+        # empowering "surge of energy" feel. Decays over LEVEL_UP_SPEED_BURST_DURATION.
+        self.level_up_speed_burst_timer = 0.0
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
@@ -2676,6 +2701,15 @@ class Enemy(Entity):
             self._death_spin_dir = random.choice([-1, 1])
         spin_speed = 180 + 420 * progress  # 180°/s at start → 600°/s at end
         self.rotation_y += self._death_spin_dir * spin_speed * dt
+        # ── Death Tilt Wobble ── Add a wobbling tilt on the X and Z axes so the
+        # enemy appears to tumble chaotically rather than spinning flat. The tilt
+        # amplitude scales with progress (starts gentle, peaks mid-death, fades
+        # at the very end as the enemy dissolves). Uses a sine wobble with a
+        # per-enemy random phase offset so group kills don't wobble in sync.
+        tilt_amp = DEATH_TILT_MAX * math.sin(progress * math.pi)  # 0→max→0 over lifetime
+        wobble_phase = id(self) % 100 * 0.1
+        self.rotation_x = tilt_amp * math.sin(time.t * DEATH_TILT_WOBBLE_SPEED + wobble_phase)
+        self.rotation_z = tilt_amp * math.cos(time.t * DEATH_TILT_WOBBLE_SPEED + wobble_phase * 1.3)
         # Flash between white and original color, dissolving at end
         # BUG FIX: Use _c255_color() to normalize — original_color may be a named
         # color (0-1 range) or color.rgb() (0-255 range). Arithmetic on 0-1 values
@@ -6636,6 +6670,67 @@ class Game:
         ring = HealPulseRing(position=position)
         self.heal_pulse_rings.append(ring)
 
+    def _drop_loot(self, enemy_pos, enemy_name):
+        """Drop loot collectibles in a fanned arc around the enemy's death position.
+
+        Instead of a tight random cluster, items are spread in a ring/fan pattern
+        using sequential angles. This makes loot easier to vacuum-pickup while
+        moving and prevents items from stacking on top of each other. The spread
+        radius is slightly randomized per drop so the fan isn't perfectly rigid.
+        Each drop checks walkability so items don't spawn in unreachable tiles.
+        """
+        loot_range = ENEMY_LOOT_DROPS.get(enemy_name, (2, 4))
+        loot_count = random.randint(loot_range[0], loot_range[1])
+        # Use a random base angle so the fan orientation varies per kill
+        base_angle = random.uniform(0, math.pi * 2)
+        for i in range(loot_count):
+            angle = base_angle + (i / max(1, loot_count)) * math.pi * 2
+            # Randomize the spread radius slightly so the fan isn't a perfect ring
+            spread = LOOT_DROP_FAN_SPREAD * random.uniform(0.7, 1.2)
+            lx = enemy_pos.x + math.cos(angle) * spread
+            lz = enemy_pos.z + math.sin(angle) * spread
+            lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
+            lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
+            if self._is_walkable(lx, lz):
+                c = Collectible(position=Vec3(lx, 1, lz))
+                self.collectibles.append(c)
+
+    def _handle_plasma_serpent_split(self, enemy):
+        """Handle the Plasma Serpent death split into mini-enemies.
+
+        When a Plasma Serpent dies, each of its body segments spawns as an
+        independent Swarm Mite enemy at the segment's position. The segment
+        visual entities are destroyed since they've been replaced by real
+        enemies. Called from every kill path (projectile, dash, AOE, Pulse
+        Wave, Void Bomber friendly fire, piercing) to ensure the split
+        mechanic is consistent regardless of how the serpent was killed.
+
+        Args:
+            enemy: The dying Plasma Serpent Enemy entity.
+        """
+        game.add_message("Plasma Serpent splits!")
+        game._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
+        game.screen_shake = max(game.screen_shake, 0.5)
+        for seg in enemy.segment_entities:
+            seg_pos = Vec3(seg.x, 1, seg.z)
+            if game._is_walkable(seg_pos.x, seg_pos.z):
+                mini = Enemy(position=seg_pos, enemy_type='Swarm Mite')
+                mini.hp = PLASMA_SERPENT_SCATTER_HP
+                mini.max_hp = PLASMA_SERPENT_SCATTER_HP
+                mini.damage = PLASMA_SERPENT_SCATTER_DAMAGE
+                mini.speed = PLASMA_SERPENT_SCATTER_SPEED
+                mini.original_color = color.rgb(0, 200, 160)
+                mini.color = color.rgb(0, 200, 160)
+                game._scale_enemy_to_player_level(mini)
+                game.enemies.append(mini)
+        # Destroy segment visual entities since they've been replaced by real enemies
+        for seg in enemy.segment_entities:
+            for child in seg.children:
+                if hasattr(child, 'enabled') and child.enabled:
+                    destroy(child)
+            destroy(seg)
+        enemy.segment_entities.clear()
+
     def _check_pickup_milestone(self):
         """Check if the player has hit a pickup milestone and celebrate.
 
@@ -8322,6 +8417,16 @@ def game_update():
     if p.adrenaline_timer > 0:
         effective_speed *= ADRENALINE_SPEED_MULT
 
+    # ── Level-Up Speed Burst ── A brief movement speed surge after leveling up,
+    # making each level feel empowering — you literally surge with energy. The
+    # timer is set in the level-up handler and decays here. Composes
+    # multiplicatively with other speed buffs.
+    if p.level_up_speed_burst_timer > 0:
+        effective_speed *= LEVEL_UP_SPEED_BURST_MULT
+        p.level_up_speed_burst_timer -= time.dt
+        if p.level_up_speed_burst_timer < 0:
+            p.level_up_speed_burst_timer = 0
+
     # ── Dash Ability ──
     if p.dash_cooldown > 0:
         p.dash_cooldown -= time.dt
@@ -8451,7 +8556,7 @@ def game_update():
                         game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
-                    p.score += int(enemy.max_hp * combo_score_mult)
+                    p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                     game.screen_shake = SCREEN_SHAKE_KILL
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
@@ -8470,14 +8575,10 @@ def game_update():
                     game.kill_feed.append((game.t, f"⚡ {enemy.name}"))
                     game.add_message(f"Dash Strike! Defeated {enemy.name}!")
                     # Drop loot
-                    loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
-                    loot_count = random.randint(loot_range[0], loot_range[1])
-                    for _ in range(loot_count):
-                        offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
-                        drop_pos = enemy.position + offset
-                        if game._is_walkable(drop_pos.x, drop_pos.z):
-                            c = Collectible(position=drop_pos)
-                            game.collectibles.append(c)
+                    game._drop_loot(enemy.position, enemy.name)
+                    # ── Plasma Serpent: Split into mini-enemies on death (dash strike) ──
+                    if enemy.is_plasma_serpent:
+                        game._handle_plasma_serpent_split(enemy)
                     enemy.alive = False
                     enemy.dying = True
                     enemy.death_timer = DEATH_ANIM_DURATION
@@ -9264,6 +9365,13 @@ def game_update():
         game._spawn_particles(p.position, color.yellow, count=PARTICLE_LEVELUP_COUNT)
         # Extra celebratory particles in a ring burst for satisfying feedback
         game._spawn_collect_burst(p.position, color.yellow)
+        # ── Level-Up Speed Burst ── Grant a brief movement speed surge so
+        # leveling feels immediately empowering — a "surge of energy" that
+        # makes the player feel the level-up in their movement, not just see
+        # it in the HUD. The burst composes multiplicatively with other speed
+        # buffs (Speed Boost, Monolith, Adrenaline) since it's applied in the
+        # effective_speed calculation below.
+        p.level_up_speed_burst_timer = LEVEL_UP_SPEED_BURST_DURATION
         # Brief screen shake for level-up impact
         game.screen_shake = max(game.screen_shake, LEVEL_UP_SCREEN_SHAKE)
         # Scale bounce on level-up — integrates with animate_bob()
@@ -9678,22 +9786,14 @@ def game_update():
                                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                                     xp_gain = int((BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                                     p.gain_xp(xp_gain)
-                                    p.score += int(other_enemy.max_hp * combo_score_mult)
+                                    p.score += max(KILL_SCORE_MIN, int(other_enemy.max_hp * combo_score_mult))
                                     game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True))
                                     # BUG FIX: Friendly-fire kills were missing loot drops,
                                     # death ring, and kill burst particles — every other kill
                                     # path (projectile, dash, AOE, Pulse Wave) includes these.
                                     # Without them, Void Bomber chain kills give no rewards
                                     # beyond XP/score and no visual death feedback.
-                                    loot_range = ENEMY_LOOT_DROPS.get(other_enemy.name, (2, 4))
-                                    for _ in range(random.randint(loot_range[0], loot_range[1])):
-                                        lx = other_enemy.x + random.uniform(-2, 2)
-                                        lz = other_enemy.z + random.uniform(-2, 2)
-                                        lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
-                                        lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
-                                        if game._is_walkable(lx, lz):
-                                            c = Collectible(position=Vec3(lx, 1, lz))
-                                            game.collectibles.append(c)
+                                    game._drop_loot(other_enemy.position, other_enemy.name)
                                     game._spawn_particles(other_enemy.position, other_enemy.original_color, count=PARTICLE_KILL_COUNT)
                                     game._spawn_kill_burst(other_enemy.position, other_enemy.original_color, enemy_max_hp=other_enemy.max_hp)
                                     game.enemy_death_rings.append(EnemyDeathRing(
@@ -10471,20 +10571,12 @@ def game_update():
                                 monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                                 aoe_xp_gain = int((BASE_KILL_XP + nearby_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                                 p.gain_xp(aoe_xp_gain)
-                                p.score += int(nearby_enemy.max_hp * combo_score_mult)
+                                p.score += max(KILL_SCORE_MIN, int(nearby_enemy.max_hp * combo_score_mult))
                                 game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
                                 game._spawn_particles(nearby_enemy.position, nearby_enemy.original_color, count=PARTICLE_KILL_COUNT)
                                 game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color, enemy_max_hp=nearby_enemy.max_hp)
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
-                                loot_range = ENEMY_LOOT_DROPS.get(nearby_enemy.name, (2, 4))
-                                for _ in range(random.randint(loot_range[0], loot_range[1])):
-                                    lx = nearby_enemy.x + random.uniform(-2, 2)
-                                    lz = nearby_enemy.z + random.uniform(-2, 2)
-                                    lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
-                                    lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
-                                    if game._is_walkable(lx, lz):
-                                        c = Collectible(position=Vec3(lx, 1, lz))
-                                        game.collectibles.append(c)
+                                game._drop_loot(nearby_enemy.position, nearby_enemy.name)
                     # Explosion visual at impact point
                     game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=20)
                     game.screen_shake = max(game.screen_shake, 0.3)
@@ -10565,7 +10657,7 @@ def game_update():
                             game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                             game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                         p.gain_xp(xp_gain)
-                        p.score += int(enemy.max_hp * combo_score_mult)
+                        p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                         game.screen_shake = SCREEN_SHAKE_KILL
                         game.hit_stop_timer = HIT_STOP_KILL_DURATION
                         game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
@@ -10574,14 +10666,7 @@ def game_update():
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True, is_overkill=True))
                         else:
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
-                        loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
-                        loot_count = random.randint(loot_range[0], loot_range[1])
-                        for _ in range(loot_count):
-                            offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
-                            drop_pos = enemy.position + offset
-                            if game._is_walkable(drop_pos.x, drop_pos.z):
-                                c = Collectible(position=drop_pos)
-                                game.collectibles.append(c)
+                        game._drop_loot(enemy.position, enemy.name)
                         game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                         game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
                         game.enemy_death_rings.append(EnemyDeathRing(
@@ -10592,27 +10677,7 @@ def game_update():
                         game.add_message(f"Defeated {enemy.name}!")
                         game.kill_feed.append((game.t, f"✦ {enemy.name}"))
                         if enemy.is_plasma_serpent:
-                            game.add_message("Plasma Serpent splits!")
-                            game._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
-                            game.screen_shake = max(game.screen_shake, 0.5)
-                            for seg in enemy.segment_entities:
-                                seg_pos = Vec3(seg.x, 1, seg.z)
-                                if game._is_walkable(seg_pos.x, seg_pos.z):
-                                    mini = Enemy(position=seg_pos, enemy_type='Swarm Mite')
-                                    mini.hp = PLASMA_SERPENT_SCATTER_HP
-                                    mini.max_hp = PLASMA_SERPENT_SCATTER_HP
-                                    mini.damage = PLASMA_SERPENT_SCATTER_DAMAGE
-                                    mini.speed = PLASMA_SERPENT_SCATTER_SPEED
-                                    mini.original_color = color.rgb(0, 200, 160)
-                                    mini.color = color.rgb(0, 200, 160)
-                                    game._scale_enemy_to_player_level(mini)
-                                    game.enemies.append(mini)
-                            for seg in enemy.segment_entities:
-                                for child in seg.children:
-                                    if hasattr(child, 'enabled') and child.enabled:
-                                        destroy(child)
-                                destroy(seg)
-                            enemy.segment_entities.clear()
+                            game._handle_plasma_serpent_split(enemy)
                     break  # Exit the enemy loop — projectile continues flying
                 # Check if this is a piercing projectile hitting a new enemy
                 if proj.is_piercing and id(enemy) not in proj._pierced_enemies:
@@ -10645,17 +10710,10 @@ def game_update():
                             monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                             xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
                             p.gain_xp(xp_gain)
-                            p.score += int(enemy.max_hp * combo_score_mult)
+                            p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                             game.screen_shake = SCREEN_SHAKE_KILL
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
-                            loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
-                            loot_count = random.randint(loot_range[0], loot_range[1])
-                            for _ in range(loot_count):
-                                offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
-                                drop_pos = enemy.position + offset
-                                if game._is_walkable(drop_pos.x, drop_pos.z):
-                                    c = Collectible(position=drop_pos)
-                                    game.collectibles.append(c)
+                            game._drop_loot(enemy.position, enemy.name)
                             game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                             game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
                             game.enemy_death_rings.append(EnemyDeathRing(
@@ -10758,7 +10816,7 @@ def game_update():
                         game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
-                    p.score += int(enemy.max_hp * combo_score_mult)
+                    p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                     game.screen_shake = SCREEN_SHAKE_KILL
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -10775,14 +10833,7 @@ def game_update():
                     # BUG FIX: loot drops now check walkability so collectibles don't
                     # spawn in unreachable water/lava tiles.
                     # Drop loot — count scales with enemy toughness
-                    loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
-                    loot_count = random.randint(loot_range[0], loot_range[1])
-                    for _ in range(loot_count):
-                        offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
-                        drop_pos = enemy.position + offset
-                        if game._is_walkable(drop_pos.x, drop_pos.z):
-                            c = Collectible(position=drop_pos)
-                            game.collectibles.append(c)
+                    game._drop_loot(enemy.position, enemy.name)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     # Kill burst: radial ring of particles for satisfying, explosive kill feedback
                     # Scaled with enemy max HP — tougher enemies produce bigger death explosions
@@ -10803,29 +10854,7 @@ def game_update():
                     game.kill_feed.append((game.t, f"✦ {enemy.name}"))
                     # ── Plasma Serpent: Split into mini-enemies on death ──
                     if enemy.is_plasma_serpent:
-                        game.add_message("Plasma Serpent splits!")
-                        game._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
-                        game.screen_shake = max(game.screen_shake, 0.5)
-                        for seg in enemy.segment_entities:
-                            # Spawn a mini serpent segment as an independent enemy
-                            seg_pos = Vec3(seg.x, 1, seg.z)
-                            if game._is_walkable(seg_pos.x, seg_pos.z):
-                                mini = Enemy(position=seg_pos, enemy_type='Swarm Mite')
-                                mini.hp = PLASMA_SERPENT_SCATTER_HP
-                                mini.max_hp = PLASMA_SERPENT_SCATTER_HP
-                                mini.damage = PLASMA_SERPENT_SCATTER_DAMAGE
-                                mini.speed = PLASMA_SERPENT_SCATTER_SPEED
-                                mini.original_color = color.rgb(0, 200, 160)
-                                mini.color = color.rgb(0, 200, 160)
-                                game._scale_enemy_to_player_level(mini)
-                                game.enemies.append(mini)
-                        # Destroy segment visual entities since they've been replaced by real enemies
-                        for seg in enemy.segment_entities:
-                            for child in seg.children:
-                                if hasattr(child, 'enabled') and child.enabled:
-                                    destroy(child)
-                            destroy(seg)
-                        enemy.segment_entities.clear()
+                        game._handle_plasma_serpent_split(enemy)
                 break
 
         # Remove if out of world
@@ -11090,16 +11119,10 @@ def game_update():
                     # by combo_score_mult, but Pulse Wave was awarding raw max_hp, making
                     # Pulse Wave kills worth less score at high combo tiers.
                     combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
-                    p.score += int(enemy.max_hp * combo_score_mult)
+                    p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                     game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=True))
                     # Drop loot
-                    loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
-                    for _ in range(random.randint(loot_range[0], loot_range[1])):
-                        offset = Vec3(random.uniform(-3, 3), 1.5, random.uniform(-3, 3))
-                        drop_pos = enemy.position + offset
-                        if game._is_walkable(drop_pos.x, drop_pos.z):
-                            c = Collectible(position=drop_pos)
-                            game.collectibles.append(c)
+                    game._drop_loot(enemy.position, enemy.name)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
                     # ── Enemy Death Ground Ring ── (Pulse Wave kill variant)
@@ -11110,6 +11133,10 @@ def game_update():
                     ))
                     game.add_message(f"Pulse Wave defeated {enemy.name}!")
                     game.kill_feed.append((game.t, f"🌀 {enemy.name}"))
+                    # BUG FIX: Plasma Serpent split was missing from Pulse Wave kills —
+                    # killing a serpent with Pulse Wave didn't produce mini-enemies.
+                    if enemy.is_plasma_serpent:
+                        game._handle_plasma_serpent_split(enemy)
 
     # ── Update Collectibles ──
     # PERFORMANCE: cache player position once so we avoid repeated .position
