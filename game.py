@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.29.1"
+VERSION = "2.30.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1789,6 +1789,49 @@ FIREFLY_COLORS = [
 CRIT_PIERCE_CHANCE = 0.40            # 40% chance for a crit to pierce
 CRIT_PIERCE_MAX_HITS = 3             # Max enemies a single piercing shot can hit
 
+# ─── Chain Lightning on Kill ────────────────────────────────────────────────
+# When the player kills an enemy while on a combo of CHAIN_LIGHTNING_MIN_COMBO
+# or higher, there's a chance for lightning to arc from the killed enemy to
+# nearby enemies, dealing damage to each. This makes high combos feel
+# electrically charged — your kill streaks literally jump between enemies,
+# rewarding sustained combat with crowd-clearing power. The damage scales
+# with combo count so higher combos produce stronger arcs. A bright cyan
+# visual line connects the killed enemy to each struck enemy for clarity.
+CHAIN_LIGHTNING_MIN_COMBO = 3        # Combo count needed to trigger
+CHAIN_LIGHTNING_CHANCE = 0.35        # Base probability per kill at min combo
+CHAIN_LIGHTNING_CHANCE_MAX = 0.65    # Max probability at high combo
+CHAIN_LIGHTNING_RANGE = 8.0          # How far lightning arcs
+CHAIN_LIGHTNING_MAX_TARGETS = 4      # Max enemies struck per arc
+CHAIN_LIGHTNING_DAMAGE_BASE = 10     # Base damage per arc
+CHAIN_LIGHTNING_DAMAGE_PER_COMBO = 1 # Extra damage per combo tier above min
+CHAIN_LIGHTNING_COLOR = color.rgba(100, 200, 255, 200)  # Bright cyan-white
+
+# ─── High-HP Green Glow ──────────────────────────────────────────────────────
+# When the player's HP is above HIGH_HP_GLOW_THRESHOLD (75%), the HP bar
+# background subtly pulses with a green glow — positive feedback for
+# maintaining high health, complementing the existing red danger pulse at
+# low HP. This gives players a visual reward for staying healthy instead of
+# only warning them when things are bad. The pulse is gentle and slow, so
+# it's a calming "you're doing great" cue rather than an urgent alert.
+HIGH_HP_GLOW_THRESHOLD = 0.75        # HP ratio above which the green glow appears
+HIGH_HP_GLOW_PULSE_SPEED = 2.0       # How fast the green glow pulses (slow = calming)
+HIGH_HP_GLOW_MAX_ALPHA = 40          # Max alpha of the green glow tint
+HIGH_HP_GLOW_COLOR = color.rgb(40, 180, 40)  # Green glow color
+
+# ─── Milestone Level Cooldown Reset ──────────────────────────────────────────
+# When the player reaches a milestone level (every LEVEL_MILESTONE_INTERVAL
+# levels: 5, 10, 15, 20...), ALL ability cooldowns are instantly reset and
+# a golden flash celebration plays. This makes milestone levels feel like
+# momentous power surges — you get a fresh dash, pulse wave, and vacuum
+# pulse ready to use immediately, creating exciting "go time" moments that
+# reward progression. A golden particle burst and announcement celebrate
+# the milestone, making each 5-level mark a memorable event.
+LEVEL_MILESTONE_INTERVAL = 5         # Levels between milestone resets (5, 10, 15...)
+LEVEL_MILESTONE_SCREEN_FLASH_ALPHA = 70   # Peak alpha of golden flash
+LEVEL_MILESTONE_SCREEN_FLASH_DURATION = 0.6  # How long the golden flash lasts
+LEVEL_MILESTONE_PARTICLE_COUNT = 25  # Golden particle burst count
+LEVEL_MILESTONE_SCREEN_SHAKE = 0.35  # Screen shake intensity
+
 BIOME_COLORS = {
     'grass':   C_GRASS,
     'desert':  C_DESERT,
@@ -1915,6 +1958,7 @@ class Player(Entity):
         self.completed_missions = 0
         self.facing = Vec3(0, 0, 1)
         self.level_up_pending = False
+        self.milestone_level_pending = False  # Set by gain_xp at milestone levels (5, 10, 15...)
         self.damage_taken_flag = False  # Set by take_damage, checked by game_update for HP bar shake
         self.xp_gained_flag = False      # Set by gain_xp, checked by _update_hud for XP bar flash
         self.flawless_reset_flag = False  # Set by take_damage, checked by game_update to reset flawless streak
@@ -2123,6 +2167,14 @@ class Player(Entity):
             self.hp = min(self.hp + heal_amt, self.max_hp)
             self.speed += LEVEL_UP_SPEED_BONUS
             self.level_up_pending = True
+            # ── Milestone Level Cooldown Reset ── At every LEVEL_MILESTONE_INTERVAL
+            # levels (5, 10, 15, 20...), set a flag that game_update checks to
+            # instantly reset all ability cooldowns and trigger a golden
+            # celebration. This makes milestone levels feel like momentous
+            # power surges — you get a fresh dash, pulse wave, and vacuum
+            # pulse ready to use immediately.
+            if self.level % LEVEL_MILESTONE_INTERVAL == 0:
+                self.milestone_level_pending = True
 
     def take_damage(self, amount):
         """Apply damage to the player. Returns True if player died.
@@ -7099,6 +7151,22 @@ class Game:
         if hp_ratio < 0.25:
             pulse_alpha = 0.5 + 0.5 * math.sin(self.t * 8)
             self.hp_bar_bg.color = color.rgb(int(180 * pulse_alpha), 0, 0)
+        elif hp_ratio >= HIGH_HP_GLOW_THRESHOLD:
+            # ── High-HP Green Glow ── When health is high (75%+), the HP bar
+            # background gently pulses with a green glow — positive feedback
+            # for maintaining high health, complementing the red danger pulse
+            # at low HP. The pulse is slow and calming ("you're doing great")
+            # rather than urgent. The glow intensity scales with how full the
+            # HP bar is: at 75% it's subtle, at 100% it's at full glow.
+            glow_t = (hp_ratio - HIGH_HP_GLOW_THRESHOLD) / (1.0 - HIGH_HP_GLOW_THRESHOLD)
+            pulse = 0.5 + 0.5 * math.sin(self.t * HIGH_HP_GLOW_PULSE_SPEED)
+            glow_alpha = int(HIGH_HP_GLOW_MAX_ALPHA * glow_t * (0.5 + 0.5 * pulse))
+            # Blend the green glow onto the dark gray background
+            self.hp_bar_bg.color = color.rgb(
+                40,
+                int(60 + glow_alpha * 2),
+                40,
+            )
         else:
             self.hp_bar_bg.color = color.dark_gray
         # Display HP with overheal if active
@@ -8272,6 +8340,112 @@ class Game:
         # Track flawless kill streak (resets on taking damage)
         self._register_flawless_kill()
 
+    def _chain_lightning(self, source_pos, combo_count):
+        """Attempt to arc chain lightning from a killed enemy to nearby enemies.
+
+        When the player is on a combo of CHAIN_LIGHTNING_MIN_COMBO or higher,
+        each kill has a chance to arc lightning to nearby enemies, dealing
+        damage that scales with the combo count. This makes high combos feel
+        electrically charged — your kill streaks literally jump between
+        enemies, rewarding sustained combat with crowd-clearing power.
+
+        The chance scales from CHAIN_LIGHTNING_CHANCE at min combo to
+        CHAIN_LIGHTNING_CHANCE_MAX at high combos. Up to CHAIN_LIGHTNING_MAX_TARGETS
+        enemies within CHAIN_LIGHTNING_RANGE are struck. Each struck enemy
+        takes damage and gets a brief cyan flash. A visual line entity
+        connects the source to each target briefly for visual clarity.
+
+        Args:
+            source_pos: Vec3 position of the killed enemy (lightning origin).
+            combo_count: Current combo count (determines chance and damage).
+        """
+        if combo_count < CHAIN_LIGHTNING_MIN_COMBO:
+            return
+        # Scale chance with combo: linear from min combo to min+10
+        combo_excess = combo_count - CHAIN_LIGHTNING_MIN_COMBO
+        chance = CHAIN_LIGHTNING_CHANCE + (CHAIN_LIGHTNING_CHANCE_MAX - CHAIN_LIGHTNING_CHANCE) * min(1.0, combo_excess / 10.0)
+        if random.random() > chance:
+            return
+        # Scale damage with combo
+        dmg = CHAIN_LIGHTNING_DAMAGE_BASE + combo_excess * CHAIN_LIGHTNING_DAMAGE_PER_COMBO
+        # Apply monolith damage buff if active
+        if self.player.monolith_damage_timer > 0:
+            dmg = int(dmg * MONOLITH_DAMAGE_MULT)
+        # Find nearby enemies
+        targets = []
+        for enemy in self.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            edist = (enemy.position - source_pos).length()
+            if edist < CHAIN_LIGHTNING_RANGE:
+                targets.append((edist, enemy))
+        if not targets:
+            return
+        # Sort by distance and strike the closest ones
+        targets.sort(key=lambda t: t[0])
+        struck = 0
+        for dist, enemy in targets:
+            if struck >= CHAIN_LIGHTNING_MAX_TARGETS:
+                break
+            struck += 1
+            # Visual: brief cyan line from source to target
+            mid_pos = (source_pos + enemy.position) / 2
+            direction = enemy.position - source_pos
+            line_length = direction.length()
+            if line_length < 0.1:
+                continue
+            # Create a thin elongated entity as the lightning visual
+            line_ent = Entity(
+                model='cube',
+                color=CHAIN_LIGHTNING_COLOR,
+                scale=(0.08, 0.08, line_length),
+                position=mid_pos,
+            )
+            # Orient the line to point from source to target
+            angle_y = math.degrees(math.atan2(direction.x, direction.z))
+            line_ent.rotation_y = angle_y
+            destroy(line_ent, delay=0.12)
+            # Damage the enemy
+            killed = enemy.take_damage(dmg)
+            # Brief cyan flash on the struck enemy
+            enemy.color = color.rgb(180, 220, 255)
+            invoke(setattr, enemy, 'color', enemy.original_color, delay=0.1)
+            self._spawn_particles(enemy.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=4)
+            self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=False))
+            # If the lightning killed the enemy, handle the kill
+            if killed:
+                p = self.player
+                p.add_kill(enemy.name)
+                self.total_kills += 1
+                self._register_kill()
+                self.combo_count += 1
+                self.max_combo = max(self.max_combo, self.combo_count)
+                self.combo_timer = COMBO_TIMEOUT
+                self.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                combo_xp_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                combo_score_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                p.gain_xp(xp_gain)
+                p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                self._drop_loot(enemy.position, enemy.name)
+                self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                self.enemy_death_rings.append(EnemyDeathRing(
+                    position=Vec3(enemy.x, 0, enemy.z),
+                    col=enemy.original_color,
+                    enemy_scale=enemy.original_scale,
+                ))
+                self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
+                enemy.alive = False
+                enemy.dying = True
+                enemy.death_timer = DEATH_ANIM_DURATION
+                if enemy.is_plasma_serpent:
+                    self._handle_plasma_serpent_split(enemy)
+        if struck > 0:
+            self.add_message(f"⚡ CHAIN LIGHTNING! Struck {struck} enemies!")
+
     def _register_flawless_kill(self):
         """Track a flawless kill (kill without taking damage) for the Flawless
         Kill Streak system. At every FLAWLESS_MILESTONE (5) kills, award bonus
@@ -8829,6 +9003,9 @@ def game_update():
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                    # ── Chain Lightning ── High combos can arc lightning to
+                    # nearby enemies, dealing combo-scaled damage.
+                    game._chain_lightning(enemy.position, game.combo_count)
                     if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
                         milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
                                            color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
@@ -9754,6 +9931,39 @@ def game_update():
                 col.position = col.position + pull_dir * snap_dist
                 # Spin items rapidly as they get pulled
                 col.rotation_y += 720 * 0.1  # Quick spin burst
+
+    # ── Milestone Level Cooldown Reset ── At levels 5, 10, 15, 20..., all
+    # ability cooldowns are instantly reset and a golden celebration plays.
+    # This makes milestone levels feel like momentous power surges — you get
+    # a fresh dash, pulse wave, and vacuum pulse ready to use immediately.
+    if p.milestone_level_pending:
+        p.milestone_level_pending = False
+        # Reset all ability cooldowns
+        p.dash_cooldown = 0
+        game.pulse_wave_cooldown = 0
+        game.vacuum_pulse_cooldown = 0
+        # Golden flash overlay
+        game.level_up_flash_timer = max(game.level_up_flash_timer, LEVEL_MILESTONE_SCREEN_FLASH_DURATION)
+        game.level_up_flash.color = color.rgba(255, 220, 50, LEVEL_MILESTONE_SCREEN_FLASH_ALPHA)
+        # Golden particle burst
+        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 220, 50), count=LEVEL_MILESTONE_PARTICLE_COUNT)
+        game._spawn_particles(p.position + Vec3(0, 2, 0), color.rgb(255, 180, 30), count=LEVEL_MILESTONE_PARTICLE_COUNT)
+        # Screen shake
+        game.screen_shake = max(game.screen_shake, LEVEL_MILESTONE_SCREEN_SHAKE)
+        # Announcement
+        game.add_message(f"★ MILESTONE Lv.{p.level}! All cooldowns reset!")
+        # Bonus: also trigger a vacuum pulse-style pull of nearby collectibles
+        # so the milestone feels like a power surge that gathers resources too
+        magnet_range = LEVEL_UP_MAGNET_RADIUS
+        for col in game.collectibles:
+            if col.popping:
+                continue
+            dist = (col.position - p.position).length()
+            if dist < magnet_range and dist > 0.5:
+                pull_dir = (p.position - col.position).normalized()
+                snap_dist = min(dist - 0.5, dist * 0.7)
+                col.position = col.position + pull_dir * snap_dist
+                col.rotation_y += 720 * 0.1
 
     if game.level_up_timer > 0:
         game.level_up_timer -= time.dt
@@ -11235,6 +11445,10 @@ def game_update():
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
+                    # ── Chain Lightning ── High combos can arc lightning to
+                    # nearby enemies, dealing combo-scaled damage. This makes
+                    # sustained kill streaks electrically powerful.
+                    game._chain_lightning(enemy.position, game.combo_count)
                     # ── Combo Milestone Fireworks ── Celebrate every 5x combo with a burst
                     if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
                         # Burst of colorful particles around the player
