@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.30.0"
+VERSION = "2.30.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1270,6 +1270,13 @@ PLAYER_IDLE_BREATHE_AMOUNT = 0.03  # 3% scale variation — subtle but perceptib
 PLAYER_GLOW_PICKUP_PULSE_DURATION = 0.30  # How long the glow ring flash lasts
 PLAYER_GLOW_PICKUP_PULSE_SCALE = 3.5     # Peak scale multiplier during the flash
 PLAYER_GLOW_PICKUP_PULSE_ALPHA = 180     # Peak alpha during the flash
+# ── Biome-Tinted Glow Ring ── The player's ground glow ring subtly blends toward
+# the current biome's color, creating a cohesive visual connection between Zorp
+# and the environment. The blend is 30% biome color, 70% green base — a subtle
+# tint shift that's noticeable but doesn't obscure the signature green glow.
+# The blend lerps smoothly between biomes so the transition feels natural.
+PLAYER_GLOW_BIOME_BLEND = 0.30          # How much biome color mixes into the glow
+PLAYER_GLOW_BIOME_LERP_SPEED = 3.0     # How fast the biome tint transitions (higher = snappier)
 # ── Pickup Scale Punch ── When Zorp picks up a collectible, the character model
 # briefly pops up in scale (Y stretch + slight XZ bulge) and settles back — a
 # tactile "yum!" reaction that makes pickups feel physically rewarding instead
@@ -1884,6 +1891,34 @@ def _c255_color(col):
     color.rgb()/color.rgba() (0-255 range) or is a named color (0-1 range).
     """
     return (_c255(col[0]), _c255(col[1]), _c255(col[2]))
+
+
+def _set_biome_tinted_glow(player, game):
+    """Set the player's ground glow ring to a biome-tinted green color.
+    
+    The glow ring is normally green (0, 200, 80). This function blends 30% of
+    the current biome's color into the green base, so the glow ring subtly
+    shifts hue as the player crosses biome boundaries — warm orange on lava,
+    cyan on crystal, etc. The blend lerps smoothly between biomes for a
+    natural transition. The green base remains dominant (70%) so the signature
+    Zorp glow is always recognizable.
+    """
+    biome_color = BIOME_COLORS.get(game.current_biome, C_GRASS)
+    br, bg, bb = _c255_color(biome_color)
+    # Target: 70% green base + 30% biome color
+    target_r = int(0 * (1 - PLAYER_GLOW_BIOME_BLEND) + br * PLAYER_GLOW_BIOME_BLEND)
+    target_g = int(200 * (1 - PLAYER_GLOW_BIOME_BLEND) + bg * PLAYER_GLOW_BIOME_BLEND)
+    target_b = int(80 * (1 - PLAYER_GLOW_BIOME_BLEND) + bb * PLAYER_GLOW_BIOME_BLEND)
+    # Smoothly lerp the current glow color toward the target biome-tinted color
+    if not hasattr(game, '_glow_biome_lerp'):
+        game._glow_biome_lerp = (0, 200, 80)
+    lerp_alpha = 1.0 - math.exp(-PLAYER_GLOW_BIOME_LERP_SPEED * time.dt)
+    cr = lerp(game._glow_biome_lerp[0], target_r, lerp_alpha)
+    cg = lerp(game._glow_biome_lerp[1], target_g, lerp_alpha)
+    cb = lerp(game._glow_biome_lerp[2], target_b, lerp_alpha)
+    game._glow_biome_lerp = (cr, cg, cb)
+    player.glow_ring.color = color.rgba(int(cr), int(cg), int(cb), 50)
+    player.glow_ring.scale = 2.5
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 class WorldGenerator:
@@ -2854,10 +2889,23 @@ class Enemy(Entity):
         else:
             pop_height = max(0, 2.0 * (1.0 - (progress - 0.25) / 0.75))
         self.y = 1 + pop_height
-        # Shrink with easing (fast start, slow end)
-        ease_progress = 1.0 - (1.0 - progress) ** 2
-        shrink = max(0.01, self.original_scale * (1.0 - ease_progress))
-        self.scale = shrink
+        # ── Death Burst Scale Pop ── In the first 10% of the death animation,
+        # the enemy briefly INFLATES beyond its original scale before shrinking.
+        # This creates a "burst" visual — like the enemy is exploding outward from
+        # the killing blow — that makes kills feel far more punchy and impactful
+        # than a pure shrink. The inflation uses a sine curve peaking at 1.25x
+        # original scale at progress=0.05, then blends smoothly into the normal
+        # shrink curve by progress=0.10. Bigger enemies burst proportionally
+        # larger so the effect is visible across all enemy types.
+        if progress < 0.10:
+            burst_t = progress / 0.10  # 0→1 over the burst phase
+            burst_mult = 1.0 + 0.25 * math.sin(burst_t * math.pi)  # peaks at 1.25x
+            self.scale = self.original_scale * burst_mult
+        else:
+            # Shrink with easing (fast start, slow end)
+            ease_progress = 1.0 - (1.0 - progress) ** 2
+            shrink = max(0.01, self.original_scale * (1.0 - ease_progress))
+            self.scale = shrink
         # ── Death Spin ── The enemy spins during death, accelerating as it
         # shrinks. The spin direction is randomized per enemy so multiple
         # simultaneous deaths (AOE kills, Pulse Wave) don't look synchronized.
@@ -7444,7 +7492,14 @@ class Game:
             # Check if any active buff is about to expire — if so, pulse red
             min_timer = min(pu_timers)
             if min_timer < POWERUP_EXPIRY_WARNING_THRESHOLD:
-                pulse = 0.5 + 0.5 * math.sin(self.t * POWERUP_EXPIRY_PULSE_SPEED)
+                # ── Accelerating Expiry Pulse ── The pulse speed increases as
+                # the buff nears expiry, creating escalating urgency — matching
+                # the pattern used by the shield expiry warning and low-HP
+                # heartbeat. At 3s remaining the pulse is calm; at 0.5s it's
+                # rapid and frantic, clearly communicating "it's about to end!"
+                urgency = 1.0 - (min_timer / POWERUP_EXPIRY_WARNING_THRESHOLD)
+                pulse_speed = POWERUP_EXPIRY_PULSE_SPEED + urgency * POWERUP_EXPIRY_PULSE_SPEED * 0.8
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
                 # Blend between green (normal) and red (warning)
                 self.powerup_text.color = color.rgb(
                     int(50 + 205 * pulse),
@@ -9786,12 +9841,18 @@ def game_update():
                 p.glow_ring.color = color.rgba(gr, gg, gb, max(0, pulse_alpha))
                 p.glow_ring.scale = max(2.5, pulse_scale)
             if p.glow_pulse_timer <= 0:
-                # Restore normal green glow
-                p.glow_ring.color = color.rgba(0, 200, 80, 50)
-                p.glow_ring.scale = 2.5
+                # Restore normal biome-tinted green glow
+                _set_biome_tinted_glow(p, game)
         else:
-            p.glow_ring.color = color.rgba(0, 200, 80, 50)
-            p.glow_ring.scale = 2.5
+            # ── Biome-Tinted Glow Ring ── The player's ground glow ring subtly
+            # blends toward the current biome's color (30% biome, 70% green),
+            # creating a cohesive visual connection between Zorp and the
+            # environment. The blend lerps smoothly between biomes so the
+            # transition feels natural as you cross biome boundaries. On lava
+            # the glow gets a warm orange tint; on crystal, a cyan tint; etc.
+            # The green base remains dominant so the signature Zorp glow is
+            # always recognizable.
+            _set_biome_tinted_glow(p, game)
 
     # ── HP Bar Damage Shake Trigger ── When the player takes damage, trigger
     # the HP bar shake timer so _update_hud can apply the jitter effect.

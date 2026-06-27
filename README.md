@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.30.0 — 3D!)
+## Features (v2.30.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -412,6 +412,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.30.1 — Death Burst Pop, Biome-Tinted Glow & Accelerating Expiry Pulse
+- **Enemy death burst scale pop**: When an enemy is killed, it now briefly INFLATES to 1.25x its original scale in the first 10% of the death animation before shrinking — creating a "burst" visual like the enemy is exploding outward from the killing blow. This makes kills feel far more punchy and impactful than the previous pure shrink, giving each kill a satisfying explosive punch. Bigger enemies burst proportionally larger so the effect is visible across all enemy types — a Plasma Drake bursting to 2.75x scale is a dramatic screen-filling moment, while a Swarm Mite's tiny pop is quick and snappy. The burst blends smoothly into the existing shrink/flash/spin/tilt-wobble animation so the death feels like one continuous motion
+- **Biome-tinted player glow ring**: Zorp's green ground glow ring now subtly blends 30% toward the current biome's color, creating a cohesive visual connection between the character and the environment. On lava, the glow gets a warm orange tint; on crystal, a cyan tint; on snow, a cool blue-white tint; on toxic bog, a sickly green-yellow. The blend lerps smoothly between biomes over ~1 second so the transition feels natural as you cross biome boundaries. The green base remains dominant (70%) so the signature Zorp glow is always recognizable — it's a subtle environmental cohesion upgrade, not a radical color change. Previously the glow was always flat green regardless of where you were standing
+- **Accelerating power-up expiry pulse**: When a power-up buff is about to expire (below 3 seconds), the HUD warning pulse now accelerates in speed as the timer counts down — matching the escalating urgency pattern used by the shield expiry warning and low-HP heartbeat. At 3s the pulse is calm and steady; at 1s it's noticeably faster; at 0.3s it's rapid and frantic, clearly communicating "it's about to end!" without the player needing to read the number. Previously the pulse speed was constant throughout the warning window, providing no urgency gradient. Now the final seconds of a buff feel increasingly tense, helping players time their next action before the buff drops
 
 ### v2.30.0 — Chain Lightning, High-HP Glow & Milestone Cooldown Reset
 - **Chain Lightning on Kill**: When your kill combo reaches x3 or higher, each kill has a chance to arc cyan lightning from the killed enemy to nearby enemies within 8 units, dealing combo-scaled damage to up to 4 targets! The trigger chance scales from 35% at combo x3 to 65% at combo x13+, and the damage increases by 1 per combo tier above the minimum (further boosted by the Monolith damage buff if active). A bright cyan-white visual line connects the killed enemy to each struck enemy, struck enemies flash cyan, and a "⚡ CHAIN LIGHTNING!" message announces the arc. Chain lightning kills are full kills — they award XP, score, combo extension, loot drops, death particles, and death rings — making high combos electrically powerful and creating satisfying chain-reaction moments during dense combat. This synergizes with the existing combo damage buff (x10+), crit pierce, and berserk mode for explosive high-combo gameplay. Previously, high combos only increased XP/score multipliers and projectile damage — now they also create active crowd-clearing power that makes sustained kill streaks feel electrically charged
