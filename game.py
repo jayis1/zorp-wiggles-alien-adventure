@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.30.1"
+VERSION = "2.31.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1078,6 +1078,42 @@ OVERKILL_XP_BONUS = 20            # Bonus XP for overkill
 OVERKILL_SCREEN_SHAKE = 0.3      # Screen shake on overkill
 OVERKILL_PARTICLE_COUNT = 15     # Particle burst on overkill
 
+# ─── First Blood Bonus ───────────────────────────────────────────────────────
+# The very first enemy kill of each run grants bonus XP and a dramatic
+# "FIRST BLOOD!" announcement with a red particle burst. This gives the opening
+# moments of a run a more impactful kickoff — the first kill feels special
+# instead of being just another number ticking up. The bonus is a flat amount
+# so it's meaningful early (when XP is scarce) without being unbalancing later.
+FIRST_BLOOD_XP_BONUS = 40          # Bonus XP awarded for the first kill of a run
+FIRST_BLOOD_PARTICLE_COUNT = 18    # Red particle burst on first blood
+FIRST_BLOOD_SCREEN_SHAKE = 0.3     # Screen shake on first blood
+
+# ─── Combo Sustain Heal ──────────────────────────────────────────────────────
+# At combo x10+, every COMBO_SUSTAIN_HEAL_INTERVAL kills within the combo heals
+# Zorp a small amount. This rewards sustained combat with survivability — a
+# player who maintains a high kill streak is rewarded with passive healing,
+# making aggressive playstyles more viable in long fights and creating a
+# risk/reward dynamic (keep fighting to heal, but risk taking damage). The heal
+# only triggers at high combos so it doesn't trivialize early combat, and the
+# amount is small enough that it supplements (not replaces) Health Potions.
+COMBO_SUSTAIN_HEAL_THRESHOLD = 10  # Combo count needed to start healing
+COMBO_SUSTAIN_HEAL_INTERVAL = 5    # Every N kills within the combo heals
+COMBO_SUSTAIN_HEAL_AMOUNT = 8       # HP healed per interval
+COMBO_SUSTAIN_HEAL_MAX_FRACTION = 0.05  # Heal capped at 5% of max HP per tick
+
+# ─── Swarm Escape ────────────────────────────────────────────────────────────
+# When the player is surrounded (SWARM_ESCAPE_COUNT or more enemies within
+# SWARM_ESCAPE_RADIUS), Zorp gets a temporary movement speed boost — a
+# "swarm escape" instinct that helps break out of being mobbed. This makes
+# being surrounded less frustrating (you can always escape if you move) while
+# keeping the danger real (the boost only applies while surrounded, so you
+# must actually move away). The boost is modest so it doesn't trivialize
+# melee enemies, but enough to create a window of opportunity.
+SWARM_ESCAPE_COUNT = 4             # Min enemies within radius to trigger escape
+SWARM_ESCAPE_RADIUS = 12.0         # Radius to count enemies for swarm detection
+SWARM_ESCAPE_SPEED_MULT = 1.2       # +20% movement speed while surrounded
+SWARM_ESCAPE_CHECK_INTERVAL = 0.25  # How often to recount (seconds)
+
 # ─── HP Bar Damage Shake ──────────────────────────────────────────────────────
 HP_BAR_SHAKE_DURATION = 0.4      # How long the HP bar shakes after taking damage
 HP_BAR_SHAKE_INTENSITY = 0.012  # Max pixel offset of the HP bar shake
@@ -1670,6 +1706,13 @@ COMBO_EDGE_GLOW_PULSE_SPEED = 10.0     # Pulse speed when combo is at x10+ (rapi
 THREAT_COUNTER_RADIUS = 30              # How far to count enemies for the threat counter
 THREAT_COUNTER_UPDATE_INTERVAL = 0.3   # How often to recount (seconds) — avoids per-frame iteration
 THREAT_COUNTER_POSITION = (-0.75, 0.09) # HUD position for the threat text
+
+# ── Swarm Escape HUD Indicator ── Position for the "SWARM ESCAPE!" text that
+# appears when the player is surrounded and the speed boost is active. Placed
+# just below the threat counter so the two proximity-related indicators are
+# grouped together visually.
+SWARM_ESCAPE_HUD_POSITION = (-0.75, -0.02)
+SWARM_ESCAPE_HUD_PULSE_SPEED = 8.0  # How fast the indicator pulses (faster = more urgent)
 
 # ─── Level-Up Golden Screen Flash ────────────────────────────────────────────
 # A brief golden screen-edge flash on level-up, complementing the existing
@@ -4603,6 +4646,23 @@ class Game:
         self.berserk_announce_timer = 0.0     # How long the BERSERK! announcement stays
         self.berserk_screen_flash_timer = 0.0 # Red screen flash on berserk trigger
 
+        # ── First Blood ── Tracks whether the first-kill bonus has been
+        # awarded this run. Set False on init, set True when the first enemy
+        # is killed so the bonus only fires once per run.
+        self.first_blood_triggered = False
+
+        # ── Combo Sustain Heal ── Tracks kills within the current combo for
+        # the periodic heal tick. Reset to 0 when the combo breaks so the
+        # counter only counts kills within an active high combo.
+        self.combo_sustain_heal_counter = 0
+
+        # ── Swarm Escape ── Tracks whether the swarm-escape speed boost is
+        # currently active. Updated periodically by checking how many enemies
+        # are within SWARM_ESCAPE_RADIUS. The check runs on an interval to
+        # avoid iterating the enemy list every frame.
+        self.swarm_escape_active = False
+        self.swarm_escape_check_timer = 0.0
+
         # ── Pickup Streak ── Tracks consecutive rapid item pickups. Each pickup
         # within PICKUP_STREAK_WINDOW seconds extends the streak. At milestones
         # (every 5), bonus XP is awarded. Makes item gathering runs feel rewarding.
@@ -5384,6 +5444,7 @@ class Game:
                       'boss_spawn_warning_text', 'boss_spawn_flash',
                       'pickup_streak_text', 'pickup_streak_bar_bg', 'pickup_streak_bar',
                       'crit_chain_text', 'flawless_text',
+                      'swarm_escape_text',
                       'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
@@ -6355,6 +6416,16 @@ class Game:
             color=color.rgba(200, 200, 200, 0),
         )
         self.threat_counter_timer = 0.0  # Recount interval accumulator
+
+        # ── Swarm Escape HUD Indicator ── A pulsing text that appears when the
+        # player is surrounded (4+ enemies within 12 units) and the escape speed
+        # boost is active. Positioned just below the threat counter so the two
+        # proximity indicators are grouped. Pulses in a warm orange-cyan to
+        # communicate "you're surrounded, but you can escape — move!"
+        self.swarm_escape_text = Text(
+            text='', position=SWARM_ESCAPE_HUD_POSITION, scale=0.7,
+            color=color.rgba(255, 180, 60, 0),
+        )
 
         # ── Enemy Proximity Radar ── A small circular radar on the HUD showing
         # nearby enemies as colored dots, oriented with the player's facing
@@ -8071,6 +8142,25 @@ class Game:
                 self.threat_counter_text.text = f'☠ Nearby: {nearby}'
                 self.threat_counter_text.color = color.rgb(255, 50, 50)
 
+        # ── Swarm Escape HUD Indicator ── When the swarm-escape speed boost is
+        # active (player surrounded by 4+ enemies within 12 units), show a
+        # pulsing indicator so the player knows they have an escape window.
+        # The pulse animates in alpha and shifts between warm orange and cyan
+        # to convey "escape velocity" — warm = danger, cyan = speed. Hides
+        # entirely when not surrounded so it doesn't clutter the HUD.
+        if self.swarm_escape_active:
+            pulse = 0.5 + 0.5 * math.sin(self.t * SWARM_ESCAPE_HUD_PULSE_SPEED)
+            alpha = int(180 + 75 * pulse)
+            # Blend warm orange (255,160,40) toward cyan (80,220,255) with pulse
+            r = int(255 * (1 - pulse * 0.7) + 80 * pulse * 0.7)
+            g = int(160 * (1 - pulse * 0.7) + 220 * pulse * 0.7)
+            b = int(40 * (1 - pulse * 0.7) + 255 * pulse * 0.7)
+            self.swarm_escape_text.text = '⚡ SWARM ESCAPE! +20% SPD'
+            self.swarm_escape_text.color = color.rgba(r, g, b, alpha)
+        else:
+            self.swarm_escape_text.text = ''
+            self.swarm_escape_text.color = color.rgba(255, 180, 60, 0)
+
         # ── Level-Up Golden Screen Flash ── Decays smoothly after being
         # triggered by the level-up event in game_update. A brief golden
         # screen-edge flash that makes level-ups feel celebratory.
@@ -8355,6 +8445,23 @@ class Game:
         Also delegates to _register_flawless_kill() so every kill is counted
         toward the Flawless Kill Streak (kills without taking damage).
         """
+        # ── First Blood ── The first enemy kill of the run awards a one-time
+        # bonus XP and a dramatic red announcement so the opening kill feels
+        # special. Only fires once per run (flag prevents re-triggering on
+        # restart since _register_kill is only called on actual kills and the
+        # flag resets with a new Game() instance).
+        if not self.first_blood_triggered:
+            self.first_blood_triggered = True
+            p = self.player
+            monolith_xp_mult_fb = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+            fb_xp = int(FIRST_BLOOD_XP_BONUS * monolith_xp_mult_fb)
+            p.gain_xp(fb_xp)
+            self.add_message(f"⚔ FIRST BLOOD! +{fb_xp} bonus XP!")
+            self._spawn_particles(p.position + Vec3(0, 1.5, 0),
+                                  color.rgb(255, 40, 40),
+                                  count=FIRST_BLOOD_PARTICLE_COUNT)
+            self.screen_shake = max(self.screen_shake, FIRST_BLOOD_SCREEN_SHAKE)
+
         self.multi_kill_count += 1
         self.multi_kill_timer = MULTI_KILL_WINDOW
         # Only announce when we hit 2+ kills in the window
@@ -8395,6 +8502,32 @@ class Game:
 
         # Track flawless kill streak (resets on taking damage)
         self._register_flawless_kill()
+
+        # ── Combo Sustain Heal ── At combo x10+, every 5 kills within the combo
+        # heals Zorp a small amount, rewarding sustained combat with
+        # survivability. The combo_count is incremented by the caller AFTER
+        # _register_kill returns, so we use (combo_count + 1) as the effective
+        # combo after this kill. The heal counter tracks kills within the
+        # current combo and is reset when the combo breaks (in the combo timer
+        # expiry block of game_update). The heal is capped at a fraction of
+        # max HP so it can't overheal massively in a single tick.
+        effective_combo = self.combo_count + 1
+        if effective_combo >= COMBO_SUSTAIN_HEAL_THRESHOLD:
+            self.combo_sustain_heal_counter += 1
+            if self.combo_sustain_heal_counter >= COMBO_SUSTAIN_HEAL_INTERVAL:
+                self.combo_sustain_heal_counter = 0
+                p = self.player
+                if p.hp < p.max_hp:
+                    heal_cap = max(COMBO_SUSTAIN_HEAL_AMOUNT,
+                                   int(p.max_hp * COMBO_SUSTAIN_HEAL_MAX_FRACTION))
+                    heal_amt = min(heal_cap, p.max_hp - p.hp)
+                    p.hp += heal_amt
+                    self.add_message(f"⚔ Combo Sustain! +{heal_amt} HP!")
+                    self._spawn_particles(p.position + Vec3(0, 1, 0),
+                                          color.rgb(100, 255, 150), count=8)
+                    # Healing pulse ring — consistent with all other heal sources
+                    self._spawn_heal_pulse(p.position)
+                    self.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
 
     def _chain_lightning(self, source_pos, combo_count):
         """Attempt to arc chain lightning from a killed enemy to nearby enemies.
@@ -8945,6 +9078,27 @@ def game_update():
     # kills), the player moves faster — an aggressive rush reward.
     if p.berserk_timer > 0:
         effective_speed *= BERSERK_SPEED_MULT
+
+    # ── Swarm Escape speed buff ── When surrounded by SWARM_ESCAPE_COUNT or
+    # more enemies within SWARM_ESCAPE_RADIUS, Zorp gets a temporary speed
+    # boost to help break out of the mob. The check runs on an interval
+    # (swarm_escape_check_timer) to avoid iterating the enemy list every frame.
+    # The boost only applies while actually surrounded, so the player must
+    # move away to escape — it's an escape window, not a permanent buff.
+    game.swarm_escape_check_timer -= time.dt
+    if game.swarm_escape_check_timer <= 0:
+        game.swarm_escape_check_timer = SWARM_ESCAPE_CHECK_INTERVAL
+        swarm_count = 0
+        for e in game.enemies:
+            if not e.alive or e.dying:
+                continue
+            dx = e.x - p.x
+            dz = e.z - p.z
+            if dx * dx + dz * dz < SWARM_ESCAPE_RADIUS * SWARM_ESCAPE_RADIUS:
+                swarm_count += 1
+        game.swarm_escape_active = swarm_count >= SWARM_ESCAPE_COUNT
+    if game.swarm_escape_active:
+        effective_speed *= SWARM_ESCAPE_SPEED_MULT
 
     # ── Level-Up Speed Burst ── A brief movement speed surge after leveling up,
     # making each level feel empowering — you literally surge with energy. The
@@ -9613,6 +9767,10 @@ def game_update():
                                           count=COMBO_BREAK_PARTICLE_COUNT)
                     game.screen_shake = max(game.screen_shake, COMBO_BREAK_SCREEN_SHAKE)
                 game.combo_count = 0
+                # ── Combo Sustain Heal Reset ── When the combo breaks, reset
+                # the sustain heal counter so the next combo starts fresh. This
+                # prevents carrying over partial progress from a broken combo.
+                game.combo_sustain_heal_counter = 0
     # BUG FIX: combo_display_timer was decremented in both _update_hud() and
     # (implicitly via game global references), causing a double-decrement per frame.
     # Now it's only decremented here in game_update().
