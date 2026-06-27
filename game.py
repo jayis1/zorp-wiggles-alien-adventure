@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.31.0"
+VERSION = "2.31.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -67,6 +67,18 @@ ENEMY_ALERT_INDICATOR_SCALE = 1.4      # Text scale (world-space billboard)
 ENEMY_ATTACK_WINDUP_TIME = 0.25      # Seconds before attack lands that the windup begins
 ENEMY_ATTACK_WINDUP_SQUASH = 0.15    # Max Y compression during windup (0.15 = squished to 85%)
 ENEMY_ATTACK_WINDUP_BRIGHTNESS = 0.5 # How far to lerp enemy color toward white during windup
+
+# ─── Spore Spitter Spit Charge-Up Telegraph ──────────────────────────────────
+# In the final moments before a Spore Spitter fires its ranged projectile, the
+# enemy briefly swells (scale up) and brightens toward a glowing orange — a
+# clear "winding up to spit!" telegraph that mirrors the melee windup system.
+# This makes the ranged attack readable and dodgeable instead of
+# instantaneous, giving the player a fair window to strafe or dash before the
+# spore launches. Only triggers when the spit timer is nearly done AND the
+# player is within spit range, so it doesn't fire during the long cooldown.
+SPORE_SPIT_CHARGE_TIME = 0.45       # Seconds before spit that the charge-up begins
+SPORE_SPIT_CHARGE_SCALE = 0.25      # Max scale increase during charge (0.25 = swells to 125%)
+SPORE_SPIT_CHARGE_BRIGHTNESS = 0.55 # How far to lerp enemy color toward bright orange during charge
 
 # ─── Enemy Attack Forward Lunge ──────────────────────────────────────────────
 # When an enemy lands a melee attack, it physically lunges forward a short
@@ -336,6 +348,15 @@ PROJECTILE_AURA_COMBO_TIER = 5          # Combo count needed to start scaling th
 PROJECTILE_AURA_PULSE_SPEED_BASE = 12.0  # Base aura pulse speed (low combo)
 PROJECTILE_AURA_PULSE_SPEED_MAX = 28.0    # Max aura pulse speed (high combo)
 PROJECTILE_AURA_SCALE_MAX = 2.6          # Max aura scale multiplier (high combo)
+# ── Combo Warm Tint ── At high kill combos the projectile CORE BOLT (not just the
+# aura) lerps from pure cyan toward a warm cyan-gold, making the laser visibly
+# "heat up" during kill streaks. This complements the existing aura pulse/scale
+# scaling so both the glow AND the bolt itself reflect combo state — at x5 the
+# bolt is pure cyan, at x15+ it's a vivid teal-gold that reads as "charged".
+# The tint only applies to non-piercing bolts (piercing crits turn gold via the
+# existing pierce system, which takes priority).
+PROJECTILE_COMBO_WARM_TIER = 5        # Combo count where warm tint begins
+PROJECTILE_COMBO_WARM_MAX = 0.55      # Max lerp toward gold (0=none, 1=full gold)
 
 # ─── Projectile Trail ────────────────────────────────────────────────────────
 PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
@@ -614,6 +635,17 @@ ABILITY_BAR_WIDTH = 0.18
 ABILITY_BAR_HEIGHT = 0.01
 ABILITY_BAR_POS_DASH = (-0.65, 0.345)     # Beneath the dash HUD text
 ABILITY_BAR_POS_PULSE = (-0.65, 0.185)    # Beneath the pulse wave HUD text
+# ── Ability Bar Near-Ready Anticipation Glow ── When an ability cooldown bar
+# is >85% filled (nearly ready), a gentle pulsing brightness is added to the
+# fill color so the player can see at a glance that the ability is about to
+# come off cooldown — matching the XP bar anticipation glow pattern. The
+# pulse speed ramps up as the bar fills closer to 100%, creating escalating
+# anticipation in the final ~0.3s before readiness. This makes ability
+# cooldowns feel more alive and readable instead of a flat linear fill.
+ABILITY_BAR_ANTICIPATION_THRESHOLD = 0.85  # Fill ratio where anticipation glow begins
+ABILITY_BAR_ANTICIPATION_PULSE_MIN = 6.0   # Min pulse speed (Hz) at threshold
+ABILITY_BAR_ANTICIPATION_PULSE_MAX = 18.0   # Max pulse speed (Hz) at 100% ready
+ABILITY_BAR_ANTICIPATION_GLOW = 60         # Max brightness added to fill at peak pulse
 
 # ─── Power-Up Durations ───────────────────────────────────────────────────────
 SPEED_BOOST_DURATION = 6.0              # Longer speed boost — feels too short at 5s
@@ -1424,7 +1456,12 @@ PULSE_WAVE_COOLDOWN = 8.0            # Cooldown between pulse wave uses
 PULSE_WAVE_RADIUS = 10.0             # How far the shockwave reaches
 PULSE_WAVE_EXPAND_SPEED = 25.0       # How fast the ring expands outward
 PULSE_WAVE_PUSH_FORCE = 18.0        # How strongly enemies are pushed away
-PULSE_WAVE_DAMAGE = 10              # Moderate damage dealt by the wave — rewards using it as a finisher
+PULSE_WAVE_DAMAGE = 10              # Moderate base damage dealt by the wave — rewards using it as a finisher
+PULSE_WAVE_LEVEL_DAMAGE_BONUS = 1.5 # Extra damage per player level — keeps Pulse Wave relevant in late game
+# Without this scaling the flat 10 damage becomes irrelevant once enemies have 100+ HP,
+# making the ability a pure knockback tool. With the bonus the wave stays a viable
+# finisher throughout the run: at level 1 it deals ~11.5, at level 10 ~25, at level
+# 20 ~40 — growing in parallel with the projectile level bonus for consistent feel.
 PULSE_WAVE_RING_LIFETIME = 0.5      # How long the visual ring lasts
 PULSE_WAVE_RING_START_SCALE = 0.5   # Starting scale of the ring visual
 PULSE_WAVE_RING_MAX_SCALE = 10.0    # Final scale of the ring visual
@@ -2578,6 +2615,12 @@ class Enemy(Entity):
         self.phase_timer = random.uniform(4, 8) if self.is_phase_shifter else 0
         self.is_spore_spitter = (enemy_type == 'Spore Spitter')
         self.spit_timer = random.uniform(2, 4) if self.is_spore_spitter else 0
+        # ── Spore Spitter Spit Charge-Up ── Tracks the active charge-up
+        # telegraph so we can restore normal scale/color when it ends without
+        # firing (e.g., player moved out of range). Set True while the
+        # charge-up visual is applying; the spit code resets it on fire or when
+        # the player leaves range.
+        self._spit_charge_active = False
         self.is_swarm_mite = (enemy_type == 'Swarm Mite')
 
         # Void Bomber: kamikaze that explodes near player
@@ -4266,6 +4309,24 @@ class Projectile(Entity):
         r, g, b = _c255_color(PROJECTILE_AURA_COLOR)
         self.aura.color = color.rgba(r, g, b, a)
         self.aura.scale = PROJECTILE_AURA_SCALE * aura_scale_mult
+        # ── Combo Warm Tint ── At high combos the core bolt lerps from pure
+        # cyan toward a warm cyan-gold, making the laser visibly "heat up"
+        # during kill streaks. This complements the aura pulse/scale scaling
+        # so the bolt itself also reflects combo state. Piercing crits turn
+        # full gold via the pierce system (set in the collision code), which
+        # takes priority over this subtle combo tint — so we only apply the
+        # warm tint to non-piercing bolts.
+        if not self.is_piercing and combo_count >= PROJECTILE_COMBO_WARM_TIER:
+            warm_t = max(0.0, min(1.0, (combo_count - PROJECTILE_COMBO_WARM_TIER) / 10.0))
+            warm_t *= PROJECTILE_COMBO_WARM_MAX  # Cap the lerp
+            # Lerp cyan (0,255,255) toward gold (255,215,80)
+            br = int(0 + (255 - 0) * warm_t)
+            bg = int(255 + (215 - 255) * warm_t)
+            bb = int(255 + (80 - 255) * warm_t)
+            self.color = color.rgb(br, bg, bb)
+        elif not self.is_piercing:
+            # Combo too low — ensure the bolt is at its base cyan color
+            self.color = C_LASER
         return self.lifetime > 0
 
 
@@ -7478,6 +7539,19 @@ class Game:
             # fill_r is always 0 (cyan has no red component)
             fill_g = int(120 + 135 * cd_ratio)
             fill_b = int(160 + 95 * cd_ratio)
+            # ── Near-Ready Anticipation Glow ── When the cooldown bar is >85%
+            # filled (nearly ready), add a gentle pulsing brightness so the
+            # player can see at a glance that the ability is about to come off
+            # cooldown — matching the XP bar anticipation glow pattern. The
+            # pulse speed increases as the bar fills closer to 100%, creating
+            # escalating anticipation in the final ~0.3s before readiness.
+            if cd_ratio > ABILITY_BAR_ANTICIPATION_THRESHOLD:
+                antic_t = (cd_ratio - ABILITY_BAR_ANTICIPATION_THRESHOLD) / (1.0 - ABILITY_BAR_ANTICIPATION_THRESHOLD)
+                pulse_speed = lerp(ABILITY_BAR_ANTICIPATION_PULSE_MIN, ABILITY_BAR_ANTICIPATION_PULSE_MAX, antic_t)
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+                glow = int(ABILITY_BAR_ANTICIPATION_GLOW * antic_t * pulse)
+                fill_g = min(255, fill_g + glow)
+                fill_b = min(255, fill_b + glow)
             self.dash_cd_bar.color = color.rgb(0, fill_g, fill_b)
         else:
             self.dash_text.text = 'DASH READY'
@@ -7952,6 +8026,14 @@ class Game:
             # fill_r is always 0 (teal has no red component)
             fill_g = int(120 + 135 * cd_ratio)
             fill_b = int(140 + 60 * cd_ratio)
+            # ── Near-Ready Anticipation Glow ── (same pattern as dash bar)
+            if cd_ratio > ABILITY_BAR_ANTICIPATION_THRESHOLD:
+                antic_t = (cd_ratio - ABILITY_BAR_ANTICIPATION_THRESHOLD) / (1.0 - ABILITY_BAR_ANTICIPATION_THRESHOLD)
+                pulse_speed = lerp(ABILITY_BAR_ANTICIPATION_PULSE_MIN, ABILITY_BAR_ANTICIPATION_PULSE_MAX, antic_t)
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+                glow = int(ABILITY_BAR_ANTICIPATION_GLOW * antic_t * pulse)
+                fill_g = min(255, fill_g + glow)
+                fill_b = min(255, fill_b + glow)
             self.pulse_cd_bar.color = color.rgb(0, fill_g, fill_b)
         else:
             self.pulse_wave_text.text = 'PULSE READY [Q]'
@@ -7972,6 +8054,15 @@ class Game:
             fill_r = int(140 + 115 * cd_ratio)
             fill_g = int(100 + 120 * cd_ratio)
             fill_b = int(30 + 50 * cd_ratio)
+            # ── Near-Ready Anticipation Glow ── (same pattern as dash/pulse bars)
+            if cd_ratio > ABILITY_BAR_ANTICIPATION_THRESHOLD:
+                antic_t = (cd_ratio - ABILITY_BAR_ANTICIPATION_THRESHOLD) / (1.0 - ABILITY_BAR_ANTICIPATION_THRESHOLD)
+                pulse_speed = lerp(ABILITY_BAR_ANTICIPATION_PULSE_MIN, ABILITY_BAR_ANTICIPATION_PULSE_MAX, antic_t)
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+                glow = int(ABILITY_BAR_ANTICIPATION_GLOW * antic_t * pulse)
+                fill_r = min(255, fill_r + glow)
+                fill_g = min(255, fill_g + glow)
+                fill_b = min(255, fill_b + glow)
             self.vacuum_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
         else:
             self.vacuum_pulse_text.text = 'VACUUM READY [V]'
@@ -10508,6 +10599,42 @@ def game_update():
             # ── Spore Spitter: Shoot projectiles at player ──
             if enemy.is_spore_spitter and dist_to_player < AI_CULL_RANGE:
                 enemy.spit_timer -= time.dt
+                # ── Spit Charge-Up Telegraph ── In the final moments before the
+                # spore launches (while in range), the Spore Spitter swells in
+                # scale and brightens toward a glowing orange — a clear "winding
+                # up to spit!" visual that mirrors the melee attack windup. This
+                # makes the ranged attack readable and dodgeable instead of
+                # instantaneous, giving the player a fair window to strafe or
+                # dash. Only applies when the spit timer is nearly done and the
+                # player is within spit range.
+                _spit_charge_now = (dist_to_player < 25 and dist_to_player < VISUAL_CULL_RANGE
+                                    and 0 < enemy.spit_timer <= SPORE_SPIT_CHARGE_TIME
+                                    and enemy.hit_scale_punch <= 0 and not enemy.dying
+                                    and not enemy._attack_windup_active)
+                if _spit_charge_now:
+                    enemy._spit_charge_active = True
+                    charge_t = 1.0 - (enemy.spit_timer / SPORE_SPIT_CHARGE_TIME)  # 0→1
+                    # Swell: scale up gradually (uniform swell, not a squash)
+                    swell = 1.0 + SPORE_SPIT_CHARGE_SCALE * charge_t
+                    enemy.scale = enemy.original_scale * swell
+                    # Brighten toward glowing orange for a charging-up glow
+                    if enemy.hit_flash <= 0:
+                        er, eg, eb = _c255_color(enemy.original_color)
+                        b = SPORE_SPIT_CHARGE_BRIGHTNESS * charge_t
+                        enemy.color = color.rgb(
+                            min(255, int(er + (255 - er) * b)),
+                            min(255, int(eg + (140 - eg) * b)),
+                            min(255, int(eb + (20 - eb) * b)),
+                        )
+                elif enemy._spit_charge_active:
+                    # Charge ended without firing (player left range or got hit)
+                    # — restore normal scale and color so the telegraph doesn't
+                    # linger. Only restore if no higher-priority effect is active.
+                    enemy._spit_charge_active = False
+                    if enemy.hit_scale_punch <= 0 and not enemy._attack_windup_active:
+                        enemy.scale = enemy.original_scale
+                    if enemy.hit_flash <= 0 and not enemy._attack_windup_active:
+                        enemy.color = enemy.original_color
                 if enemy.spit_timer <= 0 and dist_to_player < 25:
                     spit_dir = (p.position - enemy.position).normalized()
                     spit_dir.y = 0
@@ -10521,6 +10648,12 @@ def game_update():
                     game.enemy_projectiles.append(ep)
                     game._spawn_particles(enemy.position, color.rgb(200, 100, 0), count=4)
                     enemy.spit_timer = random.uniform(2.5, 4.5)
+                    # Reset charge state — the spit fired, so the telegraph ends
+                    enemy._spit_charge_active = False
+                    if enemy.hit_scale_punch <= 0:
+                        enemy.scale = enemy.original_scale
+                    if enemy.hit_flash <= 0:
+                        enemy.color = enemy.original_color
 
             # ── Void Bomber: Kamikaze explosion near player ──
             if enemy.is_void_bomber:
@@ -11045,6 +11178,7 @@ def game_update():
         # visibly "angry" without completely hiding its base color.
         if (enemy.enraged and enemy.hit_flash <= 0
                 and not enemy._attack_windup_active
+                and not getattr(enemy, '_spit_charge_active', False)
                 and dist_to_player < VISUAL_CULL_RANGE
                 and not (enemy.is_void_bomber and enemy.fuse_active)
                 and not (enemy.is_void_stalker and enemy.cloak_state == 'cloaked')
@@ -11200,14 +11334,14 @@ def game_update():
                                                       min(ENEMY_HIT_PUNCH_SIZE_MULT_MAX, size_ratio))
             scale_mult = 1.0 + (punch_mult - 1.0) * punch_t
             enemy.scale = enemy.original_scale * scale_mult
-        elif dist_to_player < VISUAL_CULL_RANGE and not enemy.alerted and enemy.alive and not enemy.dying:
+        elif dist_to_player < VISUAL_CULL_RANGE and not enemy.alerted and enemy.alive and not enemy.dying and not getattr(enemy, '_spit_charge_active', False):
             # ── Idle Breathing ── Enemies that haven't detected the player gently
             # breathe in and out (subtle scale oscillation) so the world feels
             # alive instead of populated with frozen statues. Only applies to
             # idle, non-aggroed, non-hit enemies within visual range.
             breath = 1.0 + 0.04 * math.sin(game.t * 1.8 + id(enemy) % 100 * 0.01)
             enemy.scale = enemy.original_scale * breath
-        elif dist_to_player < VISUAL_CULL_RANGE and enemy.alerted and enemy.alive and not enemy.dying:
+        elif dist_to_player < VISUAL_CULL_RANGE and enemy.alerted and enemy.alive and not enemy.dying and not getattr(enemy, '_spit_charge_active', False):
             # ── Combat Breathing ── Aggroed enemies that are actively chasing
             # the player "pant" with a faster, slightly more intense scale
             # oscillation than idle breathing. This makes chasing enemies feel
@@ -12018,9 +12152,19 @@ def game_update():
                         push_dir.z * PULSE_WAVE_PUSH_FORCE,
                     )
                 # Deal damage with visual feedback — hit flash + damage number
-                killed = enemy.take_damage(PULSE_WAVE_DAMAGE)
+                # IMPROVED: Pulse Wave damage now scales with player level (like
+                # projectiles do) so the ability stays a viable finisher in late
+                # game instead of becoming pure knockback against high-HP enemies.
+                pulse_dmg = int(PULSE_WAVE_DAMAGE + p.level * PULSE_WAVE_LEVEL_DAMAGE_BONUS)
+                # Apply the combo damage buff at x10+ for consistency with projectiles
+                if game.combo_count >= COMBO_DAMAGE_TIER:
+                    pulse_dmg = int(pulse_dmg * COMBO_DAMAGE_MULT)
+                # Apply the Monolith damage buff if active
+                if p.monolith_damage_timer > 0:
+                    pulse_dmg = int(pulse_dmg * MONOLITH_DAMAGE_MULT)
+                killed = enemy.take_damage(pulse_dmg)
                 game._spawn_particles(enemy.position, PULSE_WAVE_RING_COLOR, count=4)
-                game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=False))
+                game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=False))
                 game.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(0, 255, 200, 180)))
                 if killed:
                     # ── Boss Death Slow-Motion ── Trigger slow-mo for boss kills
@@ -12052,7 +12196,7 @@ def game_update():
                     # Pulse Wave kills worth less score at high combo tiers.
                     combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                    game.damage_numbers.append(DamageNumber(enemy.position, PULSE_WAVE_DAMAGE, is_kill=True))
+                    game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=True))
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)

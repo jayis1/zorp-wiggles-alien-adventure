@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.31.0 — 3D!)
+## Features (v2.31.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -415,6 +415,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.31.1 — Pulse Wave Level Scaling, Spit Charge-Up, Combo Warm Tint & Ability Bar Anticipation
+- **Pulse Wave damage scales with player level**: The Pulse Wave ability's flat 10 damage now gains +1.5 damage per player level (and benefits from the combo x10 damage buff and Monolith damage buff, just like projectiles), keeping it a viable finisher throughout the entire run instead of becoming pure knockback once enemies have 100+ HP. At level 1 it deals ~11.5, at level 10 ~25, at level 20 ~40 — growing in parallel with the projectile level bonus for consistent feel. Previously the Pulse Wave was only useful in the first few minutes; now it stays relevant as a tactical AOE finisher at all stages, rewarding its 8-second cooldown with damage that matches the enemies you're fighting
+- **Spore Spitter spit charge-up telegraph**: In the final 0.45 seconds before a Spore Spitter fires its ranged projectile, the enemy now visibly swells in scale (up to +25%) and brightens toward a glowing orange — a clear "winding up to spit!" visual that mirrors the existing melee attack windup telegraph. This makes the Spore Spitter's ranged attack readable and dodgeable instead of instantaneous, giving the player a fair window to strafe or dash before the spore launches. If the player leaves range or the Spore Spitter is hit during the charge-up, the visual resets cleanly so the telegraph doesn't linger. Previously the projectile fired with zero warning — now you can see it coming and react, making the Spore Spitter a fair and interesting enemy instead of a cheap damage source
+- **Combo warm tint on projectile bolts**: At combo x5+, the projectile's core bolt (not just the glow aura) lerps from pure cyan toward a warm cyan-gold, making the tentacle laser visibly "heat up" during kill streaks. This complements the existing aura pulse/scale scaling so both the glow AND the bolt itself reflect combo state — at x5 the bolt is pure cyan, at x15+ it's a vivid teal-gold that reads as "charged." Piercing crits (which turn full gold via the pierce system) take priority over this subtle combo tint. Previously the bolt stayed the same color regardless of combo; now your laser visually rewards sustained kill streaks with a warm, powerful hue
+- **Ability cooldown bar near-ready anticipation glow**: All three ability cooldown bars (Dash, Pulse Wave, Vacuum Pulse) now gain a gentle pulsing brightness when >85% filled, so the player can see at a glance that an ability is about to come off cooldown — matching the XP bar anticipation glow pattern. The pulse speed ramps up as the bar fills closer to 100%, creating escalating anticipation in the final ~0.3 seconds before readiness. Previously the bars filled linearly with no feedback that readiness was imminent; now the final moments before an ability becomes available feel alive and exciting, helping players time their next ability use without staring at the HUD
 
 ### v2.31.0 — First Blood, Combo Sustain Heal & Swarm Escape
 - **First Blood Bonus**: The very first enemy kill of each run now awards a one-time +40 bonus XP with a dramatic red "⚔ FIRST BLOOD!" announcement, red particle burst, and screen shake! Gives the opening moments of every run a punchy, impactful kickoff — your first kill feels special instead of being just another number ticking up. The bonus scales with the Monolith XP multiplier if active, and only fires once per run (resetting on restart). Makes the start of each run feel like a meaningful event rather than a slow ramp
