@@ -8444,6 +8444,12 @@ class Game:
 
         Also delegates to _register_flawless_kill() so every kill is counted
         toward the Flawless Kill Streak (kills without taking damage).
+
+        ⚠️ CALLING CONVENTION: _register_kill() MUST be called BEFORE the caller
+        increments combo_count. The Combo Sustain Heal feature uses
+        (self.combo_count + 1) as the effective combo after this kill, which
+        is only correct if combo_count has NOT yet been incremented for this
+        kill. See the Combo Sustain Heal section below for details.
         """
         # ── First Blood ── The first enemy kill of the run awards a one-time
         # bonus XP and a dramatic red announcement so the opening kill feels
@@ -10581,8 +10587,13 @@ def game_update():
                                 if other_killed:
                                     p.add_kill(other_enemy.name)
                                     game.total_kills += 1
-                                    game.combo_count += 1
+                                    # BUG FIX: _register_kill() must be called BEFORE
+                                    # combo_count += 1, because it uses (combo_count + 1)
+                                    # as the effective combo after this kill. Incrementing
+                                    # combo_count first makes effective_combo off by one,
+                                    # causing the Combo Sustain Heal to trigger too early.
                                     game._register_kill()
+                                    game.combo_count += 1
                                     game.max_combo = max(game.max_combo, game.combo_count)
                                     game.combo_timer = COMBO_TIMEOUT
                                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
@@ -11426,8 +11437,13 @@ def game_update():
                             if nearby_killed:
                                 p.add_kill(nearby_enemy.name)
                                 game.total_kills += 1
-                                game.combo_count += 1
+                                # BUG FIX: _register_kill() must be called BEFORE
+                                # combo_count += 1 (see explanation above). This
+                                # AOE kill site had the order reversed, causing the
+                                # Combo Sustain Heal threshold/counter to be off
+                                # by one for fireball splash kills.
                                 game._register_kill()
+                                game.combo_count += 1
                                 game.max_combo = max(game.max_combo, game.combo_count)
                                 game.combo_timer = COMBO_TIMEOUT
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
@@ -12016,8 +12032,12 @@ def game_update():
                         game.add_message("BOSS DOWN! SLOW-MO!")
                     p.add_kill(enemy.name)
                     game.total_kills += 1
-                    game.combo_count += 1
+                    # BUG FIX: _register_kill() must be called BEFORE
+                    # combo_count += 1 (see explanation at other kill sites).
+                    # This pulse-wave kill site had the order reversed, causing
+                    # the Combo Sustain Heal to use an off-by-one effective combo.
                     game._register_kill()
+                    game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
