@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.29.0"
+VERSION = "2.29.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -173,6 +173,15 @@ CAMERA_PITCH_MIN = 10       # Lowest pitch (looking far ahead)
 CAMERA_PITCH_MAX = 80       # Highest pitch (looking nearly straight down)
 CAMERA_YAW_SMOOTH = 10.0    # Lerp speed for yaw smoothing
 CAMERA_PITCH_SMOOTH = 10.0  # Lerp speed for pitch smoothing
+# ── Camera Shoot Recoil Kick ── Each shot nudges the camera backward (away
+# from the firing direction) and slightly upward, then springs back — a subtle
+# "kick" that makes shooting feel impactful through the camera without being
+# disorienting. The kick decays exponentially so rapid fire produces a steady
+# gentle push instead of accumulating into a violent shake. The vertical
+# component adds a tiny "recoil lift" (like a real weapon kicking up).
+CAMERA_SHOOT_RECOIL_DISTANCE = 0.35  # How far the camera kicks back (world units)
+CAMERA_SHOOT_RECOIL_LIFT = 0.15       # Small upward kick on the camera Y
+CAMERA_SHOOT_RECOIL_DECAY = 14.0      # How fast the recoil recovers (higher = snappier)
 
 # ─── Enemy Hit Feedback ───────────────────────────────────────────────────────
 ENEMY_HIT_FLASH_DURATION = 0.12        # Slightly longer flash for clearer read (was 0.1)
@@ -433,6 +442,18 @@ TENTACLE_RECOIL_RECOVERY = 14.0    # How fast tentacles spring back to normal
 # speed that makes pickups feel snappy and responsive.
 COLLECT_SNAP_RADIUS = 1.5          # Within this distance, snap boost activates
 COLLECT_SNAP_STRENGTH = 2.5        # Pull strength multiplier during the final snap
+
+# ─── Collectible Proximity Glow ──────────────────────────────────────────────
+# When a collectible is within COLLECT_PROX_GLOW_RADIUS but still outside the
+# magnetic pull range, its glow ring gradually brightens based on proximity.
+# This creates a "calling" effect — nearby items subtly glow brighter as you
+# approach, drawing your eye toward them before the magnetic pull kicks in.
+# This makes exploration feel more rewarding: you notice items "waking up" as
+# you get close, creating a gentle visual gradient of attention that guides
+# you toward collectibles without a heavy-handed UI marker.
+COLLECT_PROX_GLOW_RADIUS = 12.0       # Distance at which proximity glow begins
+COLLECT_PROX_GLOW_ALPHA_BOOST = 1.8   # Max alpha multiplier at closest range
+COLLECT_PROX_GLOW_SCALE_BOOST = 1.4   # Max glow scale multiplier at closest range
 
 # ─── Collectible Pull Motion Trail ──────────────────────────────────────────
 # When a collectible is being magnetically pulled toward the player, it leaves a
@@ -3065,13 +3086,32 @@ class SpawnWarningRing(Entity):
         progress = 1.0 - (self.lifetime / self.max_lifetime)
         # Shrink from start_scale to end_scale as the warning counts down
         current_scale = self.start_scale + (self.end_scale - self.start_scale) * progress
+        # ── Urgency Wobble ── In the final 30% of the countdown, the ring
+        # gains a subtle scale wobble — a rapid oscillation that communicates
+        # "imminent!" more viscerally than a smooth shrink. The wobble
+        # amplitude ramps from 0 to ~8% of the current scale as the timer
+        # approaches zero, making the last moments feel tense and urgent.
+        if progress > 0.7:
+            urgency_t = (progress - 0.7) / 0.3  # 0→1 in final 30%
+            wobble = math.sin(self.lifetime * 30) * 0.08 * urgency_t
+            current_scale *= (1.0 + wobble)
         self.scale = current_scale
         # Alpha ramps up: starts faint, gets brighter and pulses faster near the end
         base_alpha = int(60 + 120 * progress)
         pulse_rate = 4 + progress * 12  # pulses faster as spawn approaches
         pulse = 0.5 + 0.5 * math.sin(self.lifetime * pulse_rate * math.pi)
         alpha = int(base_alpha * pulse)
-        self.color = color.rgba(255, 60, 60, alpha)
+        # ── Urgency Color Shift ── As the spawn warning counts down, the ring
+        # color shifts from deep red toward bright orange-yellow, conveying
+        # increasing urgency. Early on it's a calm "something is coming" red;
+        # in the final moments it becomes a frantic "it's almost here!" orange-
+        # yellow that grabs attention. The shift makes the final second of the
+        # warning feel dramatically more urgent than the beginning, improving
+        # readability of imminent spawns during busy combat.
+        r = int(255)
+        g = int(60 + 195 * progress)  # 60 → 255 (red → orange-yellow)
+        b = int(60 + 40 * progress)   # 60 → 100 (slight warm shift)
+        self.color = color.rgba(r, g, b, alpha)
         return False
 
 
@@ -4895,6 +4935,10 @@ class Game:
 
         # Crosshair recoil — expands briefly on each shot for a dynamic aim feel
         self.crosshair_recoil = 0.0  # 1.0 = just fired, decays to 0
+        # Camera shoot recoil kick — decays from 1.0 to 0; applied as a backward
+        # camera offset in the camera follow section of game_update. Set by shoot().
+        self.camera_shoot_recoil = 0.0
+        self._camera_recoil_dir = Vec3(0, 0, 1)  # Default forward; overwritten on each shot
         # Crosshair hit flash — briefly tints the crosshair when a shot hits an
         # enemy, giving instant hit-confirmation feedback. Gold for crits.
         self.crosshair_hit_flash_timer = 0.0
@@ -6952,6 +6996,17 @@ class Game:
         else:
             direction = self.player.facing
 
+        # ── Camera Shoot Recoil Kick ── Nudge the camera backward (away from
+        # the firing direction) and slightly up, decaying quickly. This gives
+        # each shot a subtle physical "kick" felt through the camera — like the
+        # tentacle laser has real recoil — without being disorienting. The kick
+        # is applied in the camera follow section of game_update and decays
+        # exponentially so rapid fire produces a gentle steady push, not a violent
+        # accumulating shake. The direction is stored so the kick always pushes
+        # opposite to where the player aimed.
+        self.camera_shoot_recoil = 1.0
+        self._camera_recoil_dir = direction
+
         base_damage = PROJECTILE_BASE_DAMAGE + self.player.level * PROJECTILE_LEVEL_DAMAGE_BONUS
 
         # Combo Damage Buff: at combo x10+, projectiles deal +25% damage
@@ -8496,7 +8551,21 @@ def game_update():
         # during a dash even while hit-stop freeze is active. Without this, a
         # kill during a dash caused the camera to lag behind at normal speed.
         cam_lerp = DASH_CAMERA_LERP_SPEED if p.dash_timer > 0 else CAMERA_LERP_SPEED
-        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset
+        # Apply camera shoot recoil during hit-stop too (it decays in real time)
+        recoil_offset = Vec3(0, 0, 0)
+        if game.camera_shoot_recoil > 0:
+            game.camera_shoot_recoil -= real_dt * CAMERA_SHOOT_RECOIL_DECAY
+            if game.camera_shoot_recoil < 0:
+                game.camera_shoot_recoil = 0
+            recoil_dir = getattr(game, '_camera_recoil_dir', None)
+            if recoil_dir is not None:
+                kick = game.camera_shoot_recoil
+                recoil_offset = Vec3(
+                    -recoil_dir.x * CAMERA_SHOOT_RECOIL_DISTANCE * kick,
+                    CAMERA_SHOOT_RECOIL_LIFT * kick,
+                    -recoil_dir.z * CAMERA_SHOOT_RECOIL_DISTANCE * kick,
+                )
+        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset + recoil_offset
         # Still update particles and damage numbers during freeze
         i = 0
         while i < len(game.particles):
@@ -9706,7 +9775,27 @@ def game_update():
         game.screen_shake -= game.screen_shake * SCREEN_SHAKE_DECAY * time.dt
     else:
         game.screen_shake = 0
-    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset
+    # ── Camera Shoot Recoil Kick ── Each shot nudges the camera backward (away
+    # from the firing direction) and slightly upward, then springs back. The
+    # recoil offset is ADDED to the pivot position (not replacing the lerp) so
+    # it composes cleanly with the normal camera follow and screen shake. The
+    # kick decays exponentially so rapid fire produces a gentle steady push
+    # rather than accumulating into a violent shake. The lift component adds
+    # a tiny "recoil rise" (like a real weapon kicking up) for extra punch.
+    recoil_offset = Vec3(0, 0, 0)
+    if game.camera_shoot_recoil > 0:
+        game.camera_shoot_recoil -= time.dt * CAMERA_SHOOT_RECOIL_DECAY
+        if game.camera_shoot_recoil < 0:
+            game.camera_shoot_recoil = 0
+        recoil_dir = getattr(game, '_camera_recoil_dir', None)
+        if recoil_dir is not None:
+            kick = game.camera_shoot_recoil  # 1.0 → 0.0
+            recoil_offset = Vec3(
+                -recoil_dir.x * CAMERA_SHOOT_RECOIL_DISTANCE * kick,
+                CAMERA_SHOOT_RECOIL_LIFT * kick,
+                -recoil_dir.z * CAMERA_SHOOT_RECOIL_DISTANCE * kick,
+            )
+    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset + recoil_offset
 
     # ── Update Enemies ──
     for enemy in game.enemies[:]:
@@ -11573,18 +11662,24 @@ def game_update():
                 game.collectibles.remove(col)
             continue
 
-        col.animate(game.t)
-        # Reset scale to default if not being pulled (pull sets scale dynamically)
-        # and if spawn animation is complete (spawn animation handles its own scaling)
-        if col.spawn_timer <= 0:
-            col.scale = 0.6
-        # PERFORMANCE: squared-distance pre-check avoids a sqrt for the vast
-        # majority of distant collectibles. We only need the actual distance
-        # if the item is within the cull range (and thus worth animating/pulling).
+        # ── Performance: skip animation for distant collectibles ──
+        # Distant items (beyond cull range) that have finished their spawn
+        # animation don't need bob/spin/glow calculations — the player can't
+        # see them. We still must run animate() for items with active spawn
+        # timers (so they grow to full size) and for popping items (handled
+        # above). This skips ~90% of animate() calls when the world has 120+
+        # collectibles spread across a large map, reducing per-frame overhead.
         dx = col.x - p_pos.x
         dz = col.z - p_pos.z
         dist_sq = dx * dx + dz * dz
         near_player = dist_sq < COLLECTIBLE_CULL_RANGE_SQ or col.popping
+
+        if near_player or col.spawn_timer > 0:
+            col.animate(game.t)
+        # Reset scale to default if not being pulled (pull sets scale dynamically)
+        # and if spawn animation is complete (spawn animation handles its own scaling)
+        if col.spawn_timer <= 0:
+            col.scale = 0.6
 
         # ── Collectible Spawn Sparkle ── When a collectible finishes its
         # spawn-in animation, emit a small burst of sparkles in the item's color
@@ -11642,6 +11737,39 @@ def game_update():
             boosted_alpha = min(255, int(glow_cfg['glow_alpha'] * LOW_HP_POTION_GLOW_BOOST))
             ir, ig, ib = _c255_color(col.item_color)
             col.glow.color = color.rgba(ir, ig, ib, boosted_alpha)
+
+        # ── Collectible Proximity Glow ── When a collectible is within the
+        # proximity glow radius but NOT being pulled (and not already boosted
+        # by the low-HP potion effect above), its glow ring gradually brightens
+        # and expands based on how close the player is. This creates a subtle
+        # "calling" visual — items light up as you approach, drawing your eye
+        # toward them before the magnetic pull kicks in. The effect ramps from
+        # no boost at the radius edge to full boost at the pull radius edge,
+        # creating a smooth visual gradient of attention. It is skipped when
+        # the low-HP potion glow is already active (so the two don't stack and
+        # the heal-priority visual takes precedence).
+        prox_glow_applied = False
+        if (near_player and col.spawn_timer <= 0 and not col.popping
+                and not (col.name == 'Health Potion' and p.hp < p.max_hp * LOW_HP_VIGNETTE_THRESHOLD
+                         and dist_sq < LOW_HP_POTION_PROX_RADIUS * LOW_HP_POTION_PROX_RADIUS)):
+            dist_for_prox = math.sqrt(dist_sq)
+            level_pull_bonus = (p.level - 1) * COLLECT_PULL_RADIUS_PER_LEVEL
+            effective_pull_r = (COLLECT_PULL_RADIUS + level_pull_bonus) * (MAGNET_PULL_RADIUS_MULT if p.magnet_timer > 0 else 1.0)
+            # Only apply proximity glow between pull radius and prox glow radius
+            if effective_pull_r < dist_for_prox < COLLECT_PROX_GLOW_RADIUS:
+                prox_glow_applied = True
+                # 0 at edge (COLLECT_PROX_GLOW_RADIUS), 1 at pull radius
+                prox_t = 1.0 - (dist_for_prox - effective_pull_r) / (COLLECT_PROX_GLOW_RADIUS - effective_pull_r)
+                prox_t = max(0.0, min(1.0, prox_t))
+                glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
+                base_pulse = col.glow_min_scale + (col.glow_max_scale - col.glow_min_scale) * (
+                    0.5 + 0.5 * math.sin(game.t * col.glow_pulse_speed + col.bob_offset))
+                # Scale up the glow ring with proximity
+                col.glow.scale = base_pulse * (1.0 + (COLLECT_PROX_GLOW_SCALE_BOOST - 1.0) * prox_t)
+                # Brighten the glow alpha with proximity
+                boosted_alpha = min(255, int(glow_cfg['glow_alpha'] * (1.0 + (COLLECT_PROX_GLOW_ALPHA_BOOST - 1.0) * prox_t)))
+                ir, ig, ib = _c255_color(col.item_color)
+                col.glow.color = color.rgba(ir, ig, ib, boosted_alpha)
 
         # Magnetic pull: items are drawn toward player when close
         # Defensive: skip pull if dist is effectively zero to avoid NaN direction

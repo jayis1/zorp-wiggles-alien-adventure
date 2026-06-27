@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.29.0 — 3D!)
+## Features (v2.29.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -409,6 +409,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.29.1 — Camera Shoot Recoil, Spawn Warning Urgency, Proximity Glow & Distant Item Optimization
+- **Camera shoot recoil kick**: Each shot now nudges the camera backward (away from the firing direction) and slightly upward, then springs back — a subtle physical "kick" felt through the camera that makes shooting feel impactful, like the tentacle laser has real recoil. The kick decays exponentially (in ~0.25s) so rapid fire produces a gentle steady push rather than accumulating into a violent shake. The vertical "recoil lift" adds a tiny upward kick (like a real weapon kicking up). The recoil composes cleanly with the existing camera follow lerp and screen shake, and works correctly during hit-stop freeze and boss slow-motion. Previously the camera was completely static during shooting — now you feel each shot through the camera, adding a new layer of physicality to combat
+- **Spawn warning urgency color shift & wobble**: The enemy spawn warning ring now shifts color from deep red to bright orange-yellow as the countdown progresses, conveying increasing urgency. Early on it's a calm "something is coming" red; in the final moments it becomes a frantic "it's almost here!" orange-yellow that grabs attention. The ring also gains a subtle scale wobble in the final 30% of the countdown — a rapid oscillation that communicates "imminent!" more viscerally than a smooth shrink. This makes the last second of a spawn warning feel dramatically more tense and urgent than the beginning, improving readability of imminent spawns during busy combat
+- **Collectible proximity glow**: When a collectible is within 12 units but still outside the magnetic pull range, its glow ring gradually brightens and expands based on proximity — creating a subtle "calling" effect where items light up as you approach. This draws your eye toward nearby collectibles before the magnetic pull kicks in, making exploration feel more rewarding. The effect ramps smoothly from no boost at the radius edge to full boost at the pull range edge, creating a gentle visual gradient of attention. Previously, items had the same glow brightness whether you were 50 units away or 8 units away — now you notice items "waking up" as you get close, guiding you toward collectibles without a heavy-handed UI marker
+- **Distant collectible animation optimization**: Collectibles beyond the cull range (60 units from the player) now skip the per-frame bob/spin/glow-pulse animation calculations entirely. Since the player can't see these items, the math (sine calculations, color updates, scale assignments) was pure overhead. With 120+ collectibles spread across a large map, this skips ~90% of `animate()` calls per frame, reducing CPU overhead during exploration and combat. Items still animate correctly when they come into view or are actively spawning
 
 ### v2.29.0 — Berserk Mode, Shard Golem & Photon Boots
 - **Berserk Mode**: Killing 5+ enemies within 2.5 seconds triggers a temporary Berserk state — +50% projectile damage and +30% movement speed for 5 seconds! A dramatic red-orange "⚔ BERSERK MODE!" announcement pops with a screen flash and a pulsing red aura around Zorp. The rapid-kill window resets on each kill, so only sustained aggressive play triggers it. Rewards fast-paced combat and creates thrilling power-surge moments when wading into dense enemy clusters
