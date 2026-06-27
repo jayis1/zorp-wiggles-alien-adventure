@@ -35,14 +35,15 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.28.1 — 3D!)
+## Features (v2.29.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
-- **17 collectible item types** — including **12 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!), **Mirror Shard** (reflects enemy projectiles back at them for 6 seconds!)
-- **18 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!), **Echo Wraith** (spawns decoy clones that confuse the player!)
+- **18 collectible item types** — including **13 power-ups**: Health Potion, Speed Boost, Shield Crystal, Weapon Upgrade (Spread Shot), Magnet Core, Time Warp, Star Fruit (walk on water/lava!), XP Orb (bonus XP scaled by distance!), Fireball Scroll (explosive AOE shots!), Regen Crystal (HP regeneration over time!), **Lucky Clover** (+35% crit chance for 8 seconds!), **Mirror Shard** (reflects enemy projectiles back at them for 6 seconds!), **Photon Boots** (continuous double-dash for 5 seconds!)
+- **19 enemy types** — including **Phase Shifter** (teleports!), **Spore Spitter** (fires back!), **Swarm Mite** (fast & tiny), **Void Bomber** (kamikaze explosions!), **Nebula Phantom** (flying orbit + dive attack!), **Starburst Sentinel** (stationary turret firing shockwave rings!), **Cosmic Leech** (drain DoT!), **Void Stalker** (stealth cloak + ambush!), **Plasma Serpent** (segmented snake that splits into mini-enemies when killed!), **Graviton** (gravity pull that drags the player toward it!), **Void Wisp** (tiny, fast, semi-transparent — 50% chance to teleport away when hit!), **Echo Wraith** (spawns decoy clones that confuse the player!), **Shard Golem** (tanky enemy with a cycling crystal shield that blocks all shots — dash through to bypass!)
+- **Berserk Mode** — kill 5+ enemies within 2.5 seconds to trigger a temporary Berserk state: +50% projectile damage and +30% movement speed for 5 seconds! A dramatic red-orange "⚔ BERSERK MODE!" announcement pops with screen flash and a pulsing red aura around Zorp. Rewards aggressive, fast-paced combat playstyles
 - **Critical Hit system** — 15% base chance per shot (boosted to 50% with Lucky Clover!) to deal 2x damage with golden particles, screen shake, and **hit-stop freeze** for satisfying impact! **Critical Hit Chain**: land 3+ consecutive crits within 3 seconds to activate a **3x damage bonus** on subsequent crits — the HUD shows a gold "CRIT CHAIN xN" counter that turns orange-red when the bonus is active, rewarding sustained precision fire! **Critical Hit Pierce**: critical hits have a 40% chance to pierce through the struck enemy and continue flying — the projectile turns gold and can hit up to 3 enemies in a line, rewarding precision aim when enemies are lined up!
-- **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool! **Dash Strike kills** now trigger the full kill feedback suite — hit-stop freeze, FOV punch, screen shake, kill flash, combo milestone fireworks, combo shield, overkill/execution bonuses, and boss slow-mo — making dash kills just as satisfying as ranged kills
+- **Dash ability** — press Space to dodge in your movement direction (2s cooldown). **Dash Strike**: dashing through enemies deals damage and knockback, turning dash into an offensive tool! **Dash Strike kills** now trigger the full kill feedback suite — hit-stop freeze, FOV punch, screen shake, kill flash, combo milestone fireworks, combo shield, overkill/execution bonuses, and boss slow-mo — making dash kills just as satisfying as ranged kills. **Photon Boots** power-up grants continuous dash (no cooldown) for 5 seconds!
 - **Combo Shield** — reach a x15 kill combo to earn a golden one-time shield that absorbs the next hit without resetting your combo streak!
 - **Combo Break Shatter** — when a combo of x3+ expires, a dramatic red "COMBO BROKEN!" announcement pops with shatter particles and screen shake, making losing a streak feel impactful instead of silently vanishing!
 - **Flawless Kill Streak** — track consecutive kills made without taking any damage! At every 5 flawless kills, bonus XP is awarded with a golden "✦ FLAWLESS!" announcement and particle burst. Taking damage resets the streak (with a "Flawless streak broken!" message if you had 3+). The gold HUD counter shows your current streak, and the death screen reports your best flawless streak. Rewards skillful dodging and damage avoidance!
@@ -67,7 +68,7 @@ python game.py
 - **Alien Monoliths** — mysterious ancient structures in crystal and snow biomes that grant random buffs when approached! Speed Surge (1.5x speed), Power Surge (1.4x damage), or Wisdom Aura (2x XP) for 10 seconds
 - **Weather effects** — rain in grass/forest/swamp biomes, snowfall in snow biomes, rising embers in lava biomes, toxic spore drift in Toxic Bog
 - **Biome indicator HUD** — shows your current biome name with color-matching text
-- Mission system with collection and kill objectives (19 missions!)
+- Mission system with collection and kill objectives (20 missions!)
 - XP and leveling system (get stronger over time — +12 HP, +0.4 speed, and a heal per level!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
 - **Per-enemy loot drops** — tougher enemies drop more items! Plasma Drake drops 4–6 items, Slime Blobs drop 1–2
@@ -271,6 +272,7 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Regen Crystal** | 20 pts | Regenerates 8 HP/sec for 10 seconds | Uncommon |
 | **Lucky Clover** | 20 pts | +35% crit chance for 8 seconds | Uncommon |
 | **Mirror Shard** | 25 pts | Reflects enemy projectiles back at them for 6s | Rare |
+| **Photon Boots** | 25 pts | Continuous dash (no cooldown) for 5 seconds | Rare |
 
 ## Enemies
 
@@ -290,6 +292,8 @@ Each enhancement is committed and pushed. Check the commit history to watch the 
 | **Plasma Serpent** | 120 | Medium | 20 | **Segmented + Splits** | Snake with 4 body segments; splits into Swarm Mites on death |
 | **Graviton** | 75 | Medium | 10 | **Gravity Pull** | Periodically pulls player toward it; deals DoT while pulling; purple ring indicator |
 | **Void Wisp** | 18 | Very Fast | 5 | **Teleport Dodge** | Tiny & semi-transparent; 50% chance to teleport away when hit! |
+| **Echo Wraith** | 65 | Medium | 16 | **Decoy Clones** | Spawns semi-transparent clones to confuse the player |
+| **Shard Golem** | 160 | Very Slow | 22 | **Crystal Shield** | Tanky; periodically raises a crystal shield blocking all shots — dash through to bypass! |
 | Lava Crawler | 100 | Medium | 28 | — | Hot-headed |
 | Crystal Guardian | 180 | Slow | 38 | — | Tough |
 | Plasma Drake | 350 | Fast | 45 | — | Endgame boss |
@@ -405,6 +409,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.29.0 — Berserk Mode, Shard Golem & Photon Boots
+- **Berserk Mode**: Killing 5+ enemies within 2.5 seconds triggers a temporary Berserk state — +50% projectile damage and +30% movement speed for 5 seconds! A dramatic red-orange "⚔ BERSERK MODE!" announcement pops with a screen flash and a pulsing red aura around Zorp. The rapid-kill window resets on each kill, so only sustained aggressive play triggers it. Rewards fast-paced combat and creates thrilling power-surge moments when wading into dense enemy clusters
+- **Shard Golem enemy**: A new slow, tanky enemy (160 HP) that periodically raises a translucent crystal shield, becoming invulnerable to all projectile shots for 3 seconds at a time. The shield cycles on a clear telegraph — a cyan dome appears around the golem when shielded and shatters when it drops. Dash strikes bypass the shield entirely, rewarding aggressive players who dash through instead of waiting. Appears in medium and hard difficulty zones. Drops 2–4 items on death
+- **Photon Boots collectible**: A new rare power-up that grants continuous dash ability for 5 seconds — the dash cooldown is instantly reset every frame while active, allowing back-to-back chaining of dashes without any wait. Instantly resets the dash cooldown on pickup too. A cyan-blue energy aura pulses around Zorp while active. Perfect for crossing dangerous terrain or weaving through enemy clusters at high speed
+- **New mission**: "Golem Guard" — defeat 2 Shard Golems for 450 XP reward
 
 ### v2.28.1 — Level-Up Speed Burst, Loot Fan Spread, Death Tilt & Kill Score Floor
 - **Level-Up Speed Burst**: Leveling up now grants a brief 2-second movement speed surge (1.3x multiplier), making each level feel immediately empowering rather than just a passive stat increase. You literally surge with energy after leveling — the speed boost composes multiplicatively with other speed buffs (Speed Boost, Monolith, Adrenaline) so it stacks on top of active buffs for a satisfying "level-up moment" in your movement, not just the HUD. The burst is short enough to be a tactical tempo shift rather than a permanent power creep

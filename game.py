@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.28.1"
+VERSION = "2.29.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -136,6 +136,7 @@ ENEMY_LOOT_DROPS = {
     'Graviton':            (2, 4),   # Mid: drops moderate loot
     'Void Wisp':           (1, 3),   # Easy-mid: elusive, drops modest loot
     'Echo Wraith':         (2, 4),   # Mid: decoy-spawning, drops moderate loot
+    'Shard Golem':         (2, 4),   # Mid-hard: tanky, drops moderate loot
 }
 INITIAL_COLLECTIBLES = 200
 INITIAL_ENEMIES = 60
@@ -683,8 +684,8 @@ KILL_FEED_LIFETIME = 4.0           # How long each kill feed entry stays visible
 
 # ─── Difficulty Scaling ──────────────────────────────────────────────────────
 EASY_ENEMY_TYPES = ['Slime Blob', 'Space Beetle', 'Swarm Mite', 'Void Wisp']
-MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton', 'Void Wisp', 'Echo Wraith']
-HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent', 'Graviton', 'Echo Wraith']
+MEDIUM_ENEMY_TYPES = ['Space Beetle', 'Void Wraith', 'Phase Shifter', 'Cosmic Leech', 'Void Bomber', 'Graviton', 'Void Wisp', 'Echo Wraith', 'Shard Golem']
+HARD_ENEMY_TYPES = ['Void Wraith', 'Lava Crawler', 'Crystal Guardian', 'Plasma Drake', 'Spore Spitter', 'Void Bomber', 'Nebula Phantom', 'Starburst Sentinel', 'Void Stalker', 'Plasma Serpent', 'Graviton', 'Echo Wraith', 'Shard Golem']
 DIFFICULTY_SCALE_DISTANCE = 100  # world units per difficulty tier
 
 # ─── Nebula Phantom (New Enemy) ────────────────────────────────────────────
@@ -821,6 +822,43 @@ FLOATING_ISLAND_CRYSTAL_CHANCE = 0.4
 RUINS_PILLAR_CHANCE = 0.08
 RUINS_WALL_CHANCE = 0.05
 
+# ─── Photon Boots (New Collectible) ────────────────────────────────────────────
+# A rare power-up that grants temporary double-dash ability. When active, the
+# player's dash cooldown is instantly reset on pickup and remains reset for
+# the duration — allowing continuous dashing without waiting for cooldown.
+# The boots glow with a bright cyan-blue energy color.
+PHOTON_BOOTS_DURATION = 5.0           # Seconds of double-dash ability
+PHOTON_BOOTS_COLOR = color.rgb(100, 220, 255)
+PHOTON_BOOTS_FREE_DASH_THRESHOLD = 0.5  # If cooldown is above this, reset it to 0
+
+# ─── Shard Golem (New Enemy) ──────────────────────────────────────────────────
+# A slow, tanky enemy that periodically raises a crystal shield, becoming
+# temporarily invulnerable to frontal shots. Players must either dash through
+# it (dash strike bypasses the shield) or wait for the shield to drop. The
+# shield cycles on/off with a clear visual telegraph — a translucent crystal
+# dome appears around the golem when the shield is active.
+SHARD_GOLEM_SHIELD_DURATION = 3.0     # How long the shield stays up
+SHARD_GOLEM_SHIELD_COOLDOWN = 4.0     # How long between shield cycles (shield down)
+SHARD_GOLEM_SHIELD_SCALE = 2.2       # Visual scale of the shield dome
+SHARD_GOLEM_SHIELD_ALPHA = 80         # Alpha of the shield dome visual
+SHARD_GOLEM_SHIELD_COLOR = color.rgba(0, 240, 255, 80)
+
+# ─── Berserk Mode (Rapid Kill Burst) ───────────────────────────────────────────
+# When the player kills BERSERK_KILL_THRESHOLD enemies within BERSERK_WINDOW
+# seconds, a temporary "Berserk Mode" activates: +50% projectile damage and
+# +30% movement speed for BERSERK_DURATION seconds. A red aura visual effect
+# appears around Zorp, and a "BERSERK!" announcement pops. This rewards
+# aggressive, rapid-fire playstyles and creates thrilling moments of power.
+BERSERK_KILL_THRESHOLD = 5           # Kills needed in the window to trigger
+BERSERK_WINDOW = 2.5                  # Seconds within which kills count
+BERSERK_DURATION = 5.0               # How long the berserk buff lasts
+BERSERK_DAMAGE_MULT = 1.5            # Damage multiplier during berserk
+BERSERK_SPEED_MULT = 1.3             # Speed multiplier during berserk
+BERSERK_AURA_COLOR = color.rgba(255, 50, 20, 60)  # Red-orange aura visual
+BERSERK_AURA_SCALE = 1.8             # Scale of the berserk aura sphere
+BERSERK_ANNOUNCE_DURATION = 2.0      # How long the BERSERK! announcement stays
+BERSERK_SCREEN_FLASH_ALPHA = 60      # Peak alpha of the red screen flash on trigger
+
 # ─── Collectible Weighted Spawn ─────────────────────────────────────────────
 COLLECTIBLE_WEIGHTS = {
     'Space Gloop':    30,   # Common
@@ -841,6 +879,7 @@ COLLECTIBLE_WEIGHTS = {
     'Regen Crystal':  6,    # Uncommon — regenerates HP over time
     'Lucky Clover':   5,    # Uncommon — boosts critical hit chance
     'Mirror Shard':   4,    # Rare — reflects enemy projectiles
+    'Photon Boots':   4,    # Rare — double-dash ability
 }
 
 # ─── Collectible Rarity Tiers ────────────────────────────────────────────────
@@ -863,6 +902,7 @@ RARITY_TIER = {
     'Regen Crystal':  'uncommon',
     'Lucky Clover':   'uncommon',
     'Mirror Shard':   'rare',
+    'Photon Boots':   'rare',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
 }
@@ -1888,6 +1928,12 @@ class Player(Entity):
         # Mirror Shard timer — reflects enemy projectiles back at enemies
         self.mirror_timer = 0.0
 
+        # Photon Boots timer — grants continuous dash (resets cooldown each frame)
+        self.photon_boots_timer = 0.0
+
+        # Berserk Mode timer — >0 while berserk is active (damage + speed boost)
+        self.berserk_timer = 0.0
+
         # Overheal Barrier — temporary extra HP from excess healing that decays
         # over time. Displayed as a golden HP bar extension and player ring.
         self.overheal = 0               # Current overheal barrier amount
@@ -1948,6 +1994,14 @@ class Player(Entity):
         # Mirror Shard reflective aura visual (invisible by default) — silver ring
         self.mirror_visual = Entity(model='sphere', color=color.rgba(200, 230, 255, 50),
                                     scale=1.7, parent=self, visible=False)
+
+        # Photon Boots aura visual (invisible by default) — cyan-blue energy
+        self.photon_boots_visual = Entity(model='sphere', color=color.rgba(100, 220, 255, 50),
+                                          scale=1.5, parent=self, visible=False)
+
+        # Berserk Mode aura visual (invisible by default) — red-orange rage
+        self.berserk_visual = Entity(model='sphere', color=BERSERK_AURA_COLOR,
+                                     scale=BERSERK_AURA_SCALE, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
         self.ground_shadow = Entity(
@@ -2308,7 +2362,8 @@ class Enemy(Entity):
         'Plasma Serpent':   {'color': color.rgb(0, 255, 200),       'hp': 120,  'speed': 3.5,'damage': 20, 'scale': 1.0,  'model': 'sphere', 'decor': 'aura', 'detect': 34},
         'Graviton':         {'color': color.rgb(180, 0, 255),       'hp': 75,   'speed': 2.8,'damage': 10, 'scale': 1.5,  'model': 'sphere', 'decor': 'aura', 'detect': 30},
         'Void Wisp':        {'color': color.rgba(100, 255, 200, 160), 'hp': 18,  'speed': 8,  'damage': 5,  'scale': 0.4,  'model': 'sphere', 'decor': 'aura', 'detect': 26},
-        'Echo Wraith':      {'color': color.rgb(120, 200, 220),       'hp': 65,  'speed': 4.5,'damage': 16, 'scale': 1.3,  'model': 'diamond', 'decor': 'aura', 'detect': 30},
+        'Echo Wraith':      {'color': color.rgb(120, 200, 220),       'hp': 65,  'speed': 4.5,'damage': 16, 'scale': 1.3, 'model': 'diamond', 'decor': 'aura', 'detect': 30},
+        'Shard Golem':      {'color': color.rgb(100, 180, 220),      'hp': 160, 'speed': 1.8,'damage': 22, 'scale': 1.6, 'model': 'cube',    'decor': 'shards', 'detect': 26},
     }
 
     def __init__(self, position, enemy_type=None):
@@ -2443,6 +2498,15 @@ class Enemy(Entity):
             ECHO_WRAITH_CLONE_INTERVAL_MIN, ECHO_WRAITH_CLONE_INTERVAL_MAX
         ) if self.is_echo_wraith else 0
         self.echo_clone_entities = []  # Active decoy clone Entity objects
+
+        # Shard Golem: periodically raises a crystal shield that blocks frontal shots
+        self.is_shard_golem = (enemy_type == 'Shard Golem')
+        self.shield_active = False
+        self.shield_cycle_timer = random.uniform(
+            SHARD_GOLEM_SHIELD_COOLDOWN * 0.5, SHARD_GOLEM_SHIELD_COOLDOWN
+        ) if self.is_shard_golem else 0  # Time until next shield toggle
+        self.shield_entity = None  # The shield dome visual (created when shield goes up)
+        self._bypass_shield = False  # Set True by dash strikes to bypass the Shard Golem shield
         # Visual indicator ring for gravity pull (hidden by default)
         if self.is_graviton:
             self.pull_ring = Entity(
@@ -2554,6 +2618,29 @@ class Enemy(Entity):
         # could re-process the death: double XP, double loot, double combo.
         if self.dying or not self.alive:
             return False
+        # ── Shard Golem Crystal Shield ── When the shield is active, frontal
+        # shots are blocked. The shield blocks damage from projectiles coming
+        # from the enemy's front (hit_direction points FROM the projectile source
+        # TOWARD the enemy, so if it's roughly aligned with the enemy's facing,
+        # it's a frontal hit). Dash strikes pass through the shield (hit_direction
+        # is the dash direction, which comes from a different angle, and the
+        # dash_strike code path sets hit_direction to the dash direction). We
+        # detect dash strikes by checking if hit_direction is roughly perpendicular
+        # to the enemy-player line (dash comes from the side, not from the front).
+        # SIMPLER APPROACH: The shield blocks all projectile damage when active.
+        # Dash strikes bypass the shield because they set a special flag. We
+        # use a simple _bypass_shield flag that dash strikes set before calling
+        # take_damage. If the shield is active and the hit doesn't bypass it,
+        # the damage is absorbed with a visual feedback (spark) but no HP loss.
+        if self.is_shard_golem and self.shield_active and not getattr(self, '_bypass_shield', False):
+            # Shield absorbed the hit — visual feedback only
+            if self.shield_entity and self.shield_entity.enabled:
+                # Flash the shield brighter briefly
+                self.shield_entity.color = color.rgba(150, 250, 255, 180)
+                invoke(setattr, self.shield_entity, 'color', SHARD_GOLEM_SHIELD_COLOR, delay=0.1)
+            return False
+        # Reset the bypass flag after each hit
+        self._bypass_shield = False
         # Void Wisp: chance to teleport away when hit (dodge the damage)
         if self.is_void_wisp and self.wisp_teleport_cooldown <= 0 and self.hp > 0:
             if random.random() < VOID_WISP_TELEPORT_CHANCE:
@@ -2776,7 +2863,8 @@ class Collectible(Entity):
         'Fireball Scroll': {'color': color.rgb(255, 80, 20),  'value': 25,  'model': 'diamond'},
         'Regen Crystal':  {'color': color.rgb(50, 255, 120),  'value': 20,  'model': 'diamond'},
         'Lucky Clover':   {'color': color.rgb(50, 255, 50),   'value': 20,  'model': 'diamond'},
-        'Mirror Shard':   {'color': color.rgb(200, 230, 255), 'value': 25,  'model': 'diamond'},
+        'Mirror Shard':   {'color': color.rgb(200, 230, 255), 'value': 25, 'model': 'diamond'},
+        'Photon Boots':   {'color': color.rgb(100, 220, 255), 'value': 25, 'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -4242,6 +4330,7 @@ MISSION_TEMPLATES = [
     ("Gravity Well",          "Destroy Gravitons that pull you into danger", "Graviton", 2, "kill", 400),
     ("Scroll Scorch",         "Collect Fireball Scrolls to blast groups of enemies", "Fireball Scroll", 2, "collect", 300),
     ("Regen Rush",            "Find Regen Crystals to survive longer in combat", "Regen Crystal", 2, "collect", 200),
+    ("Golem Guard",           "Shatter Shard Golems and their crystal shields", "Shard Golem", 2, "kill", 450),
 ]
 
 class Mission:
@@ -4345,6 +4434,16 @@ class Game:
         self.multi_kill_announce_timer = 0.0  # How long the announcement stays visible
         self.multi_kill_announce_text = ''    # Current announcement text
         self.multi_kill_announce_scale = 1.0  # Current announcement scale (for pop animation)
+
+        # ── Berserk Mode ── When the player kills BERSERK_KILL_THRESHOLD enemies
+        # within BERSERK_WINDOW seconds, a temporary berserk state activates with
+        # +50% damage and +30% speed. berserk_kill_window counts down; each kill
+        # resets it and increments berserk_kill_count. When the threshold is
+        # reached, berserk_timer is set and the kill counter resets.
+        self.berserk_kill_count = 0           # Kills in the current rapid-kill window
+        self.berserk_kill_timer = 0.0         # Time remaining in the current window
+        self.berserk_announce_timer = 0.0     # How long the BERSERK! announcement stays
+        self.berserk_screen_flash_timer = 0.0 # Red screen flash on berserk trigger
 
         # ── Pickup Streak ── Tracks consecutive rapid item pickups. Each pickup
         # within PICKUP_STREAK_WINDOW seconds extends the streak. At milestones
@@ -4839,6 +4938,11 @@ class Game:
                 if clone and hasattr(clone, 'enabled') and clone.enabled:
                     destroy(clone)
             enemy.echo_clone_entities.clear()
+        # Clean up Shard Golem shield entity if present
+        if hasattr(enemy, 'shield_entity') and enemy.shield_entity is not None:
+            if enemy.shield_entity.enabled:
+                destroy(enemy.shield_entity)
+            enemy.shield_entity = None
         destroy(enemy.eye_l)
         destroy(enemy.eye_r)
         destroy(enemy.hp_bar_bg)
@@ -5092,7 +5196,7 @@ class Game:
                       'achievement_popup_text', 'achievement_popup_sub',
                       'achievement_panel_text',
                       'pulse_wave_text', 'spawn_heal_text', 'dash_ready_flash',
-                      'boss_tension_vignette', 'multi_kill_text', 'combo_break_text',
+                      'boss_tension_vignette', 'multi_kill_text', 'combo_break_text', 'berserk_text',
                       'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
                       'heal_flash', 'combo_edge_glow', 'threat_counter_text',
                       'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
@@ -5966,6 +6070,13 @@ class Game:
             origin=(0, 0), visible=False,
         )
 
+        # Berserk Mode announcement — large red-orange "BERSERK!" text that
+        # pops in when the player triggers berserk mode via rapid kills.
+        self.berserk_text = Text(
+            text='', position=(0, 0.20), scale=3.5, color=color.rgba(255, 50, 20, 0),
+            origin=(0, 0), visible=False,
+        )
+
         # Weapon upgrade indicator
         self.weapon_text = Text(text='', position=(-0.75, 0.29), scale=0.85, color=color.orange)
 
@@ -6815,6 +6926,12 @@ class Game:
         if self.combo_count >= COMBO_DAMAGE_TIER:
             base_damage = int(base_damage * COMBO_DAMAGE_MULT)
 
+        # ── Berserk Mode Damage Buff ── When berserk is active (triggered by
+        # rapid kills), projectiles deal +50% damage — rewarding aggressive,
+        # fast-paced combat with raw firepower.
+        if self.player.berserk_timer > 0:
+            base_damage = int(base_damage * BERSERK_DAMAGE_MULT)
+
         # Muzzle flash: brief bright sphere at firing point
         flash_pos = self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.2
         flash = Entity(model='sphere', color=color.rgba(200, 255, 255, 220),
@@ -7154,6 +7271,12 @@ class Game:
         if p.adrenaline_timer > 0:
             pu_lines.append(f'⚡ ADRENALINE: {p.adrenaline_timer:.1f}s')
             pu_timers.append(p.adrenaline_timer)
+        if p.berserk_timer > 0:
+            pu_lines.append(f'⚔ BERSERK: {p.berserk_timer:.1f}s')
+            pu_timers.append(p.berserk_timer)
+        if p.photon_boots_timer > 0:
+            pu_lines.append(f'👟 PHOTON BOOTS: {p.photon_boots_timer:.1f}s')
+            pu_timers.append(p.photon_boots_timer)
         if p.overheal > 0:
             pu_lines.append(f'🛡 OVERHEAL: {int(p.overheal)}')
             # Overheal doesn't expire like a timer, so don't add to pu_timers
@@ -7270,6 +7393,38 @@ class Game:
                 self.multi_kill_text.color = color.rgba(255, 100, 50, alpha)
         else:
             self.multi_kill_text.visible = False
+
+        # ── Berserk Mode Announcement ── Display a large red-orange "BERSERK!"
+        # text when berserk mode is triggered via rapid kills, using the same
+        # pop-in/hold/fade-out animation pattern as the multi-kill announcement.
+        if self.berserk_announce_timer > 0:
+            self.berserk_text.visible = True
+            self.berserk_text.text = '⚔ BERSERK MODE! ⚔'
+            announce_progress = 1.0 - (self.berserk_announce_timer / BERSERK_ANNOUNCE_DURATION)
+            if announce_progress < 0.15:
+                pop_t = announce_progress / 0.15
+                scale = 3.5 * (0.5 + 0.5 * pop_t) * (1.0 + 0.3 * math.sin(pop_t * math.pi))
+            elif announce_progress < 0.7:
+                scale = 3.5
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                scale = 3.5 * (1.0 - fade_t * 0.2)
+            self.berserk_text.scale = scale
+            if announce_progress < 0.7:
+                alpha = 255
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                alpha = int(255 * (1.0 - fade_t))
+            self.berserk_text.color = color.rgba(255, 50, 20, alpha)
+        else:
+            self.berserk_text.visible = False
+
+        # ── Berserk Screen Flash ── Brief red screen flash when berserk triggers
+        if self.berserk_screen_flash_timer > 0:
+            flash_progress = 1.0 - (self.berserk_screen_flash_timer / 0.3)
+            flash_alpha = int(BERSERK_SCREEN_FLASH_ALPHA * (1.0 - flash_progress))
+            self.kill_flash.color = color.rgba(255, 30, 10, flash_alpha)
+            # Reuse kill_flash entity for the red flash
 
         # ── Combo Break Announcement ── Display a red "COMBO BROKEN!" text when
         # a combo of x3+ expires, using the same pop-in/hold/fade-out animation
@@ -7999,6 +8154,30 @@ class Game:
                 self._spawn_particles(self.player.position + Vec3(0, 2, 0),
                                       color.rgb(255, 100, 50), count=8)
                 self.screen_shake = max(self.screen_shake, 0.2)
+
+        # ── Berserk Mode Rapid Kill Tracking ── Count kills within the berserk
+        # window. When the threshold is reached, activate berserk mode and reset
+        # the counter so the player can chain into another berserk if they keep
+        # up the pace. Each kill resets the window timer, so only rapid kills
+        # build the counter — slow kills let the window expire and reset.
+        self.berserk_kill_count += 1
+        self.berserk_kill_timer = BERSERK_WINDOW
+        if self.berserk_kill_count >= BERSERK_KILL_THRESHOLD:
+            # Activate Berserk Mode!
+            self.player.berserk_timer = BERSERK_DURATION
+            self.player.berserk_visual.visible = True
+            self.berserk_announce_timer = BERSERK_ANNOUNCE_DURATION
+            self.berserk_screen_flash_timer = 0.3
+            self.screen_shake = max(self.screen_shake, 0.5)
+            # Explosion of red-orange particles around Zorp
+            self._spawn_particles(self.player.position + Vec3(0, 1, 0),
+                                  color.rgb(255, 50, 20), count=20)
+            self._spawn_particles(self.player.position + Vec3(0, 2, 0),
+                                  color.rgb(255, 100, 0), count=15)
+            self.add_message(f"⚔ BERSERK MODE! +50% DMG +30% SPD for {BERSERK_DURATION:.0f}s!")
+            # Reset the kill counter so the player can chain another berserk
+            self.berserk_kill_count = 0
+
         # Track flawless kill streak (resets on taking damage)
         self._register_flawless_kill()
 
@@ -8417,6 +8596,11 @@ def game_update():
     if p.adrenaline_timer > 0:
         effective_speed *= ADRENALINE_SPEED_MULT
 
+    # ── Berserk Mode speed buff ── When berserk is active (triggered by rapid
+    # kills), the player moves faster — an aggressive rush reward.
+    if p.berserk_timer > 0:
+        effective_speed *= BERSERK_SPEED_MULT
+
     # ── Level-Up Speed Burst ── A brief movement speed surge after leveling up,
     # making each level feel empowering — you literally surge with energy. The
     # timer is set in the level-up handler and decays here. Composes
@@ -8429,9 +8613,16 @@ def game_update():
 
     # ── Dash Ability ──
     if p.dash_cooldown > 0:
-        p.dash_cooldown -= time.dt
-        # Track that dash was on cooldown so we can flash when it ends
-        game._dash_was_on_cooldown = True
+        # ── Photon Boots: continuous dash ── While Photon Boots are active,
+        # the dash cooldown is instantly reset each frame, allowing continuous
+        # dashing without waiting. This makes the power-up feel incredibly
+        # mobile and fun — you can chain dashes back-to-back.
+        if p.photon_boots_timer > 0:
+            p.dash_cooldown = 0
+        else:
+            p.dash_cooldown -= time.dt
+            # Track that dash was on cooldown so we can flash when it ends
+            game._dash_was_on_cooldown = True
     elif game._dash_was_on_cooldown:
         # Dash just came off cooldown — trigger readiness flash
         game._dash_was_on_cooldown = False
@@ -8485,6 +8676,9 @@ def game_update():
             strike_dist = (enemy.position - p.position).length()
             if strike_dist < DASH_STRIKE_RADIUS:
                 p._dash_strike_hit.add(id(enemy))
+                # Dash strikes bypass the Shard Golem's crystal shield — dashing
+                # through the golem shatters its frontal protection.
+                enemy._bypass_shield = True
                 killed = enemy.take_damage(dash_strike_dmg, hit_direction=p.dash_direction)
                 # Knockback in the dash direction
                 enemy.knockback_vel = Vec3(
@@ -8703,6 +8897,21 @@ def game_update():
     if p.mirror_timer > 0:
         p.mirror_visual.scale = 1.7 + math.sin(game.t * 8) * 0.15
 
+    # Photon Boots aura visual update — cyan-blue energy pulsing sphere
+    p.photon_boots_visual.visible = p.photon_boots_timer > 0
+    if p.photon_boots_timer > 0:
+        p.photon_boots_visual.scale = 1.5 + math.sin(game.t * 10) * 0.2
+
+    # Berserk Mode aura visual update — red-orange pulsing rage sphere
+    if p.berserk_timer > 0:
+        p.berserk_visual.visible = True
+        berserk_pulse = 0.5 + 0.5 * math.sin(game.t * 12)
+        p.berserk_visual.scale = BERSERK_AURA_SCALE * (1.0 + 0.15 * berserk_pulse)
+        p.berserk_visual.color = color.rgba(
+            255, 50, 20,
+            int(60 + 40 * berserk_pulse)
+        )
+
     # Power-up aura ring — shows a pulsing ground ring in the color of the active buff
     # Priority: shield (cyan) > speed (green) > magnet (purple) > weapon (orange) > fireball (red)
     # The ring makes active buffs immediately visible without reading the HUD.
@@ -8723,6 +8932,10 @@ def game_update():
         powerup_ring_color = (50, 255, 50)   # Bright green for Lucky Clover crit boost
     elif p.mirror_timer > 0:
         powerup_ring_color = (200, 230, 255)  # Silver for Mirror Shard reflection
+    elif p.photon_boots_timer > 0:
+        powerup_ring_color = (100, 220, 255)  # Cyan-blue for Photon Boots
+    elif p.berserk_timer > 0:
+        powerup_ring_color = (255, 50, 20)  # Red-orange for Berserk Mode
     elif p.monolith_damage_timer > 0:
         powerup_ring_color = (255, 50, 50)  # Red for damage buff
     elif p.monolith_xp_timer > 0:
@@ -8904,6 +9117,22 @@ def game_update():
     if p.mirror_timer > 0:
         p.mirror_timer -= time.dt
 
+    # Photon Boots timer — continuous dash ability
+    if p.photon_boots_timer > 0:
+        p.photon_boots_timer -= time.dt
+        if p.photon_boots_timer <= 0:
+            p.photon_boots_timer = 0
+            game.add_message("Photon Boots faded...")
+
+    # Berserk Mode timer — damage and speed boost from rapid kills
+    if p.berserk_timer > 0:
+        p.berserk_timer -= time.dt
+        if p.berserk_timer <= 0:
+            p.berserk_timer = 0
+            game.add_message("Berserk fades...")
+            # Hide the berserk visual aura
+            p.berserk_visual.visible = False
+
     # ── Overheal Barrier Decay ── The overheal buffer decays over time after
     # a delay, so it's a temporary combat buffer rather than a permanent HP
     # increase. This prevents stockpiling overheal between fights.
@@ -9049,6 +9278,18 @@ def game_update():
             game.multi_kill_count = 0  # Window expired, reset the counter
     if game.multi_kill_announce_timer > 0:
         game.multi_kill_announce_timer -= time.dt
+
+    # ── Berserk Mode Kill Window Timer ── Count down the rapid-kill window.
+    # If it expires, the kill counter resets — only sustained rapid kills
+    # trigger berserk mode.
+    if game.berserk_kill_timer > 0:
+        game.berserk_kill_timer -= time.dt
+        if game.berserk_kill_timer <= 0:
+            game.berserk_kill_count = 0
+    if game.berserk_announce_timer > 0:
+        game.berserk_announce_timer -= time.dt
+    if game.berserk_screen_flash_timer > 0:
+        game.berserk_screen_flash_timer -= time.dt
 
     # Combo break announcement timer — counts down the display duration
     if game.combo_break_announce_timer > 0:
@@ -10300,6 +10541,59 @@ def game_update():
                     destroy(clone)
                 enemy.echo_clone_entities.remove(clone)
 
+        # ── Shard Golem: Crystal Shield Cycling ── The golem periodically
+        # raises a translucent crystal shield that blocks all projectile damage.
+        # The shield cycles: SHIELD_COOLDOWN seconds with shield down (vulnerable),
+        # then SHIELD_DURATION seconds with shield up (invulnerable to shots).
+        # Dash strikes bypass the shield, rewarding aggressive play. The shield
+        # has a clear visual telegraph — a translucent cyan dome appears around
+        # the golem when active and disappears when it drops.
+        if enemy.is_shard_golem and enemy.alive and not enemy.dying:
+            enemy.shield_cycle_timer -= time.dt
+            if enemy.shield_cycle_timer <= 0:
+                if enemy.shield_active:
+                    # Shield is going down — become vulnerable
+                    enemy.shield_active = False
+                    enemy.shield_cycle_timer = SHARD_GOLEM_SHIELD_COOLDOWN
+                    # Destroy the shield visual
+                    if enemy.shield_entity and enemy.shield_entity.enabled:
+                        destroy(enemy.shield_entity)
+                        enemy.shield_entity = None
+                    # Restore original color
+                    enemy.color = enemy.original_color
+                    # Crystal shatter particles when shield drops
+                    if dist_to_player < VISUAL_CULL_RANGE:
+                        game._spawn_particles(enemy.position + Vec3(0, 1, 0),
+                                              color.rgb(0, 240, 255), count=8)
+                else:
+                    # Shield is going up — become invulnerable to shots
+                    enemy.shield_active = True
+                    enemy.shield_cycle_timer = SHARD_GOLEM_SHIELD_DURATION
+                    # Create the shield dome visual (a translucent sphere)
+                    enemy.shield_entity = Entity(
+                        model='sphere',
+                        color=SHARD_GOLEM_SHIELD_COLOR,
+                        scale=SHARD_GOLEM_SHIELD_SCALE,
+                        parent=enemy,
+                    )
+                    # Tint the golem slightly cyan while shielded
+                    er, eg, eb = _c255_color(enemy.original_color)
+                    enemy.color = color.rgb(
+                        min(255, int(er * 0.6 + 0 * 0.4)),
+                        min(255, int(eg * 0.6 + 240 * 0.4)),
+                        min(255, int(eb * 0.6 + 255 * 0.4)),
+                    )
+                    # Crystal formation particles when shield raises
+                    if dist_to_player < VISUAL_CULL_RANGE:
+                        game._spawn_particles(enemy.position + Vec3(0, 1, 0),
+                                              color.rgb(0, 240, 255), count=6)
+            # Pulse the shield visual while active for a living crystal effect
+            if enemy.shield_active and enemy.shield_entity and enemy.shield_entity.enabled:
+                shield_pulse = 0.5 + 0.5 * math.sin(game.t * 4.0 + id(enemy) % 100 * 0.1)
+                pulse_alpha = int(SHARD_GOLEM_SHIELD_ALPHA * (0.6 + 0.4 * shield_pulse))
+                enemy.shield_entity.color = color.rgba(0, 240, 255, pulse_alpha)
+                enemy.shield_entity.scale = SHARD_GOLEM_SHIELD_SCALE * (1.0 + 0.05 * shield_pulse)
+
         # Hit scale punch: brief size increase on hit for satisfying impact feedback.
         # The punch intensity is scaled inversely with enemy size — small enemies
         # (Swarm Mite, Void Wisp) get a bigger proportional punch so hits are
@@ -11440,6 +11734,13 @@ def game_update():
                 game.add_message(f"Mirror Shard! Reflecting projectiles for {MIRROR_SHARD_DURATION:.0f}s!")
                 game._spawn_particles(col.position, color.rgb(200, 230, 255), count=16)
                 game.screen_shake = max(game.screen_shake, 0.15)
+            elif col.name == 'Photon Boots':
+                p.photon_boots_timer = PHOTON_BOOTS_DURATION
+                # Instantly reset dash cooldown on pickup
+                p.dash_cooldown = 0
+                game.add_message(f"Photon Boots! Double-dash for {PHOTON_BOOTS_DURATION:.0f}s!")
+                game._spawn_particles(col.position, color.rgb(100, 220, 255), count=16)
+                game.screen_shake = max(game.screen_shake, 0.2)
             else:
                 p.add_item(col.name)
                 # ── Pickup Streak Score Multiplier ── When on a pickup streak of
@@ -11475,7 +11776,7 @@ def game_update():
                     game.particles.append((bp, bvel, random.uniform(0.4, 1.0)))
                 game.add_message(f"Found {col.name}! +{int(col.value * pickup_score_mult)} pts" + (" ✦x2!" if pickup_score_mult >= 2.0 else (" ★1.5x!" if pickup_score_mult >= 1.5 else "")))
             # For power-ups, also give points
-            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover', 'Mirror Shard'):
+            if col.name in ('Health Potion', 'Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover', 'Mirror Shard', 'Photon Boots'):
                 # Apply pickup streak score multiplier to power-ups too
                 p_score_mult = 1.0
                 if game.pickup_streak >= PICKUP_STREAK_SCORE_TIER2:
