@@ -531,6 +531,12 @@ STAR_COLORS = [
 ]
 
 # ─── Biome Fog ────────────────────────────────────────────────────────────────
+# ⚠️ WARNING: FOG IS DISABLED. The values below use color.rgb() (0-255 range).
+# The Ursina fog shader expects 0-1 normalized values. If you re-enable fog
+# with scene.fog_color = color.rgb(...), the 0-255 values will wash everything
+# WHITE. To re-enable fog safely, divide each component by 255 first, e.g.:
+#   scene.fog_color = color.rgb(r/255, g/255, b/255)
+# This dict is kept for reference only — do NOT use it directly with fog.
 BIOME_FOG = {
     'grass':   {'color': color.rgb(30, 10, 60),    'density': 0.006},
     'desert':  {'color': color.rgb(100, 70, 30),   'density': 0.014},
@@ -3688,7 +3694,19 @@ class AlienMonolith:
             self.cap.color = color.rgb(80, 60, 100)
             self.ring.color = color.rgba(80, 60, 100, dim_alpha)
             self.ground_glow.color = color.rgba(80, 60, 100, 15)
-            self.body.color = color.rgb(60, 45, 80)
+            # BUG FIX: When a monolith is activated, the body is flashed with
+            # the buff color (line ~12451). But animate() ran every frame and
+            # immediately overrode it with dim gray, so the buff color flash
+            # was never visible. Now, if active_buff is set during cooldown,
+            # blend the body color toward the buff color (dimmed) so the
+            # player can see which buff they got.
+            if self.active_buff:
+                bc = self.BUFF_COLORS.get(self.active_buff, color.rgb(80, 60, 120))
+                bcr, bcg, bcb = _c255_color(bc)
+                # Dimmed version of the buff color
+                self.body.color = color.rgb(int(bcr * 0.4), int(bcg * 0.4), int(bcb * 0.4))
+            else:
+                self.body.color = color.rgb(60, 45, 80)
         else:
             # Active state — glowing based on last buff or default purple
             if self.active_buff:
@@ -4814,6 +4832,20 @@ class Game:
             z=0.5,  # Same layer as kill flash
         )
         self.kill_flash_timer = 0.0
+
+        # Berserk screen flash overlay — dedicated red flash entity for berserk
+        # mode trigger. BUG FIX: previously reused self.kill_flash, which fought
+        # with the white kill flash when kills happened during berserk (very
+        # common since berserk is triggered by rapid kills). The two systems
+        # overwrote each other's color/alpha every frame, causing flickering.
+        self.berserk_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 30, 10, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.5,  # Same layer as kill flash
+        )
 
         # XP bar gain flash — XP bar pulses brighter and scales up briefly when XP is gained
         self.xp_gain_flash_timer = 0.0
@@ -7420,11 +7452,15 @@ class Game:
             self.berserk_text.visible = False
 
         # ── Berserk Screen Flash ── Brief red screen flash when berserk triggers
+        # BUG FIX: uses dedicated self.berserk_flash entity instead of reusing
+        # self.kill_flash, which caused color/alpha conflicts when kills happened
+        # during berserk mode.
         if self.berserk_screen_flash_timer > 0:
             flash_progress = 1.0 - (self.berserk_screen_flash_timer / 0.3)
             flash_alpha = int(BERSERK_SCREEN_FLASH_ALPHA * (1.0 - flash_progress))
-            self.kill_flash.color = color.rgba(255, 30, 10, flash_alpha)
-            # Reuse kill_flash entity for the red flash
+            self.berserk_flash.color = color.rgba(255, 30, 10, flash_alpha)
+        else:
+            self.berserk_flash.color = color.rgba(255, 30, 10, 0)
 
         # ── Combo Break Announcement ── Display a red "COMBO BROKEN!" text when
         # a combo of x3+ expires, using the same pop-in/hold/fade-out animation
@@ -8429,11 +8465,16 @@ def game_update():
     # time.dt references below will use the scaled value, and next frame
     # Ursina sets a fresh value. This avoids modifying hundreds of individual
     # time.dt call sites.
+    # BUG FIX: Store the real (unscaled) dt before mutation so the hit-stop
+    # timer decrements in real time. Previously, hit_stop_timer was decremented
+    # with the already-scaled time.dt, causing it to last longer in real time
+    # when boss slow-mo was active simultaneously (double-slow effect).
+    real_dt = time.dt
     time.dt = dt_scaled
 
     # ── Hit-Stop: Brief freeze on kills for impact ──
     if game.hit_stop_timer > 0:
-        game.hit_stop_timer -= time.dt
+        game.hit_stop_timer -= real_dt  # BUG FIX: use real dt, not slow-mo-scaled
         # During hit-stop, only update camera, HUD, particles, and damage numbers
         # (visual cleanup continues, but gameplay is frozen)
         if game.level_up_timer > 0:
@@ -8510,10 +8551,15 @@ def game_update():
                 destroy(pwr)
                 game.pulse_wave_rings.remove(pwr)
         # Update spawn warning rings during freeze (visual only)
+        # BUG FIX: Previously, expired warning rings were destroyed here during
+        # hit-stop freeze, but the materialization code (which spawns the actual
+        # enemy) only runs in the main loop — NOT during freeze. So a warning
+        # that expired during the ~0.08s freeze window was destroyed without
+        # ever spawning its enemy, silently losing that spawn. Now we only
+        # update the visual animation; expired rings are left for the main
+        # loop to materialize properly.
         for sw in game.spawn_warnings[:]:
-            if sw.update_warning(time.dt):
-                destroy(sw)
-                game.spawn_warnings.remove(sw)
+            sw.update_warning(time.dt)
         # Update spawn portal vortices during freeze (visual only)
         for vortex in game.spawn_vortices[:]:
             if vortex.update_vortex(time.dt):
@@ -10043,6 +10089,16 @@ def game_update():
                                         enemy_scale=other_enemy.original_scale,
                                     ))
                                     game.kill_feed.append((game.t, f"💥 {other_enemy.name}"))
+                                    # BUG FIX: Friendly-fire kills were missing hit-stop,
+                                    # FOV punch, and kill flash — every other kill path
+                                    # (projectile, dash, AOE, Pulse Wave) includes these
+                                    # satisfying feedback effects. Without them, Void
+                                    # Bomber chain kills felt flat and unsatisfying.
+                                    game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                                    game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                                    camera.fov = CAMERA_KILL_ZOOM_FOV
+                                    game.kill_flash_timer = KILL_FLASH_DURATION
+                                    game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                                     # Boss slow-mo for friendly-fire boss kills
                                     if other_enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
                                         game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
@@ -10869,6 +10925,20 @@ def game_update():
                                 game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
                                 game._spawn_particles(nearby_enemy.position, nearby_enemy.original_color, count=PARTICLE_KILL_COUNT)
                                 game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color, enemy_max_hp=nearby_enemy.max_hp)
+                                # BUG FIX: AOE kills were missing enemy_death_ring,
+                                # hit-stop, FOV punch, and kill flash — all present
+                                # in the normal projectile kill path. Without these,
+                                # Fireball Scroll AOE kills felt less impactful.
+                                game.enemy_death_rings.append(EnemyDeathRing(
+                                    position=Vec3(nearby_enemy.x, 0, nearby_enemy.z),
+                                    col=nearby_enemy.original_color,
+                                    enemy_scale=nearby_enemy.original_scale,
+                                ))
+                                game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                                game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                                camera.fov = CAMERA_KILL_ZOOM_FOV
+                                game.kill_flash_timer = KILL_FLASH_DURATION
+                                game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 game._drop_loot(nearby_enemy.position, nearby_enemy.name)
                     # Explosion visual at impact point
@@ -10989,6 +11059,12 @@ def game_update():
                                 game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
                                 game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
                                 game.add_message("BOSS DOWN! SLOW-MO!")
+                            # BUG FIX: Subsequent piercing kills were missing
+                            # overkill and execution bonus logic, which the
+                            # first piercing kill block includes. Pierced
+                            # enemies should still reward overkill/execution XP.
+                            overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                            is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                             p.add_kill(enemy.name)
                             game.total_kills += 1
                             game._register_kill()
@@ -11003,10 +11079,26 @@ def game_update():
                             combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                             monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                             xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                            if is_overkill:
+                                overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                                xp_gain += overkill_xp
+                                game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                                game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                                game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                            if getattr(enemy, 'enraged', False):
+                                exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                                xp_gain += exec_xp
+                                game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                                game._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                                game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                                game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                             p.gain_xp(xp_gain)
                             p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                             game.screen_shake = SCREEN_SHAKE_KILL
-                            game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
+                            if is_overkill:
+                                game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True, is_overkill=True))
+                            else:
+                                game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                             game._drop_loot(enemy.position, enemy.name)
                             game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                             game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
@@ -11015,7 +11107,10 @@ def game_update():
                                 col=enemy.original_color,
                                 enemy_scale=enemy.original_scale,
                             ))
+                            game.add_message(f"Defeated {enemy.name}!")
                             game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                            if enemy.is_plasma_serpent:
+                                game._handle_plasma_serpent_split(enemy)
                         break  # Exit enemy loop — projectile continues
                     break  # Exit enemy loop (projectile destroyed)
                 # Normal hit (no pierce) — destroy the projectile
