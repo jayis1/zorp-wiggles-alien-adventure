@@ -5335,7 +5335,8 @@ class Game:
                       'biome_banner_text_ent', 'biome_banner_flash',
                       'boss_spawn_warning_text', 'boss_spawn_flash',
                       'pickup_streak_text', 'pickup_streak_bar_bg', 'pickup_streak_bar',
-                      'crit_chain_text', 'flawless_text'):
+                      'crit_chain_text', 'flawless_text',
+                      'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
