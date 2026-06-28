@@ -3421,7 +3421,8 @@ class PulseWaveRing(Entity):
     It fades as it expands, then disappears when it reaches max radius.
     """
 
-    def __init__(self, position, base_color=(0, 255, 200)):
+    def __init__(self, position, base_color=(0, 255, 200), max_scale=None,
+                 start_alpha=200, is_shockwave=False):
         """Initialize the pulse wave ring.
 
         Args:
@@ -3429,10 +3430,18 @@ class PulseWaveRing(Entity):
             base_color: (r, g, b) tuple in 0-255 range for the ring's color.
                         Defaults to teal (0, 255, 200) for the Pulse Wave ability.
                         Pass gold (255, 220, 80) for the Vacuum Pulse ability.
+            max_scale: Maximum scale before the ring expires. Defaults to
+                       PULSE_WAVE_RING_MAX_SCALE. Override for larger rings
+                       (e.g. level-up shockwave uses LEVEL_UP_SHOCKWAVE_RING_MAX_SCALE).
+            start_alpha: Starting alpha for the ring (0-255). Defaults to 200.
+            is_shockwave: If True, this ring is a visual-only shockwave (e.g.
+                          level-up knockback) and will NOT deal damage in the
+                          pulse wave enemy interaction loop. The knockback is
+                          applied separately at spawn time.
         """
         super().__init__(
             model='quad',
-            color=color.rgba(base_color[0], base_color[1], base_color[2], 200),
+            color=color.rgba(base_color[0], base_color[1], base_color[2], start_alpha),
             scale=PULSE_WAVE_RING_START_SCALE,
             position=position + Vec3(0, 0.15, 0),
             rotation_x=90,
@@ -3446,6 +3455,16 @@ class PulseWaveRing(Entity):
         # teal, which meant Vacuum Pulse rings (set to gold after construction)
         # were immediately overwritten back to teal on the next update frame.
         self._base_r, self._base_g, self._base_b = base_color
+        # BUG FIX: Allow custom max_scale so rings like the level-up shockwave
+        # can expand beyond PULSE_WAVE_RING_MAX_SCALE without being destroyed early.
+        self._max_scale = max_scale if max_scale is not None else PULSE_WAVE_RING_MAX_SCALE
+        self._start_alpha = start_alpha
+        # BUG FIX: is_shockwave flag prevents the pulse wave enemy interaction
+        # loop from dealing damage to enemies hit by this ring. Level-up
+        # shockwave rings are knockback-only (no damage), but were previously
+        # processed by the pulse wave damage loop because they share the same
+        # game.pulse_wave_rings list.
+        self.is_shockwave = is_shockwave
 
     def update_ring(self, dt):
         """Expand the ring. Returns True when expired."""
@@ -3453,12 +3472,12 @@ class PulseWaveRing(Entity):
         self.scale = self.current_radius
         self.lifetime -= dt
         progress = 1.0 - (self.lifetime / self.max_lifetime)
-        alpha = max(0, int(200 * (1.0 - progress)))
+        alpha = max(0, int(self._start_alpha * (1.0 - progress)))
         # BUG FIX: Use the stored base color instead of hardcoded teal. This
         # allows vacuum pulse rings to appear gold (their intended color)
         # instead of being overridden to teal every frame.
         self.color = color.rgba(self._base_r, self._base_g, self._base_b, alpha)
-        return self.lifetime <= 0 or self.current_radius >= PULSE_WAVE_RING_MAX_SCALE
+        return self.lifetime <= 0 or self.current_radius >= self._max_scale
 
 
 # ─── Spawn Warning Ring ─────────────────────────────────────────────────────
@@ -10751,7 +10770,20 @@ def game_update():
         # falls off with distance, so enemies right next to Zorp get shoved
         # hard while those at the edge get a gentle nudge. Makes leveling up
         # while surrounded a tactical escape tool.
-        ring = PulseWaveRing(position=p.position, base_color=(255, 220, 80))
+        # BUG FIX: Use the new PulseWaveRing parameters instead of overriding
+        # fields after construction. Previously the ring used the default
+        # PULSE_WAVE_RING_MAX_SCALE (10.0) for expiry instead of the intended
+        # LEVEL_UP_SHOCKWAVE_RING_MAX_SCALE (24.0), so the ring disappeared
+        # at 10 units — less than half its intended size. The is_shockwave
+        # flag also prevents the pulse wave damage loop from dealing damage
+        # to enemies (the shockwave is knockback-only per the design).
+        ring = PulseWaveRing(
+            position=p.position,
+            base_color=(255, 220, 80),
+            max_scale=LEVEL_UP_SHOCKWAVE_RING_MAX_SCALE,
+            start_alpha=LEVEL_UP_SHOCKWAVE_RING_ALPHA,
+            is_shockwave=True,
+        )
         ring.scale = 1.0  # Start smaller than the pulse wave
         ring.current_radius = 1.0
         ring.lifetime = LEVEL_UP_SHOCKWAVE_RING_DURATION
@@ -12844,7 +12876,12 @@ def game_update():
     # Each enemy is only affected once per ring (tracked via hit_enemies set),
     # and the ring must have expanded past the enemy's position to hit it
     # (so enemies at the edge get hit later than ones close to the center).
+    # BUG FIX: Skip shockwave rings (is_shockwave=True) — these are visual-only
+    # knockback rings (e.g. level-up shockwave) that should NOT deal damage.
+    # The knockback for shockwave rings is applied separately at spawn time.
     for pwr in game.pulse_wave_rings[:]:
+        if getattr(pwr, 'is_shockwave', False):
+            continue
         ring_radius = pwr.current_radius
         for enemy in game.enemies:
             if not enemy.alive or enemy.dying:
