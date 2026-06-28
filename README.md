@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.33.0 — 3D!)
+## Features (v2.33.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -418,6 +418,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.33.1 — Collectible Pickup Lift, Enemy Hit Flinch & Idle Regen Sparkles
+- **Collectible pickup vertical lift arc**: When a collectible is picked up, it now briefly arcs upward (rising off the ground) during the pop animation, making pickups feel like the item is being sucked up into Zorp instead of just scaling in place. The lift follows a sine arc — rising quickly at the start, peaking around 40% of the animation, then settling back down — so the item visibly "flies up" as it's collected. This adds a satisfying vertical dimension to the pickup, complementing the existing scale pop, white flash, and spin. Previously the item stayed at its Y position while only scaling and spinning; now it lifts off the ground as if being drawn upward into Zorp
+- **Enemy hit vertical flinch pop**: When an enemy is hit by a projectile, it now briefly pops upward (a tiny vertical "flinch") in addition to the existing flash and scale punch. This makes hits feel more physically impactful — the enemy physically reacts to being struck, not just visually flashes. The flinch is a small upward offset that decays exponentially for a quick pop-then-settle feel. Larger enemies flinch less (they're heavier) while small enemies pop more noticeably, matching the size-scaled hit punch logic — a Swarm Mite jerks upward sharply while a Plasma Drake barely budges. Previously hits only caused a scale punch and color flash with no vertical movement; now each impact has a visceral physical reaction
+- **Idle regen sparkle stream**: While idle HP regeneration is active (standing still for 3+ seconds), a gentle continuous stream of small green sparkles now rises from Zorp's body, making the healing feel magical and alive instead of a silent HP number ticking up. The sparkles spawn at a fast interval (several per second) so there's always visible healing energy flowing, even between the actual HP-gaining moments (which happen on 1-second ticks). Each sparkle is a tiny green sphere that drifts upward and fades, like healing motes being absorbed into Zorp. Previously idle regen only produced a brief particle burst and heal pulse ring on each 1-second heal tick; now the entire regen duration is visually alive with flowing energy
 
 ### v2.33.0 — Spawn Grace Shield, Level-Up Shockwave & Enrage Proximity Warning
 - **Enemy Spawn Grace Shield**: During the 2-second spawn grace period (when enemies are materializing and not yet hostile), a translucent cyan dome now appears around newly spawned enemies and fades out as they become active. This makes it visually clear which enemies are still "waking up" and not yet a threat — you can distinguish a passive newly-spawned enemy from an active enemy that's just not chasing you yet. The dome starts at full opacity and fades to transparent over the final 40% of the grace period, then disappears entirely when the enemy starts chasing. Only shown for enemies within visual cull range for performance. The dome entity is properly cleaned up on enemy death and restart. Previously, the grace period was invisible — a newly spawned enemy looked identical to an idle enemy that just hadn't detected you yet, making it hard to tell which enemies were safe to ignore and which were about to attack

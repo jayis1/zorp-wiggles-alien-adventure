@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.33.0"
+VERSION = "2.33.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -208,6 +208,15 @@ CAMERA_SHOOT_RECOIL_DECAY = 14.0      # How fast the recoil recovers (higher = s
 ENEMY_HIT_FLASH_DURATION = 0.12        # Slightly longer flash for clearer read (was 0.1)
 ENEMY_HIT_SCALE_PUNCH = 1.25          # Brief scale multiplier on hit for impactful feedback
 ENEMY_HIT_SCALE_RECOVERY = 12.0        # How fast scale returns to normal after hit punch
+# ── Enemy Hit Vertical Flinch ── When an enemy is hit by a projectile, it
+# briefly pops upward (a tiny vertical "flinch") in addition to the existing
+# flash and scale punch. This makes hits feel more physically impactful — the
+# enemy physically reacts to being struck, not just visually flashes. The
+# flinch is a small upward offset that decays quickly, composited on top of
+# the normal bob animation. Larger enemies flinch less (they're heavier) while
+# small enemies pop more noticeably, matching the size-scaled hit punch logic.
+ENEMY_HIT_FLINCH_HEIGHT = 0.4       # Max upward flinch on hit (world units, at base size)
+ENEMY_HIT_FLINCH_DECAY = 10.0       # How fast the flinch recovers to 0 (higher = snappier)
 # ── Size-Scaled Hit Punch ── The scale punch is more dramatic on small enemies
 # and subtler on large ones. A Swarm Mite (scale 0.5) punching to 1.25x is barely
 # visible, while a Plasma Drake (scale 2.2) at 1.25x is a huge screen-filling
@@ -458,6 +467,13 @@ LOOT_DROP_FAN_SPREAD = 4.0    # Base radius for the loot drop fan (world units)
 # ─── Collectible Pop ──────────────────────────────────────────────────────────
 COLLECT_POP_DURATION = 0.18    # Tighter pop for snappier feedback
 COLLECT_POP_MAX_SCALE = 2.8    # Bigger overshoot — more dramatic punch
+# ── Collectible Pickup Lift ── When a collectible is picked up, it now
+# briefly arcs upward (rising off the ground) during the pop animation,
+# making pickups feel like the item is being sucked up into Zorp instead
+# of just scaling in place. The lift follows a sine arc — rising quickly
+# at the start and settling back down — so the item visually "flies up"
+# as it's collected, adding a satisfying vertical dimension to the pickup.
+COLLECT_POP_LIFT_HEIGHT = 1.5  # Max upward lift during pop (world units)
 
 # ─── Collectible Magnetic Pull Visual ────────────────────────────────────────
 COLLECT_PULL_SCALE_MIN = 0.6   # Minimum scale at pull edge (normal)
@@ -1663,6 +1679,18 @@ VACUUM_PULSE_RING_COLOR = color.rgb(255, 220, 80)  # Gold ring for the vacuum pu
 IDLE_REGEN_DELAY = 3.0                # Seconds of inactivity before regen starts
 IDLE_REGEN_HP_PER_SECOND = 4           # HP restored per second while idle
 IDLE_REGEN_PARTICLE_INTERVAL = 1.0    # Seconds between idle regen heal particles
+# ── Idle Regen Sparkle Stream ── While idle HP regeneration is active, a
+# gentle continuous stream of small green sparkles rises from Zorp's body —
+# making the healing feel magical and alive instead of a silent HP number
+# ticking up. The sparkles spawn at a faster interval than the 1-second heal
+# tick, so there's always visible healing energy flowing even between the
+# actual HP-gaining moments. Each sparkle is a tiny green sphere that drifts
+# upward and fades, like healing motes being absorbed into Zorp.
+IDLE_REGEN_SPARKLE_INTERVAL = 0.18   # Seconds between sparkle spawns while regenerating
+IDLE_REGEN_SPARKLE_COUNT = 1         # Sparkles per spawn
+IDLE_REGEN_SPARKLE_RISE_SPEED = 2.5  # Upward drift speed of regen sparkles
+IDLE_REGEN_SPARKLE_LIFETIME = 0.6    # How long each sparkle lives (seconds)
+IDLE_REGEN_SPARKLE_SCALE = 0.08     # Size of regen sparkle particles
 
 # ─── Overheal Barrier ──────────────────────────────────────────────────────────
 # When the player picks up a Health Potion at full HP (or the heal would exceed
@@ -2694,6 +2722,7 @@ class Enemy(Entity):
         self.wander_timer = random.uniform(ENEMY_WANDER_INTERVAL_MIN, ENEMY_WANDER_INTERVAL_MAX)
         self.hit_flash = 0
         self.hit_scale_punch = 0.0   # Timer for scale punch animation on hit
+        self.hit_flinch = 0.0        # Timer for vertical flinch on hit (decays to 0)
         self.decor_entities = []
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
         self.alerted = False                  # Whether enemy has detected the player (for alert flash)
@@ -2972,6 +3001,7 @@ class Enemy(Entity):
         self.hp -= amount
         self.hit_flash = ENEMY_HIT_FLASH_DURATION
         self.hit_scale_punch = 1.0  # Trigger scale punch animation
+        self.hit_flinch = 1.0       # Trigger vertical flinch pop
         # ── Enemy Hit Flash Tint ── Flash a brightened version of the enemy's
         # own color instead of pure white — hitting a Lava Crawler produces a
         # bright orange flash, hitting a Crystal Guardian produces bright cyan.
@@ -10291,6 +10321,38 @@ def game_update():
                                       color.rgb(100, 255, 150), count=3)
                 # ── Healing Pulse Ring ── Green ring expands from Zorp on idle regen
                 game._spawn_heal_pulse(p.position)
+        # ── Idle Regen Sparkle Stream ── While idle regen is active, a gentle
+        # continuous stream of small green sparkles rises from Zorp's body,
+        # making the healing feel magical and alive instead of a silent HP
+        # number ticking up. The sparkles spawn at a fast interval (several per
+        # second) so there's always visible healing energy flowing, even
+        # between the actual HP-gaining moments (which happen on 1s ticks).
+        # Each sparkle is a tiny green sphere that drifts upward and fades,
+        # like healing motes being absorbed into Zorp.
+        if not hasattr(game, '_idle_sparkle_timer'):
+            game._idle_sparkle_timer = 0.0
+        game._idle_sparkle_timer += time.dt
+        if game._idle_sparkle_timer >= IDLE_REGEN_SPARKLE_INTERVAL:
+            game._idle_sparkle_timer = 0.0
+            for _ in range(IDLE_REGEN_SPARKLE_COUNT):
+                # Spawn around Zorp's body at varying heights
+                spark_pos = Vec3(
+                    p.x + random.uniform(-0.5, 0.5),
+                    p.y + random.uniform(0.3, 1.2),
+                    p.z + random.uniform(-0.5, 0.5),
+                )
+                spark = Entity(
+                    model='sphere',
+                    color=color.rgb(100, 255, 150),
+                    scale=IDLE_REGEN_SPARKLE_SCALE,
+                    position=spark_pos,
+                )
+                spark_vel = Vec3(
+                    random.uniform(-0.3, 0.3),
+                    IDLE_REGEN_SPARKLE_RISE_SPEED,
+                    random.uniform(-0.3, 0.3),
+                )
+                game.particles.append((spark, spark_vel, IDLE_REGEN_SPARKLE_LIFETIME))
     else:
         game.idle_regen_tick = 0.0
 
@@ -11596,6 +11658,21 @@ def game_update():
                 enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
             else:
                 enemy.y = 1  # Static position when culled
+            # ── Enemy Hit Vertical Flinch ── When the enemy is hit, it briefly
+            # pops upward (a tiny vertical "flinch") on top of the normal bob.
+            # The flinch decays exponentially for a quick pop-then-settle feel.
+            # Larger enemies flinch less (they're heavier) — the flinch height
+            # scales inversely with enemy size, matching the hit punch logic.
+            if enemy.hit_flinch > 0:
+                enemy.hit_flinch -= time.dt * ENEMY_HIT_FLINCH_DECAY
+                if enemy.hit_flinch < 0:
+                    enemy.hit_flinch = 0
+                flinch_t = enemy.hit_flinch  # 1.0 → 0.0
+                # Size-scaled: small enemies flinch more, large enemies barely move
+                size_ratio = ENEMY_HIT_PUNCH_SIZE_BASE / max(0.1, enemy.original_scale)
+                flinch_mult = max(ENEMY_HIT_PUNCH_SIZE_MULT_MIN,
+                                  min(ENEMY_HIT_PUNCH_SIZE_MULT_MAX, size_ratio))
+                enemy.y += ENEMY_HIT_FLINCH_HEIGHT * flinch_mult * flinch_t
 
         # Bug fix: decrement hit_flash timer so the Time Warp blue tint can apply
         # after the hit flash ends. Without this, hit_flash stays > 0 forever once set,
@@ -12806,6 +12883,17 @@ def game_update():
         if col.popping:
             col.pop_timer -= time.dt
             progress = 1.0 - max(0, col.pop_timer / COLLECT_POP_DURATION)
+            # ── Collectible Pickup Lift ── The item arcs upward during the pop
+            # animation, rising off the ground like it's being sucked up into
+            # Zorp. The lift follows a sine arc: rising quickly at the start,
+            # peaking around 40% of the animation, then settling back down —
+            # so the item visually "flies up" as it's collected. The base Y
+            # is captured when the pop starts so the lift composes cleanly
+            # on top of whatever height the item was at when collected.
+            if not hasattr(col, '_pop_base_y') or col._pop_base_y is None:
+                col._pop_base_y = col.y
+            lift_arc = math.sin(progress * math.pi) * COLLECT_POP_LIFT_HEIGHT
+            col.y = col._pop_base_y + lift_arc
             # Elastic overshoot: scale peaks above max then settles with a bounce
             # Uses a sine-based elastic curve for a bouncy feel. The settle phase
             # uses an elastic undershoot — the scale dips slightly below the
@@ -13192,6 +13280,7 @@ def game_update():
             # Start pop animation instead of immediate destroy
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
+            col._pop_base_y = None  # Reset so the pop loop captures current Y on first frame
             game.total_items_collected += 1
             # ── Player Glow Ring Pickup Pulse ── Zorp's green ground glow ring
             # briefly flashes in the item's color and expands, giving ground-
