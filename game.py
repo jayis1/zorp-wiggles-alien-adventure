@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.33.1"
+VERSION = "2.34.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1419,6 +1419,48 @@ PLAYER_BLINK_DURATION = 0.15      # How long the blink lasts (seconds)
 ENEMY_MATERIALIZE_PARTICLE_COUNT = 8
 ENEMY_MATERIALIZE_BURST_UP_SPEED = 6.0
 
+# ─── Enemy Spawn Sky Beam ──────────────────────────────────────────────────────
+# When an enemy materializes from a spawn warning, a dramatic vertical energy
+# beam now appears from the sky down to the spawn point — a bright pillar of
+# light that briefly illuminates the area, making enemy spawns feel like the
+# creatures are being beamed down from an alien ship rather than just appearing.
+# The beam is a thin, tall, translucent cylinder entity that fades quickly.
+# It complements the existing particle column, flash sphere, and portal vortex
+# with a vertical "arrival from above" visual that's visible from far away,
+# giving players an immediate directional cue even when the spawn is distant.
+ENEMY_SPAWN_SKY_BEAM_HEIGHT = 50.0    # How tall the beam is (world units up from ground)
+ENEMY_SPAWN_SKY_BEAM_DURATION = 0.30  # How long the beam stays visible (seconds)
+ENEMY_SPAWN_SKY_BEAM_SCALE = 0.25    # Width of the beam cylinder
+ENEMY_SPAWN_SKY_BEAM_COLOR = color.rgba(255, 200, 120, 120)  # Warm golden-white
+
+# ─── Shield Break Shatter Effect ──────────────────────────────────────────────
+# When the Shield Crystal power-up expires naturally (timer runs out without
+# absorbing a hit), a crystal shatter particle effect plays around Zorp —
+# small cyan shard particles burst outward and fade, giving clear feedback
+# that the shield ended. Without this, the shield just silently disappears,
+# leaving the player unsure whether they're still protected. The shatter
+# only fires on natural expiry, not when the shield absorbs a hit (that path
+# already has its own visual feedback). This makes shield management more
+# readable — you know exactly when your protection is gone.
+SHIELD_BREAK_PARTICLE_COUNT = 16    # Number of shard particles on shield break
+SHIELD_BREAK_COLOR = color.rgb(100, 200, 255)  # Cyan shard color matching the shield
+SHIELD_BREAK_PARTICLE_SPEED = 6.0   # How fast shards fly outward
+SHIELD_BREAK_PARTICLE_UP = 3.0      # Upward velocity component for shards
+
+# ─── Player Movement Trail ──────────────────────────────────────────────────────
+# While Zorp is running at high speed, a subtle fading afterimage trail appears
+# behind him — thin green ghost copies that fade out over a fraction of a second.
+# This gives movement a more dynamic, energetic feel — you see Zorp's momentum
+# as a trailing green streak instead of the model just gliding across terrain.
+# The trail only triggers above a minimum speed threshold so it doesn't appear
+# during slow adjustments or while nearly stationary. Each ghost is a simple
+# translucent sphere entity that spawns at Zorp's current position and fades.
+PLAYER_TRAIL_INTERVAL = 0.06        # Seconds between trail ghost spawns
+PLAYER_TRAIL_LIFETIME = 0.20         # How long each trail ghost lives (seconds)
+PLAYER_TRAIL_SCALE = 1.0             # Scale of the trail ghost (matches Zorp)
+PLAYER_TRAIL_ALPHA = 40              # Alpha of each trail ghost (subtle)
+PLAYER_TRAIL_MIN_SPEED = 8.0         # Min velocity magnitude to spawn a trail
+
 # ─── Multi-Kill Announcement System ────────────────────────────────────────────
 # When the player kills 2+ enemies within a short time window, a dramatic
 # announcement appears on the HUD — "DOUBLE KILL!", "TRIPLE KILL!", etc.
@@ -2361,6 +2403,19 @@ class Player(Entity):
         # While > 0, update_tentacles() adds a backward whip rotation that
         # springs back to normal, simulating weapon recoil on the character model.
         self.tentacle_recoil_timer = 0.0
+
+        # ── Player Movement Trail ── While running at high speed, a subtle
+        # fading afterimage trail appears behind Zorp — thin green ghost copies
+        # that fade over a fraction of a second, giving movement a dynamic feel.
+        # The trail accumulator counts time between ghost spawns, and the ghosts
+        # are managed by the Game class's particle-like system for cleanup.
+        self._trail_accumulator = 0.0  # Time since last trail ghost spawn
+
+        # ── Shield Break Detection ── Tracks whether the shield was active
+        # last frame so we can detect the natural expiry transition (shield
+        # going from active to inactive without absorbing a hit). When the
+        # shield expires naturally, a crystal shatter particle effect plays.
+        self._shield_was_active = False
 
         # Combo Shield — earned at combo x15, absorbs one hit without
         # resetting the combo. The shield is a one-time charge that must be
@@ -9803,6 +9858,32 @@ def game_update():
         else:
             # Normal calm cyan pulse
             p.shield_visual.scale = 1.6 + math.sin(game.t * 8) * 0.1
+        p._shield_was_active = True
+    else:
+        # ── Shield Break Shatter Effect ── When the shield expires naturally
+        # (timer ran out without absorbing a hit), a crystal shatter particle
+        # burst plays around Zorp — small cyan shard particles fly outward and
+        # fade, giving clear feedback that the shield has ended. Without this,
+        # the shield silently disappears, leaving the player unsure whether
+        # they're still protected. The shatter only fires on the natural expiry
+        # transition (shield_was_active goes True → False), not every frame.
+        if p._shield_was_active:
+            p._shield_was_active = False
+            shard_count = min(SHIELD_BREAK_PARTICLE_COUNT, MAX_PARTICLES - len(game.particles))
+            for _ in range(shard_count):
+                angle = random.uniform(0, math.pi * 2)
+                shard_vel = Vec3(
+                    math.cos(angle) * SHIELD_BREAK_PARTICLE_SPEED,
+                    random.uniform(1, SHIELD_BREAK_PARTICLE_UP),
+                    math.sin(angle) * SHIELD_BREAK_PARTICLE_SPEED,
+                )
+                shard = Entity(
+                    model='cube',
+                    color=SHIELD_BREAK_COLOR,
+                    scale=random.uniform(0.08, 0.18),
+                    position=p.position + Vec3(0, 1, 0),
+                )
+                game.particles.append((shard, shard_vel, random.uniform(0.3, 0.5)))
 
     # Fireball aura visual update
     p.fireball_visual.visible = p.fireball_timer > 0
@@ -10445,6 +10526,30 @@ def game_update():
                 and current_speed < PLAYER_STOP_SQUISH_THRESHOLD):
             p.stop_squish = 1.0
         p._prev_speed = current_speed
+
+    # ── Player Movement Trail ── While Zorp is running at high speed, a subtle
+    # fading green afterimage trail appears behind him — thin ghost copies that
+    # fade out over a fraction of a second. This gives movement a dynamic,
+    # energetic feel — you see Zorp's momentum as a trailing green streak
+    # instead of the model just gliding across terrain. The trail only spawns
+    # above a minimum speed threshold so it doesn't appear during slow
+    # adjustments. The ghosts use the particle system for automatic cleanup.
+    if p.dash_timer <= 0:
+        current_speed = p.velocity.length()
+        if current_speed >= PLAYER_TRAIL_MIN_SPEED:
+            p._trail_accumulator += time.dt
+            if p._trail_accumulator >= PLAYER_TRAIL_INTERVAL:
+                p._trail_accumulator = 0.0
+                if len(game.particles) < MAX_PARTICLES:
+                    trail_ghost = Entity(
+                        model='sphere',
+                        color=color.rgba(0, 200, 80, PLAYER_TRAIL_ALPHA),
+                        scale=PLAYER_TRAIL_SCALE,
+                        position=Vec3(p.x, p.y, p.z),
+                    )
+                    game.particles.append((trail_ghost, Vec3(0, 0, 0), PLAYER_TRAIL_LIFETIME))
+        else:
+            p._trail_accumulator = 0.0
 
     # Face mouse
     hit = mouse.world_point
@@ -13613,6 +13718,29 @@ def game_update():
                 curve=curve.linear,
             )
             destroy(flash_s, delay=SPAWN_FLASH_DURATION + 0.01)
+            # ── Enemy Spawn Sky Beam ── A dramatic vertical energy beam appears
+            # from the sky down to the spawn point — a bright pillar of light
+            # that briefly illuminates the area, making enemy spawns feel like
+            # the creatures are being beamed down from above rather than just
+            # appearing. The beam is a thin, tall, translucent cylinder that
+            # fades quickly. It's visible from far away, giving players an
+            # immediate directional cue even when the spawn is distant — you
+            # see a pillar of light reaching into the sky at the spawn location.
+            # This complements the existing particle column, flash sphere, and
+            # portal vortex with a vertical "arrival from above" visual.
+            sky_beam = Entity(
+                model='cube',
+                color=ENEMY_SPAWN_SKY_BEAM_COLOR,
+                scale=(ENEMY_SPAWN_SKY_BEAM_SCALE, ENEMY_SPAWN_SKY_BEAM_HEIGHT, ENEMY_SPAWN_SKY_BEAM_SCALE),
+                position=Vec3(ex, ENEMY_SPAWN_SKY_BEAM_HEIGHT / 2, ez),
+            )
+            sbr, sbg, sbb = _c255_color(ENEMY_SPAWN_SKY_BEAM_COLOR)
+            sky_beam.animate_color(
+                color.rgba(sbr, sbg, sbb, 0),
+                duration=ENEMY_SPAWN_SKY_BEAM_DURATION,
+                curve=curve.linear,
+            )
+            destroy(sky_beam, delay=ENEMY_SPAWN_SKY_BEAM_DURATION + 0.01)
             destroy(sw)
             game.spawn_warnings.remove(sw)
             # ── Spawn Direction Indicator ── Show a brief orange arrow on the
