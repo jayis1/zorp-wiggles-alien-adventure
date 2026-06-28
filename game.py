@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.31.1"
+VERSION = "2.32.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1575,6 +1575,16 @@ DEATH_BURST_SCALE_MIN = 0.6        # Multiplier for the weakest enemies
 DEATH_BURST_SCALE_MAX = 2.0        # Multiplier for the toughest enemies
 DEATH_BURST_SPREAD_MULT = 1.5      # How much farther big-enemy burst particles fly
 
+# ─── Enemy Death Flash Sphere ─────────────────────────────────────────────────
+# On enemy death, a brief bright sphere pops at the kill point in the enemy's
+# own color, expanding and fading rapidly. This gives each kill a punchy light
+# burst — like the enemy's energy erupting outward — complementing the existing
+# particle fountain and ground death ring. The flash is visible even from
+# distance or in dark biomes where particles alone might be hard to see, and
+# scales with enemy toughness so boss deaths produce a bigger, brighter flash.
+ENEMY_DEATH_FLASH_DURATION = 0.15    # How long the flash sphere lasts (seconds)
+ENEMY_DEATH_FLASH_MAX_SCALE = 2.5    # Max scale multiplier the flash expands to
+
 # ─── Dash Landing Impact Ring ────────────────────────────────────────────────
 # When the dash ends, an expanding ground ring radiates from Zorp's landing
 # point in addition to the existing dust burst — a clear visual "impact" cue
@@ -1644,6 +1654,22 @@ ADRENALINE_SPEED_MULT = 1.35        # Speed multiplier during adrenaline
 ADRENALINE_FIRE_RATE_MULT = 1.5     # Fire rate multiplier (cooldown divided by this)
 ADRENALINE_VIGNETTE_MAX_ALPHA = 50  # Peak alpha of the red-orange adrenaline vignette
 ADRENALINE_VIGNETTE_PULSE_SPEED = 6.0  # How fast the vignette pulses
+ADRENALINE_AURA_COLOR = color.rgba(255, 140, 30, 55)   # Orange-gold adrenaline aura
+ADRENALINE_AURA_SCALE = 1.6                              # Aura sphere scale
+ADRENALINE_AURA_PULSE_SPEED = 10.0                       # How fast the 3D aura pulses
+
+# ─── Kill Streak Milestone Rewards ─────────────────────────────────────────────
+# Every KILL_STREAK_MILESTONE total kills, the player is awarded bonus XP and a
+# special announcement with a golden particle celebration. This rewards long-term
+# progression and makes reaching kill count milestones feel momentous — by kill
+# 100 you've gotten 4 milestone rewards, making the arc of the run feel rewarding
+# beyond individual kills and combos. The bonus scales linearly with the milestone
+# tier so later milestones (which are harder to reach) give bigger rewards.
+KILL_STREAK_MILESTONE = 25             # Total kills per milestone reward
+KILL_STREAK_XP_BASE = 60               # Base bonus XP per milestone
+KILL_STREAK_XP_PER_TIER = 30           # Additional XP per milestone tier (kill 50 = tier 2 = 60+30)
+KILL_STREAK_PARTICLE_COUNT = 25        # Golden particle burst on milestone
+KILL_STREAK_SCREEN_SHAKE = 0.35        # Screen shake on milestone
 
 # ─── Treasure Compass ──────────────────────────────────────────────────────────
 # When the player stands still for a few seconds, a subtle golden arrow appears
@@ -2188,6 +2214,13 @@ class Player(Entity):
         # Berserk Mode aura visual (invisible by default) — red-orange rage
         self.berserk_visual = Entity(model='sphere', color=BERSERK_AURA_COLOR,
                                      scale=BERSERK_AURA_SCALE, parent=self, visible=False)
+
+        # Adrenaline Rush aura visual (invisible by default) — orange-gold
+        # fight-or-flight energy sphere on the player model. Complements the
+        # existing ground ring and screen vignette with a 3D body-level aura
+        # so the adrenaline state is visible from all camera angles.
+        self.adrenaline_visual = Entity(model='sphere', color=ADRENALINE_AURA_COLOR,
+                                        scale=ADRENALINE_AURA_SCALE, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
         self.ground_shadow = Entity(
@@ -4712,6 +4745,13 @@ class Game:
         # is killed so the bonus only fires once per run.
         self.first_blood_triggered = False
 
+        # ── Kill Streak Milestone ── Tracks total kills toward the next
+        # milestone reward. When total_kills crosses a KILL_STREAK_MILESTONE
+        # boundary, bonus XP is awarded with a golden announcement. The
+        # last_milestone_kills tracks the last milestone reached so we can
+        # detect crossing the next boundary.
+        self.last_milestone_kills = 0
+
         # ── Combo Sustain Heal ── Tracks kills within the current combo for
         # the periodic heal tick. Reset to 0 when the combo breaks so the
         # counter only counts kills within an active high combo.
@@ -7042,7 +7082,34 @@ class Game:
         enemy's toughness — a Swarm Mite produces a small puff while a Plasma Drake
         erupts in a massive particle storm, making hard-fought kills feel
         proportionally more rewarding.
+
+        Also spawns a brief "death flash" — a bright sphere that pops at the death
+        position in the enemy's own color, expanding and fading rapidly. This gives
+        each kill a punchy light burst at the impact point, complementing the
+        existing particle fountain and ground death ring.
         """
+        # ── Death Flash Sphere ── A brief bright sphere that pops at the kill
+        # point in the enemy's own color, expanding and fading over ~0.15s. This
+        # gives each kill a visceral light burst — like the enemy's energy
+        # erupting outward — that's visible even from distance or in dark biomes
+        # where particles alone might be hard to see. The flash scales with
+        # enemy toughness so boss kills produce a bigger, brighter flash.
+        cr, cg, cb = _c255_color(col)
+        flash_scale = 1.0
+        if enemy_max_hp is not None and enemy_max_hp > 0:
+            hp_ratio = enemy_max_hp / DEATH_BURST_HP_BASE
+            flash_scale = max(0.6, min(3.5, 0.5 + 0.5 * math.log2(max(1.0, hp_ratio))))
+        death_flash = Entity(
+            model='sphere',
+            color=color.rgba(cr, cg, cb, 220),
+            scale=flash_scale,
+            position=pos,
+        )
+        destroy(death_flash, delay=ENEMY_DEATH_FLASH_DURATION)
+        # Animate the flash expanding and fading
+        death_flash.animate_scale(flash_scale * ENEMY_DEATH_FLASH_MAX_SCALE,
+                                  duration=ENEMY_DEATH_FLASH_DURATION,
+                                  curve=curve.out_expo)
         # ── Death Explosion Scale ── Scale particle count and spread with the
         # enemy's max HP. Tougher enemies produce bigger, more dramatic death
         # explosions — a Swarm Mite (12 HP) gets a tiny puff while a Plasma
@@ -8597,6 +8664,28 @@ class Game:
             # Reset the kill counter so the player can chain another berserk
             self.berserk_kill_count = 0
 
+        # ── Kill Streak Milestone ── Every KILL_STREAK_MILESTONE total kills,
+        # award bonus XP with a golden announcement and particle celebration.
+        # This rewards long-term progression — reaching 25, 50, 75, 100+ kills
+        # feels momentous beyond individual kills and combos. The bonus scales
+        # with the milestone tier so later milestones give bigger rewards.
+        # total_kills is incremented by the caller BEFORE _register_kill, so
+        # we check if we've crossed a new milestone boundary since the last one.
+        if self.total_kills >= self.last_milestone_kills + KILL_STREAK_MILESTONE:
+            self.last_milestone_kills = (self.total_kills // KILL_STREAK_MILESTONE) * KILL_STREAK_MILESTONE
+            tier = self.last_milestone_kills // KILL_STREAK_MILESTONE
+            p = self.player
+            monolith_xp_mult_ks = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+            milestone_xp = int((KILL_STREAK_XP_BASE + (tier - 1) * KILL_STREAK_XP_PER_TIER) * monolith_xp_mult_ks)
+            p.gain_xp(milestone_xp)
+            self.add_message(f"★ {self.last_milestone_kills} KILLS! +{milestone_xp} bonus XP!")
+            # Golden particle burst around the player
+            self._spawn_particles(p.position + Vec3(0, 1, 0),
+                                  color.rgb(255, 200, 40), count=KILL_STREAK_PARTICLE_COUNT)
+            self._spawn_particles(p.position + Vec3(0, 2, 0),
+                                  color.rgb(255, 230, 80), count=KILL_STREAK_PARTICLE_COUNT // 2)
+            self.screen_shake = max(self.screen_shake, KILL_STREAK_SCREEN_SHAKE)
+
         # Track flawless kill streak (resets on taking damage)
         self._register_flawless_kill()
 
@@ -9510,6 +9599,30 @@ def game_update():
             255, 50, 20,
             int(60 + 40 * berserk_pulse)
         )
+    else:
+        p.berserk_visual.visible = False
+
+    # Adrenaline Rush aura visual update — orange-gold pulsing fight-or-flight sphere
+    # Complements the existing ground ring and screen vignette with a 3D body-level
+    # aura so the adrenaline state is visible from all camera angles, matching the
+    # visual language of berserk, shield, fireball, and other buff auras.
+    if p.adrenaline_timer > 0:
+        p.adrenaline_visual.visible = True
+        ad_pulse = 0.5 + 0.5 * math.sin(game.t * ADRENALINE_AURA_PULSE_SPEED)
+        p.adrenaline_visual.scale = ADRENALINE_AURA_SCALE * (1.0 + 0.15 * ad_pulse)
+        # Fade in during first 0.3s, full after, fade out in last 0.5s
+        if p.adrenaline_timer > ADRENALINE_DURATION - 0.3:
+            fade = (ADRENALINE_DURATION - p.adrenaline_timer) / 0.3
+        elif p.adrenaline_timer < 0.5:
+            fade = p.adrenaline_timer / 0.5
+        else:
+            fade = 1.0
+        p.adrenaline_visual.color = color.rgba(
+            255, 140, 30,
+            int((55 + 35 * ad_pulse) * fade)
+        )
+    else:
+        p.adrenaline_visual.visible = False
 
     # Power-up aura ring — shows a pulsing ground ring in the color of the active buff
     # Priority: shield (cyan) > speed (green) > magnet (purple) > weapon (orange) > fireball (red)
@@ -9533,6 +9646,8 @@ def game_update():
         powerup_ring_color = (200, 230, 255)  # Silver for Mirror Shard reflection
     elif p.photon_boots_timer > 0:
         powerup_ring_color = (100, 220, 255)  # Cyan-blue for Photon Boots
+    elif p.adrenaline_timer > 0:
+        powerup_ring_color = (255, 140, 30)  # Orange-gold for Adrenaline Rush
     elif p.berserk_timer > 0:
         powerup_ring_color = (255, 50, 20)  # Red-orange for Berserk Mode
     elif p.monolith_damage_timer > 0:

@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.31.1 — 3D!)
+## Features (v2.32.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -415,6 +415,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.32.0 — Kill Streak Milestones, Adrenaline Aura & Enemy Death Flash
+- **Kill Streak Milestone Rewards**: Every 25 total kills now awards bonus XP with a golden "★ 25 KILLS! +N bonus XP!" announcement and dual golden particle burst around Zorp! The bonus scales with the milestone tier — 25 kills gives +60 XP, 50 kills gives +90 XP, 75 kills gives +120 XP, 100 kills gives +150 XP — so later milestones (which are harder to reach) give bigger rewards. The bonus also benefits from the Monolith XP multiplier if active. This rewards long-term progression and makes reaching kill count milestones feel momentous beyond individual kills and combos — by kill 100 you've gotten 4 milestone rewards, making the arc of the entire run feel rewarding. Previously, only individual kills, combos, and first blood gave bonus XP — now the overall body count itself is celebrated
+- **Adrenaline Rush 3D aura sphere**: When Adrenaline Rush triggers (HP drops below 20%), Zorp now gets a pulsing orange-gold 3D aura sphere on his body — matching the visual language of Berserk Mode, Shield, Fireball, and all other buff auras. Previously, Adrenaline only had a ground ring and screen-edge vignette; now it has a body-level aura that's visible from all camera angles, making the fight-or-flight state immediately recognizable at a glance. The aura fades in smoothly over the first 0.3s and fades out in the last 0.5s, with a 10 Hz pulse that conveys urgency. The powerup ground ring priority chain also now includes Adrenaline (orange-gold), so the ground ring reflects the active adrenaline state too
+- **Enemy death flash sphere**: Every enemy kill now produces a brief bright flash sphere that pops at the exact death point in the enemy's own color — a Lava Crawler flashes orange, a Crystal Guardian flashes cyan, a Plasma Drake flashes magenta. The flash expands rapidly (ease-out) and fades over 0.15 seconds, giving each kill a punchy light burst like the enemy's energy erupting outward. The flash scales with enemy toughness — a Swarm Mite gets a small spark while a Plasma Drake produces a massive screen-filling flash. This complements the existing particle fountain, ground death ring, and death burst scale pop with a bright point-source light burst that's visible even from distance or in dark biomes where particles alone might be hard to see. Previously, kills had no light burst at the impact point — now every kill has a visceral flash of color
 
 ### v2.31.1 — Pulse Wave Level Scaling, Spit Charge-Up, Combo Warm Tint & Ability Bar Anticipation
 - **Pulse Wave damage scales with player level**: The Pulse Wave ability's flat 10 damage now gains +1.5 damage per player level (and benefits from the combo x10 damage buff and Monolith damage buff, just like projectiles), keeping it a viable finisher throughout the entire run instead of becoming pure knockback once enemies have 100+ HP. At level 1 it deals ~11.5, at level 10 ~25, at level 20 ~40 — growing in parallel with the projectile level bonus for consistent feel. Previously the Pulse Wave was only useful in the first few minutes; now it stays relevant as a tactical AOE finisher at all stages, rewarding its 8-second cooldown with damage that matches the enemies you're fighting
