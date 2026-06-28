@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.32.1"
+VERSION = "2.33.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -92,6 +92,15 @@ ENEMY_ATTACK_LUNGE_DISTANCE = 1.5    # Base forward lunge distance (world units)
 ENEMY_ATTACK_LUNGE_DURATION = 0.15   # How long the lunge movement lasts (seconds)
 ENEMY_ATTACK_LUNGE_SIZE_BASE = 1.0   # Enemy scale at which lunge = base distance
 ENEMY_ATTACK_LUNGE_SIZE_MULT_MIN = 0.3  # Min lunge multiplier (for very large enemies)
+
+# ── Enemy Spawn Grace Shield Visual ── During the spawn grace period
+# (ENEMY_SPAWN_GRACE_PERIOD), enemies are non-hostile but previously showed
+# no visual indication of this. A translucent cyan dome now appears around
+# newly spawned enemies and fades out as the grace period ends, making it
+# visually clear that the enemy is temporarily not a threat — so the player
+# can distinguish a "still materializing" enemy from an active threat.
+ENEMY_SPAWN_GRACE_SHIELD_ALPHA = 80    # Max alpha of the grace dome
+ENEMY_SPAWN_GRACE_SHIELD_SCALE = 1.8  # Dome scale multiplier on enemy scale
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
 ENEMY_WANDER_SPEED_FACTOR = 0.20
@@ -228,6 +237,17 @@ ENEMY_HIT_FLASH_BRIGHTNESS = 0.85  # How far to lerp enemy color toward white on
 # fight more dynamic and rewarding — enemies fight back harder when cornered,
 # making kills feel earned rather than inevitable.
 ENRAGE_HP_THRESHOLD = 0.25         # Fraction of max HP below which enrage triggers
+
+# ── Enemy Enrage Proximity Warning ── When a nearby enemy (within
+# ENRAGE_PROXIMITY_RADIUS units) enters its enraged state for the first time,
+# a brief orange-tinted message appears in the kill feed so the player is
+# immediately alerted that a desperate, more dangerous enemy is close. This
+# complements the existing red aura visual with a HUD-level alert that
+# doesn't require looking at the enemy — you know something nearby just
+# went berserk even if you're focused elsewhere. Only triggers once per enemy
+# (on the enrage transition, not every frame while enraged).
+ENRAGE_PROXIMITY_RADIUS = 25.0      # How close the enemy must be to trigger the warning
+ENRAGE_PROXIMITY_NOTIFY_COOLDOWN = 4.0  # Min seconds between proximity warnings (prevents spam)
 ENRAGE_SPEED_MULT = 1.35           # Speed multiplier while enraged
 ENRAGE_COLOR_MIX = 0.6              # How far to lerp toward red (0=own color, 1=full red)
 ENRAGE_PARTICLE_INTERVAL = 0.4     # Seconds between rage particle emissions
@@ -1495,6 +1515,20 @@ DAMAGE_INDICATOR_DISTANCE = 0.28    # Distance from center of HUD for the arrow
 # ─── Level-Up Magnet Burst ────────────────────────────────────────────────
 LEVEL_UP_MAGNET_RADIUS = 25.0       # How far the level-up magnet pulls collectibles from
 LEVEL_UP_MAGNET_FORCE = 40.0        # How fast collectibles are pulled toward player
+
+# ── Level-Up Shockwave ── When Zorp levels up, an expanding golden shockwave
+# ring emanates from his position, knocking back nearby enemies (no damage —
+# just knockback + visual). This makes level-ups feel physically powerful —
+# a burst of energy radiates outward, pushing threats away as Zorp grows
+# stronger. The shockwave uses the existing ShockwaveRing visual entity and
+# applies knockback velocity to enemies within the radius, scaled by proximity
+# (closer enemies get pushed harder). Makes each level-up a tactical moment:
+# you can level up while surrounded and get instant breathing room.
+LEVEL_UP_SHOCKWAVE_RADIUS = 12.0      # How far the shockwave reaches
+LEVEL_UP_SHOCKWAVE_KNOCKBACK = 18.0   # Base knockback force at close range
+LEVEL_UP_SHOCKWAVE_RING_DURATION = 0.5  # How long the visual ring expands
+LEVEL_UP_SHOCKWAVE_RING_MAX_SCALE = 24.0 # Max scale the ring reaches (world units)
+LEVEL_UP_SHOCKWAVE_RING_ALPHA = 200   # Starting alpha of the golden ring
 
 # ─── Combo Milestone Fireworks ─────────────────────────────────────────────
 COMBO_MILESTONE_INTERVAL = 5        # Combo milestones: x5, x10, x15, etc.
@@ -2873,6 +2907,21 @@ class Enemy(Entity):
             model='sphere',
             color=color.rgba(255, 30, 30, ENRAGE_AURA_ALPHA),
             scale=ENRAGE_AURA_SCALE,
+            parent=self,
+            visible=False,
+        )
+
+        # ── Spawn Grace Shield ── A translucent cyan dome that's visible during
+        # the spawn grace period (ENEMY_SPAWN_GRACE_PERIOD) and fades out as
+        # the enemy becomes active. This makes it visually clear to the player
+        # that the enemy is still "materializing" and not yet a threat — you
+        # can distinguish a passive newly-spawned enemy from an active enemy
+        # that's just not chasing you yet. The dome is hidden once the grace
+        # period ends and the enemy starts normal AI behavior.
+        self.grace_shield = Entity(
+            model='sphere',
+            color=color.rgba(100, 200, 255, ENEMY_SPAWN_GRACE_SHIELD_ALPHA),
+            scale=ENEMY_SPAWN_GRACE_SHIELD_SCALE,
             parent=self,
             visible=False,
         )
@@ -4907,6 +4956,11 @@ class Game:
         self.boss_spawn_warning_timer = 0.0
         self.boss_spawn_flash_timer = 0.0
 
+        # ── Enemy Enrage Proximity Warning ── Tracks when the last enrage
+        # proximity warning fired so we can throttle them and prevent spam
+        # when multiple enemies enrage simultaneously.
+        self._last_enrage_warning_time = -999.0
+
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
         self.achievement_popups = []  # list of (unlock_time, achievement) for display
@@ -5352,6 +5406,11 @@ class Game:
             if hasattr(enemy.enrage_aura, 'enabled') and enemy.enrage_aura.enabled:
                 destroy(enemy.enrage_aura)
             enemy.enrage_aura = None
+        # Clean up spawn grace shield if present
+        if hasattr(enemy, 'grace_shield') and enemy.grace_shield:
+            if enemy.grace_shield.enabled:
+                destroy(enemy.grace_shield)
+            enemy.grace_shield = None
 
     def _cleanup(self):
         """Clean up all game entities for a restart. Destroys terrain, enemies,
@@ -10517,6 +10576,34 @@ def game_update():
                 # Spin items rapidly as they get pulled
                 col.rotation_y += 720 * 0.1  # Quick spin burst
 
+        # ── Level-Up Shockwave ── An expanding golden ring emanates from
+        # Zorp's position, knocking back nearby enemies (no damage — just
+        # knockback + visual). This makes level-ups feel physically powerful
+        # — a burst of energy radiates outward, pushing threats away as Zorp
+        # grows stronger. The knockback force is strongest at close range and
+        # falls off with distance, so enemies right next to Zorp get shoved
+        # hard while those at the edge get a gentle nudge. Makes leveling up
+        # while surrounded a tactical escape tool.
+        ring = PulseWaveRing(position=p.position, base_color=(255, 220, 80))
+        ring.scale = 1.0  # Start smaller than the pulse wave
+        ring.current_radius = 1.0
+        ring.lifetime = LEVEL_UP_SHOCKWAVE_RING_DURATION
+        ring.max_lifetime = LEVEL_UP_SHOCKWAVE_RING_DURATION
+        game.pulse_wave_rings.append(ring)
+        for enemy in game.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            epos = enemy.position
+            dx = epos.x - p.position.x
+            dz = epos.z - p.position.z
+            dist_sq = dx * dx + dz * dz
+            if dist_sq < LEVEL_UP_SHOCKWAVE_RADIUS * LEVEL_UP_SHOCKWAVE_RADIUS and dist_sq > 0.25:
+                dist = math.sqrt(dist_sq)
+                # Knockback falls off with distance: full force at 0, half at max radius
+                force_mult = 1.0 - (dist / LEVEL_UP_SHOCKWAVE_RADIUS) * 0.5
+                kb_dir = Vec3(dx / dist, 0, dz / dist)
+                enemy.knockback_vel += kb_dir * LEVEL_UP_SHOCKWAVE_KNOCKBACK * force_mult
+
     # ── Milestone Level Cooldown Reset ── At levels 5, 10, 15, 20..., all
     # ability cooldowns are instantly reset and a golden celebration plays.
     # This makes milestone levels feel like momentous power surges — you get
@@ -10647,10 +10734,31 @@ def game_update():
                 b = min(255, int(cb + (255 - cb) * (1 - flash_t)))
                 a = max(80, int(255 * fade_t))
                 enemy.color = color.rgba(r, g, b, a)
+            # ── Grace Shield Visual ── Show the translucent cyan dome during
+            # the grace period and fade it out in the final 40% so it doesn't
+            # pop. The dome is visible from spawn and gradually becomes more
+            # transparent as the enemy "wakes up," then disappears when the
+            # enemy starts chasing. Only shown for nearby enemies (perf).
+            if dist_to_player < VISUAL_CULL_RANGE:
+                if not enemy.grace_shield.visible:
+                    enemy.grace_shield.visible = True
+                # Fade out in the last 40% of the grace period
+                if fade_t < 0.6:
+                    shield_alpha = ENEMY_SPAWN_GRACE_SHIELD_ALPHA
+                else:
+                    shield_fade = 1.0 - (fade_t - 0.6) / 0.4  # 1→0 over last 40%
+                    shield_alpha = max(0, int(ENEMY_SPAWN_GRACE_SHIELD_ALPHA * shield_fade))
+                enemy.grace_shield.color = color.rgba(100, 200, 255, shield_alpha)
+            else:
+                if enemy.grace_shield.visible:
+                    enemy.grace_shield.visible = False
         elif spawn_age < ENEMY_SPAWN_GRACE_PERIOD + 0.05:
             # Just exited grace period — restore original color and scale
             enemy.scale = enemy.original_scale
             enemy.color = enemy.original_color
+            # Hide the grace shield once the grace period ends
+            if enemy.grace_shield.visible:
+                enemy.grace_shield.visible = False
 
         # ── Process knockback velocity ──
         if enemy.knockback_vel.length() > 0.1:
@@ -10780,6 +10888,15 @@ def game_update():
                 # Brief red rage burst on enrage trigger
                 if dist_to_player < VISUAL_CULL_RANGE:
                     game._spawn_particles(enemy.position, color.rgb(255, 40, 40), count=8)
+                # ── Enrage Proximity Warning ── If the enemy is close enough
+                # to be a threat and the warning cooldown has elapsed, send a
+                # HUD message alerting the player that a nearby enemy just
+                # went berserk. Throttled by ENRAGE_PROXIMITY_NOTIFY_COOLDOWN
+                # so simultaneous multi-enrages doesn't spam the feed.
+                if dist_to_player < ENRAGE_PROXIMITY_RADIUS:
+                    if game.t - game._last_enrage_warning_time > ENRAGE_PROXIMITY_NOTIFY_COOLDOWN:
+                        game._last_enrage_warning_time = game.t
+                        game.add_message(f"⚠ {enemy.name} is enraged!")
             if enemy.enraged:
                 speed_mult *= ENRAGE_SPEED_MULT
                 # Pulse the enrage aura for a living, threatening visual — the
