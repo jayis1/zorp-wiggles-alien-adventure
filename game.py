@@ -8798,12 +8798,67 @@ class Game:
                 self.combo_timer = COMBO_TIMEOUT
                 self.combo_display_timer = COMBO_DISPLAY_LIFETIME
                 self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                # BUG FIX: Chain lightning recursive kills were missing combo
+                # milestone fireworks, combo shield, overkill, execution, hit-stop,
+                # FOV punch, kill flash, and boss slow-mo — all present in other
+                # primary kill paths. NOTE: _chain_lightning() is intentionally
+                # NOT called here to prevent infinite recursion.
+                if self.combo_count > 1 and self.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                    milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                       color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                    for _ in range(COMBO_MILESTONE_PARTICLES):
+                        burst_color = random.choice(milestone_colors)
+                        burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                        self._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                    self.screen_shake = max(self.screen_shake, 0.4)
+                    self.add_message(f"COMBO x{self.combo_count} MILESTONE!")
+                    milestone_tier = self.combo_count // COMBO_MILESTONE_INTERVAL
+                    milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                    monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                    p.gain_xp(milestone_xp)
+                if self.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                    p.combo_shield_active = True
+                    self.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                    self._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                 combo_xp_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                 combo_score_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                 monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                # BUG FIX: Chain lightning kills were missing overkill and execution bonuses.
+                overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                 xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                if is_overkill:
+                    overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                    xp_gain += overkill_xp
+                    self.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                    self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
+                if getattr(enemy, 'enraged', False):
+                    exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                    xp_gain += exec_xp
+                    self.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                    self._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, EXECUTION_SCREEN_SHAKE)
+                    self.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                 p.gain_xp(xp_gain)
                 p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                # BUG FIX: Chain lightning kills were missing hit-stop, FOV punch,
+                # kill flash, and boss slow-mo — present in all other kill paths.
+                self.hit_stop_timer = HIT_STOP_KILL_DURATION
+                self.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                camera.fov = CAMERA_KILL_ZOOM_FOV
+                self.kill_flash_timer = KILL_FLASH_DURATION
+                self.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                self.screen_shake = SCREEN_SHAKE_KILL
+                if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                    self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                    self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                    self.add_message("BOSS DOWN! SLOW-MO!")
+                if is_overkill:
+                    self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True, is_overkill=True))
+                else:
+                    self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True))
                 self._drop_loot(enemy.position, enemy.name)
                 self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                 self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
@@ -10846,13 +10901,58 @@ def game_update():
                                     game.combo_timer = COMBO_TIMEOUT
                                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
+                                    # BUG FIX: Void Bomber friendly-fire kills were missing
+                                    # _chain_lightning(), combo milestone fireworks, combo
+                                    # shield, overkill, and execution bonuses — all present
+                                    # in the normal projectile and dash strike kill paths.
+                                    game._chain_lightning(other_enemy.position, game.combo_count)
+                                    if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                                        milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                                           color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                                        for _ in range(COMBO_MILESTONE_PARTICLES):
+                                            burst_color = random.choice(milestone_colors)
+                                            burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                                            game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                                        game.screen_shake = max(game.screen_shake, 0.4)
+                                        game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                                        milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                                        milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                                        monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                        milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                                        p.gain_xp(milestone_xp)
+                                    if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                                        p.combo_shield_active = True
+                                        game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                                        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                                     combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                                     combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                    # BUG FIX: Friendly-fire kills were missing overkill and
+                                    # execution bonuses — present in all other primary kill paths.
+                                    overkill_amount = abs(other_enemy.hp) if other_enemy.hp < 0 else 0
+                                    is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                                     xp_gain = int((BASE_KILL_XP + other_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                                    if is_overkill:
+                                        overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                                        xp_gain += overkill_xp
+                                        game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                                        game._spawn_particles(other_enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                                        game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                                    if getattr(other_enemy, 'enraged', False):
+                                        exec_xp = int((EXECUTION_XP_BONUS_BASE + other_enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                                        xp_gain += exec_xp
+                                        game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                                        game._spawn_particles(other_enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                                        game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                                        game.damage_numbers.append(DamageNumber(other_enemy.position, exec_xp, is_execution=True))
                                     p.gain_xp(xp_gain)
                                     p.score += max(KILL_SCORE_MIN, int(other_enemy.max_hp * combo_score_mult))
-                                    game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True))
+                                    # BUG FIX: Void Bomber friendly-fire kills were missing the kill screen shake.
+                                    game.screen_shake = SCREEN_SHAKE_KILL
+                                    if is_overkill:
+                                        game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True, is_overkill=True))
+                                    else:
+                                        game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True))
                                     # BUG FIX: Friendly-fire kills were missing loot drops,
                                     # death ring, and kill burst particles — every other kill
                                     # path (projectile, dash, AOE, Pulse Wave) includes these.
@@ -10882,6 +10982,12 @@ def game_update():
                                         game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
                                         game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
                                         game.add_message("BOSS DOWN! SLOW-MO!")
+                                    # BUG FIX: Plasma Serpent split was missing for Void
+                                    # Bomber friendly-fire kills — every other kill path
+                                    # handles the split. Without it, killing a serpent via
+                                    # a Void Bomber explosion didn't produce mini-enemies.
+                                    if other_enemy.is_plasma_serpent:
+                                        game._handle_plasma_serpent_split(other_enemy)
                         # Kill the bomber
                         enemy.alive = False
                         enemy.dying = True
@@ -11697,16 +11803,66 @@ def game_update():
                                 game.combo_timer = COMBO_TIMEOUT
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                                 game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
+                                # BUG FIX: AOE kills were missing _chain_lightning() —
+                                # the normal projectile kill path and dash strike both
+                                # call it, but Fireball Scroll splash kills did not,
+                                # making chain lightning inconsistent across kill types.
+                                game._chain_lightning(nearby_enemy.position, game.combo_count)
+                                # BUG FIX: AOE kills were missing combo milestone
+                                # fireworks and combo shield — every other primary
+                                # kill path (projectile, dash) includes them. Without
+                                # these, reaching a combo milestone via Fireball Scroll
+                                # AOE kills gave no celebration or shield reward.
+                                if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                                    milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                                       color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                                    for _ in range(COMBO_MILESTONE_PARTICLES):
+                                        burst_color = random.choice(milestone_colors)
+                                        burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                                        game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                                    game.screen_shake = max(game.screen_shake, 0.4)
+                                    game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                                    milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                                    milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                                    monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                    milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                                    p.gain_xp(milestone_xp)
+                                if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                                    p.combo_shield_active = True
+                                    game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                                    game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                                 # AOE kills now grant XP and score (previously missing —
                                 # made Fireball Scroll's AOE kills unrewarded, making
                                 # the power-up less satisfying for multi-kills)
                                 combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                                 combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                                 monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                # BUG FIX: AOE kills were missing overkill and execution
+                                # bonuses — every other primary kill path includes them.
+                                overkill_amount = abs(nearby_enemy.hp) if nearby_enemy.hp < 0 else 0
+                                is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                                 aoe_xp_gain = int((BASE_KILL_XP + nearby_enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                                if is_overkill:
+                                    overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                                    aoe_xp_gain += overkill_xp
+                                    game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                                    game._spawn_particles(nearby_enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                                    game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                                if getattr(nearby_enemy, 'enraged', False):
+                                    exec_xp = int((EXECUTION_XP_BONUS_BASE + nearby_enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                                    aoe_xp_gain += exec_xp
+                                    game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                                    game._spawn_particles(nearby_enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                                    game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                                    game.damage_numbers.append(DamageNumber(nearby_enemy.position, exec_xp, is_execution=True))
                                 p.gain_xp(aoe_xp_gain)
                                 p.score += max(KILL_SCORE_MIN, int(nearby_enemy.max_hp * combo_score_mult))
-                                game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
+                                # BUG FIX: AOE kills were missing the kill screen shake.
+                                game.screen_shake = SCREEN_SHAKE_KILL
+                                if is_overkill:
+                                    game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True, is_overkill=True))
+                                else:
+                                    game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
                                 game._spawn_particles(nearby_enemy.position, nearby_enemy.original_color, count=PARTICLE_KILL_COUNT)
                                 game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color, enemy_max_hp=nearby_enemy.max_hp)
                                 # BUG FIX: AOE kills were missing enemy_death_ring,
@@ -11725,6 +11881,15 @@ def game_update():
                                 game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 game._drop_loot(nearby_enemy.position, nearby_enemy.name)
+                                # BUG FIX: Boss slow-mo was missing for AOE kills —
+                                # every other kill path triggers it for boss-tier enemies.
+                                if nearby_enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                                    game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                                    game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                                    game.add_message("BOSS DOWN! SLOW-MO!")
+                                # BUG FIX: Plasma Serpent split was missing for AOE kills.
+                                if nearby_enemy.is_plasma_serpent:
+                                    game._handle_plasma_serpent_split(nearby_enemy)
                     # Explosion visual at impact point
                     game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=20)
                     game.screen_shake = max(game.screen_shake, 0.3)
@@ -11769,6 +11934,10 @@ def game_update():
                         game.combo_timer = COMBO_TIMEOUT
                         game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                         game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                        # BUG FIX: First piercing crit kill was missing _chain_lightning()
+                        # — the normal projectile kill path calls it, but piercing crit
+                        # kills did not, making chain lightning inconsistent.
+                        game._chain_lightning(enemy.position, game.combo_count)
                         if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
                             milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
                                                color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
@@ -11859,6 +12028,31 @@ def game_update():
                             game.combo_timer = COMBO_TIMEOUT
                             game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                             game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                            # BUG FIX: Subsequent piercing kills were missing
+                            # _chain_lightning(), combo milestone fireworks,
+                            # combo shield, hit-stop, FOV punch, and kill flash —
+                            # all present in the first piercing kill and normal
+                            # projectile kill paths. Without these, piercing multi-
+                            # kills felt less impactful and missed combo rewards.
+                            game._chain_lightning(enemy.position, game.combo_count)
+                            if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                                milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                                   color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                                for _ in range(COMBO_MILESTONE_PARTICLES):
+                                    burst_color = random.choice(milestone_colors)
+                                    burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                                    game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                                game.screen_shake = max(game.screen_shake, 0.4)
+                                game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                                milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                                milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                                monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                                milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                                p.gain_xp(milestone_xp)
+                            if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                                p.combo_shield_active = True
+                                game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                             combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                             combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                             monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
@@ -11879,6 +12073,13 @@ def game_update():
                             p.gain_xp(xp_gain)
                             p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                             game.screen_shake = SCREEN_SHAKE_KILL
+                            # BUG FIX: Subsequent piercing kills were missing hit-stop,
+                            # FOV punch, and kill flash — present in all other kill paths.
+                            game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                            game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                            camera.fov = CAMERA_KILL_ZOOM_FOV
+                            game.kill_flash_timer = KILL_FLASH_DURATION
+                            game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                             if is_overkill:
                                 game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True, is_overkill=True))
                             else:
@@ -12301,17 +12502,69 @@ def game_update():
                     game.combo_timer = COMBO_TIMEOUT
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
-                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) *
-                                  (1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER) *
-                                  (MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0))
+                    # BUG FIX: Pulse Wave kills were missing _chain_lightning(),
+                    # combo milestone fireworks, combo shield, hit-stop, FOV punch,
+                    # kill flash, overkill, and execution bonuses — all present in
+                    # the normal projectile and dash strike kill paths. Without
+                    # these, Pulse Wave kills gave fewer rewards and less feedback.
+                    game._chain_lightning(enemy.position, game.combo_count)
+                    if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                        milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                           color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                        for _ in range(COMBO_MILESTONE_PARTICLES):
+                            burst_color = random.choice(milestone_colors)
+                            burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                            game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                        game.screen_shake = max(game.screen_shake, 0.4)
+                        game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                        milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                        milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                        monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                        milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                        p.gain_xp(milestone_xp)
+                    if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                        p.combo_shield_active = True
+                        game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
+                    combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                    combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                    monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    # BUG FIX: Pulse Wave kills were missing overkill and execution bonuses.
+                    overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                    is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
+                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                    if is_overkill:
+                        overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                        xp_gain += overkill_xp
+                        game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                        game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                        game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    if getattr(enemy, 'enraged', False):
+                        exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                        xp_gain += exec_xp
+                        game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                        game._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                        game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                        game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     # BUG FIX: Apply combo_score_mult to score — every other kill path
                     # (projectile, dash, AOE, Void Bomber friendly-fire) multiplies score
                     # by combo_score_mult, but Pulse Wave was awarding raw max_hp, making
                     # Pulse Wave kills worth less score at high combo tiers.
-                    combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                    game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=True))
+                    # BUG FIX: Pulse Wave kills were missing the kill screen shake.
+                    game.screen_shake = SCREEN_SHAKE_KILL
+                    # BUG FIX: Pulse Wave kills were missing hit-stop, FOV punch,
+                    # and kill flash — present in all other primary kill paths.
+                    game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                    game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                    camera.fov = CAMERA_KILL_ZOOM_FOV
+                    game.kill_flash_timer = KILL_FLASH_DURATION
+                    game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                    if is_overkill:
+                        game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=True, is_overkill=True))
+                    else:
+                        game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=True))
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
