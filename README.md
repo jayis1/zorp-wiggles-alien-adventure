@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.32.0 — 3D!)
+## Features (v2.32.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -415,6 +415,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.32.1 — Enemy HP Bar Death Fade, Direction-Change Lean & Floating Milestone XP
+- **Enemy HP bar smooth fade-out on death**: When an enemy starts dying, its HP bar now smoothly fades out and shrinks over the first 30% of the death animation instead of instantly disappearing. The bar lerps its alpha from full to transparent and its width toward zero in sync with the enemy's death dissolve — so the UI elements don't pop out of existence while the enemy model is still visibly dying. Previously the HP bar was hard-cut to invisible the instant the death animation started, which looked jarring against the gradual enemy shrink/dissolve. Now the bar gracefully retires alongside the enemy, making kills feel more polished and complete
+- **Player direction-change lean (banking)**: When the player changes movement direction sharply (>25° turn), Zorp briefly rolls/tilts into the new direction — a subtle 8° banking effect that makes directional changes feel more dynamic and alive, like a character leaning into a turn. The lean snaps to target with frame-rate-independent exponential smoothing and decays smoothly back to upright over ~0.5 seconds. Only triggers on perceptible direction changes to avoid constant micro-lean during normal maneuvering. Disabled during dash (which has its own visual). Previously Zorp's model was perfectly upright at all times during movement; now sharp turns have a satisfying physical banking quality that adds personality and game feel
+- **Floating XP numbers for flawless & kill streak milestones**: Flawless Kill Streak milestones (every 5 kills without taking damage) and Kill Streak Milestones (every 25 total kills) now spawn a gold floating "✦+N XP" damage number above Zorp to visually celebrate the bonus XP reward, making milestone achievements feel tangible instead of just a text message in the feed. The number uses the same pop-in animation and horizontal drift as all other damage numbers, rendered in gold (255, 215, 0) for visual distinction from crits (yellow), heals (green), and executions (amber). Previously these milestone XP rewards were only announced via a text message — now you see the XP pop above Zorp, making milestone moments feel more rewarding and celebratory
 
 ### v2.32.0 — Kill Streak Milestones, Adrenaline Aura & Enemy Death Flash
 - **Kill Streak Milestone Rewards**: Every 25 total kills now awards bonus XP with a golden "★ 25 KILLS! +N bonus XP!" announcement and dual golden particle burst around Zorp! The bonus scales with the milestone tier — 25 kills gives +60 XP, 50 kills gives +90 XP, 75 kills gives +120 XP, 100 kills gives +150 XP — so later milestones (which are harder to reach) give bigger rewards. The bonus also benefits from the Monolith XP multiplier if active. This rewards long-term progression and makes reaching kill count milestones feel momentous beyond individual kills and combos — by kill 100 you've gotten 4 milestone rewards, making the arc of the entire run feel rewarding. Previously, only individual kills, combos, and first blood gave bonus XP — now the overall body count itself is celebrated

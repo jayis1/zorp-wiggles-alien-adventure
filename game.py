@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.32.0"
+VERSION = "2.32.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -394,6 +394,17 @@ PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
 PLAYER_STOP_SQUISH_AMOUNT = 0.12     # Max Y compression on stop (0.12 = squished to 88% height)
 PLAYER_STOP_SQUISH_THRESHOLD = 3.0   # Velocity magnitude that triggers the squish when dropping below
 PLAYER_STOP_SQUISH_RECOVERY = 10.0   # How fast the stop squish recovers to normal
+
+# ─── Player Direction-Change Lean ──────────────────────────────────────────────
+# When the player changes movement direction sharply, Zorp briefly rolls (tilts)
+# into the new direction — a subtle banking effect that makes directional changes
+# feel more dynamic and alive, like a character leaning into a turn. The lean
+# angle is capped at PLAYER_LEAN_MAX_ANGLE (8°) and decays smoothly back to 0
+# over PLAYER_LEAN_RECOVERY seconds. Only triggers on direction changes >25°
+# to avoid constant micro-lean during normal maneuvering.
+PLAYER_LEAN_MAX_ANGLE = 8.0     # Maximum roll angle in degrees
+PLAYER_LEAN_RECOVERY = 8.0      # How fast the lean recovers to 0 (higher = snappier)
+PLAYER_LEAN_SMOOTH = 12.0       # How fast the lean snaps to target (higher = snappier)
 
 # ─── Player Damage Scale Punch ──────────────────────────────────────────────
 # When the player takes damage, the model briefly squashes (flat Y, bulged XZ)
@@ -2264,6 +2275,16 @@ class Player(Entity):
         # Stop squish timer — decays from 1.0 to 0; while > 0, a gentle squish
         # is applied in animate_bob() for a weighty "landing" feel on stop
         self.stop_squish = 0.0
+        # ── Direction-Change Lean ── When the player changes movement direction
+        # sharply, Zorp briefly tilts (rolls) into the new direction — a subtle
+        # banking/leaning effect that makes directional changes feel more dynamic
+        # and alive. The current roll angle lerps back to 0 each frame, and the
+        # game_update loop sets a target roll when a sharp direction change is
+        # detected. The effect is very subtle (max ~8°) so it adds personality
+        # without being disorienting.
+        self._prev_move_dir = Vec3(0, 0, 0)  # Previous frame's movement direction
+        self._lean_roll = 0.0  # Current roll angle in degrees (lerps toward 0)
+        self._lean_target = 0.0  # Target roll angle set on direction change
         # Level-up scale bounce timer — integrates with animate_bob for satisfying pop
         self.level_up_scale_timer = 0.0
         # Damage scale punch — brief squish reaction when the player takes damage,
@@ -2556,6 +2577,24 @@ class Player(Entity):
                 self.scale_y * y_stretch,
                 self.scale_z * xz_bulge,
             )
+
+        # ── Direction-Change Lean ── The lean target is set by game_update when
+        # the player changes direction sharply. Here we smoothly lerp the actual
+        # roll toward the target, then decay the target back to 0 so the lean is
+        # a brief impulse that springs back to upright. The roll is applied as a
+        # Z-axis rotation on the player model AFTER look_at_2d sets the facing,
+        # so it composes as a banking tilt on top of the facing direction.
+        # Frame-rate-independent exponential smoothing.
+        lean_snap = 1.0 - math.exp(-PLAYER_LEAN_SMOOTH * time.dt)
+        self._lean_roll += (self._lean_target - self._lean_roll) * lean_snap
+        # Decay the target back to 0 so the lean recovers
+        lean_decay = 1.0 - math.exp(-PLAYER_LEAN_RECOVERY * time.dt)
+        self._lean_target += (0.0 - self._lean_target) * lean_decay
+        # Apply the roll — only when not dashing (dash has its own visual)
+        if self.dash_timer <= 0 and abs(self._lean_roll) > 0.01:
+            self.rotation_z = self._lean_roll
+        else:
+            self.rotation_z = 0.0
 
     def set_facing_from_mouse(self, cam_pivot):
         """Point the alien toward where the mouse ray hits the ground."""
@@ -3068,9 +3107,22 @@ class Enemy(Entity):
                 min(255, int(ob * fade) + int(10 * fade)),
                 int(255 * fade),
             )
-        # Hide HP bar during death
-        self.hp_bar_bg.visible = False
-        self.hp_bar.visible = False
+        # ── HP Bar Death Fade-Out ── Instead of instantly hiding the HP bar when
+        # the enemy starts dying, fade it out smoothly over the first 30% of the
+        # death animation. This is more polished than a hard cut — the bar shrinks
+        # and becomes transparent in sync with the enemy's death dissolve, so the
+        # UI elements don't pop out of existence while the enemy is still visible.
+        death_fade = max(0.0, 1.0 - (progress / 0.3))  # 1.0→0.0 over first 30%
+        if death_fade <= 0:
+            self.hp_bar_bg.visible = False
+            self.hp_bar.visible = False
+        else:
+            # Shrink the bar toward zero width and fade alpha
+            bar_alpha = int(220 * death_fade)
+            self.hp_bar_bg.color = color.rgba(80, 0, 0, bar_alpha)
+            self.hp_bar.color = color.rgba(255, 255, 0, bar_alpha)
+            self.hp_bar.scale_x = self.hp_bar_base_width * death_fade
+            self.hp_bar.x = -(self.hp_bar_base_width / 2) * (1.0 - death_fade)
         return self.death_timer <= 0
 
 
@@ -4454,9 +4506,13 @@ class DamageNumber:
     feel punchier and more satisfying instead of numbers appearing flat.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False):
-        # Color: green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
-        if is_heal:
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False):
+        # Color: gold for flawless, green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
+        if is_flawless:
+            col = color.rgb(255, 215, 0)
+            text_str = f"✦+{amount} XP"
+            scale_factor = 1.45
+        elif is_heal:
             col = color.rgb(80, 255, 120)
             text_str = f"+{amount}"
             scale_factor = 1.1
@@ -4482,6 +4538,8 @@ class DamageNumber:
             scale_factor = 1.6
         elif is_execution:
             scale_factor = 1.5
+        elif is_flawless:
+            scale_factor = 1.45
         elif is_kill:
             scale_factor = 1.4
         elif is_crit:
@@ -4524,6 +4582,7 @@ class DamageNumber:
         self.is_crit = is_crit
         self.is_overkill = is_overkill
         self.is_heal = is_heal
+        self.is_flawless = is_flawless
         self.alive = True
         # ── Pop-In Animation ── The number scales in from small to an
         # overshoot peak then settles to normal, making damage feedback
@@ -4585,7 +4644,9 @@ class DamageNumber:
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
         # NOTE: r, g, b were previously read from text_ent.color but never used —
         # the color is always overridden below with hardcoded values.
-        if self.is_heal:
+        if self.is_flawless:
+            self.text_ent.color = color.rgba(255, 215, 0, int(255 * alpha))
+        elif self.is_heal:
             self.text_ent.color = color.rgba(80, 255, 120, int(255 * alpha))
         elif self.is_overkill:
             self.text_ent.color = color.rgba(255, 80, 0, int(255 * alpha))
@@ -8684,6 +8745,12 @@ class Game:
                                   color.rgb(255, 200, 40), count=KILL_STREAK_PARTICLE_COUNT)
             self._spawn_particles(p.position + Vec3(0, 2, 0),
                                   color.rgb(255, 230, 80), count=KILL_STREAK_PARTICLE_COUNT // 2)
+            # ── Floating XP Number ── A gold floating damage number pops above
+            # Zorp to visually celebrate the kill streak milestone bonus XP,
+            # making the reward feel tangible instead of just a text message.
+            self.damage_numbers.append(
+                DamageNumber(p.position, milestone_xp, is_flawless=True)
+            )
             self.screen_shake = max(self.screen_shake, KILL_STREAK_SCREEN_SHAKE)
 
         # Track flawless kill streak (resets on taking damage)
@@ -8891,6 +8958,13 @@ class Game:
             bonus_xp = FLAWLESS_XP_PER_MILESTONE * tier
             self.player.gain_xp(bonus_xp)
             self.add_message(f"✦ FLAWLESS x{self.flawless_streak}! +{bonus_xp} bonus XP!")
+            # ── Floating XP Number ── A gold floating damage number pops above
+            # Zorp to visually celebrate the flawless milestone bonus XP, making
+            # the reward feel tangible instead of just a text message. Uses a
+            # dedicated is_flawless flag so the DamageNumber renders in gold.
+            self.damage_numbers.append(
+                DamageNumber(self.player.position, bonus_xp, is_flawless=True)
+            )
             # Golden particle burst around the player
             self._spawn_particles(
                 self.player.position + Vec3(0, 1.5, 0),
@@ -9300,6 +9374,30 @@ def game_update():
         move_dir -= cam_right
     if held_keys['d'] or held_keys['right arrow']:
         move_dir += cam_right
+
+    # ── Direction-Change Lean Detection ── When the player changes movement
+    # direction sharply, compute a lean angle based on the cross product of
+    # the previous and current movement directions. The lean target is set
+    # and decays smoothly in animate_bob() via _lean_roll. Only triggers when
+    # the player is actually moving (non-zero move_dir) and the direction
+    # change is significant enough to be perceptible (>25° change).
+    if move_dir.length() > 0.1 and p._prev_move_dir.length() > 0.1 and p.dash_timer <= 0:
+        cur_dir = move_dir.normalized()
+        prev_dir = p._prev_move_dir.normalized()
+        # Cross product Y component gives the signed angle between directions
+        cross_y = prev_dir.x * cur_dir.z - prev_dir.z * cur_dir.x
+        dot = prev_dir.x * cur_dir.x + prev_dir.z * cur_dir.z
+        angle_change = math.degrees(math.atan2(abs(cross_y), max(0.01, dot)))
+        if angle_change > 25.0:
+            # Lean into the new direction — sign from cross product
+            lean_sign = 1.0 if cross_y > 0 else -1.0
+            # Scale lean by angle change magnitude (capped at 90°)
+            lean_strength = min(1.0, angle_change / 90.0)
+            p._lean_target = lean_sign * PLAYER_LEAN_MAX_ANGLE * lean_strength
+    if move_dir.length() > 0.1:
+        p._prev_move_dir = Vec3(move_dir.normalized())
+    else:
+        p._prev_move_dir = Vec3(0, 0, 0)
 
     # Effective speed (apply speed boost power-up)
     effective_speed = p.speed
