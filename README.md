@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.34.0 — 3D!)
+## Features (v2.34.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -421,6 +421,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.34.1 — Damage Number Magnitude Scaling, Multi-Kill Screen Glow & Enemy Hit Directional Stretch
+- **Damage number magnitude scaling**: Damage numbers now scale up based on the raw damage amount — heavy hits produce visibly larger numbers than light hits. A logarithmic curve maps the damage to a size boost (up to +50% for very heavy hits), applied on top of the existing category-based scaling (crit, kill, overkill, etc.). A 80-damage crit is now noticeably bigger than a 20-damage hit, making powerful shots feel more impactful at a glance. This enhances the visual hierarchy of hit feedback without requiring any changes to the 43 DamageNumber call sites — the magnitude boost is computed automatically inside the constructor. Previously, all normal hits were the same size regardless of damage; now the number's size communicates the hit's weight
+- **Multi-kill escalating screen edge glow**: When chaining rapid kills (a multi-kill streak), a warm orange-gold screen edge tint now intensifies with each kill in the chain — making multi-kill streaks feel progressively more cinematic and rewarding. The glow alpha scales with the kill count (2 kills = subtle glow, 5+ kills = bright rampage aura) and fades smoothly when the streak ends, reading as a transient "rampage aura" rather than a persistent overlay. A subtle 7 Hz pulse adds energy so the glow feels alive. The glow snaps brighter on each kill for a punchy escalation effect, then decays toward the streak's base level. Previously, multi-kills only had a text announcement and particle burst; now they have a progressive visual aura that makes sustained kill chains feel increasingly epic
+- **Enemy hit directional stretch**: When a projectile hits an enemy, the enemy now briefly stretches along the shot's travel direction and compresses perpendicular to it — in addition to the existing uniform scale punch. This makes hits feel like the projectile physically pushes THROUGH the enemy, a classic "juice" technique that adds directional impact feedback. The hit direction is decomposed into the enemy's local axes using its rotation, so a frontal hit stretches the enemy front-to-back while a side hit stretches it left-to-right. The stretch is subtle (max ~15% elongation, ~8% compression) and decays quickly with the existing hit scale punch timer. Previously, hits only caused a uniform scale increase with no directional component; now each impact has a visceral directional quality
 
 ### v2.34.0 — Enemy Spawn Sky Beam, Shield Break Shatter & Player Movement Trail
 - **Enemy Spawn Sky Beam**: When an enemy materializes from a spawn warning, a dramatic vertical energy beam now appears from the sky down to the spawn point — a bright golden-white pillar of light that briefly illuminates the area, making enemy spawns feel like the creatures are being beamed down from an alien ship rather than just appearing. The beam is a thin, tall, translucent cylinder entity that fades over 0.3 seconds. It's visible from far away, giving players an immediate directional cue even when the spawn is distant — you see a pillar of light reaching into the sky at the spawn location. This complements the existing particle column, flash sphere, and portal vortex with a vertical "arrival from above" visual that adds a new dimension to spawn feedback. Previously, enemy spawns were only communicated at ground level (particles, rings, flash) — now they have a sky-to-ground presence that's impossible to miss

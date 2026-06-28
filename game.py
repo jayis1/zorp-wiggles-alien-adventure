@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.34.0"
+VERSION = "2.34.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -276,6 +276,17 @@ EXECUTION_XP_BONUS_BASE = 15       # Base bonus XP for executing an enraged enem
 EXECUTION_XP_BONUS_PER_HP = 0.1   # Additional XP per point of enemy max HP
 EXECUTION_PARTICLE_COUNT = 12     # Gold particle burst on execution
 EXECUTION_SCREEN_SHAKE = 0.2      # Screen shake on execution
+
+# ── Enemy Hit Directional Stretch ── When a projectile hits an enemy, the
+# enemy briefly stretches along the shot's travel direction (and compresses
+# perpendicular to it) in addition to the existing uniform scale punch. This
+# makes hits feel like the projectile physically pushes THROUGH the enemy — a
+# classic "juice" technique that adds directional impact feedback. The stretch
+# decays quickly (sharing the hit_scale_punch timer) and composes on top of the
+# uniform punch via a non-uniform Vec3 scale. The stretch is subtle (max ~15%
+# elongation) so it enhances rather than distorts the enemy model.
+ENEMY_HIT_STRETCH_AMOUNT = 0.15   # Max elongation along shot direction (0.15 = 115%)
+ENEMY_HIT_STRETCH_SQUISH = 0.08   # Max compression perpendicular to shot direction (0.08 = 92%)
 
 # ─── Flawless Kill Streak ──────────────────────────────────────────────────────
 # Tracks consecutive kills made WITHOUT taking any damage. At milestones (every
@@ -1478,6 +1489,29 @@ MULTI_KILL_NAMES = {
     8: 'MEGA KILL!',
 }
 MULTI_KILL_MAX_NAME = 'RAMPAGE!'     # For 9+ kills in the window
+
+# ── Multi-Kill Escalating Screen Edge Glow ── When chaining rapid kills (a
+# multi-kill streak), a warm orange-gold screen edge tint intensifies with each
+# kill in the chain — making multi-kill streaks feel progressively more
+# cinematic and rewarding. The glow fades quickly when the streak ends, so it
+# reads as a transient "rampage aura" rather than a persistent overlay. The
+# max alpha scales with the kill count so higher streaks glow brighter.
+MULTI_KILL_GLOW_BASE_ALPHA = 25      # Glow alpha at 2 kills (the first multi-kill)
+MULTI_KILL_GLOW_ALPHA_PER_KILL = 12  # Additional alpha per kill in the streak
+MULTI_KILL_GLOW_MAX_ALPHA = 90       # Cap so high streaks don't overwhelm the screen
+MULTI_KILL_GLOW_DECAY = 4.0          # How fast the glow fades when the streak ends (higher = faster)
+MULTI_KILL_GLOW_COLOR = (255, 160, 40)  # Warm orange-gold — energetic and celebratory
+
+# ── Damage Number Magnitude Scaling ── Damage numbers scale up based on the
+# raw damage amount, so heavy hits produce visibly larger numbers than light
+# hits. A logarithmic curve keeps the scaling smooth and prevents absurd sizes
+# at very high damage values. A hit for 80 damage is noticeably bigger than a
+# hit for 20, making powerful shots and crits feel more impactful at a glance
+# without requiring any call-site changes — the magnitude boost is applied
+# multiplicatively on top of the existing category-based scale_factor.
+DMG_NUMBER_MAGNITUDE_BASE = 20.0     # Reference damage: at this amount, boost = 1.0 (no change)
+DMG_NUMBER_MAGNITUDE_MAX_BOOST = 0.5 # Max additional scale boost (0.5 = +50% size for very heavy hits)
+DMG_NUMBER_MAGNITUDE_CURVE = 1.8     # Log curve steepness (higher = faster ramp to max boost)
 
 # ─── Collectible Pickup Rarity Scaling ─────────────────────────────────────────
 # More valuable items produce a more satisfying pickup pop — bigger particle
@@ -2778,6 +2812,7 @@ class Enemy(Entity):
         self.hit_flash = 0
         self.hit_scale_punch = 0.0   # Timer for scale punch animation on hit
         self.hit_flinch = 0.0        # Timer for vertical flinch on hit (decays to 0)
+        self._hit_stretch_dir = None  # Direction of the last hit (for directional stretch)
         self.decor_entities = []
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
         self.alerted = False                  # Whether enemy has detected the player (for alert flash)
@@ -3057,6 +3092,21 @@ class Enemy(Entity):
         self.hit_flash = ENEMY_HIT_FLASH_DURATION
         self.hit_scale_punch = 1.0  # Trigger scale punch animation
         self.hit_flinch = 1.0       # Trigger vertical flinch pop
+        # ── Enemy Hit Directional Stretch ── Store the hit direction (in world
+        # space XZ) so the hit scale punch code can stretch the enemy along the
+        # shot direction. The direction is normalized and the Y component is
+        # zeroed since the stretch is applied in the XZ plane. Stored as None
+        # when no direction is provided (e.g., AOE without a direction), in
+        # which case the stretch is skipped and only the uniform punch applies.
+        if hit_direction and hit_direction.length() > 0.01:
+            hd = Vec3(hit_direction.x, 0, hit_direction.z)
+            hd_len = hd.length()
+            if hd_len > 0.01:
+                self._hit_stretch_dir = hd / hd_len
+            else:
+                self._hit_stretch_dir = None
+        else:
+            self._hit_stretch_dir = None
         # ── Enemy Hit Flash Tint ── Flash a brightened version of the enemy's
         # own color instead of pure white — hitting a Lava Crawler produces a
         # bright orange flash, hitting a Crystal Guardian produces bright cyan.
@@ -4700,6 +4750,21 @@ class DamageNumber:
         else:
             scale_factor = 1.0
 
+        # ── Damage Number Magnitude Scaling ── Scale up the number based on the
+        # raw damage amount so heavy hits produce visibly larger numbers than
+        # light hits. A logarithmic curve maps the damage amount to a boost
+        # between 0 and DMG_NUMBER_MAGNITUDE_MAX_BOOST, applied multiplicatively
+        # on top of the category-based scale_factor. This makes a 80-damage crit
+        # noticeably bigger than a 20-damage hit, enhancing the visual hierarchy
+        # of hit feedback. Skipped for heals and XP/execution/flawless numbers
+        # (those use fixed scales and aren't raw damage).
+        if not is_heal and not is_flawless and not is_execution and amount > 0:
+            if amount > DMG_NUMBER_MAGNITUDE_BASE:
+                # Log curve: 0 boost at BASE, approaching MAX_BOOST at high damage
+                log_ratio = math.log(amount / DMG_NUMBER_MAGNITUDE_BASE) / DMG_NUMBER_MAGNITUDE_CURVE
+                magnitude_boost = DMG_NUMBER_MAGNITUDE_MAX_BOOST * min(1.0, max(0.0, log_ratio))
+                scale_factor *= (1.0 + magnitude_boost)
+
         # 3D billboard quad as a glowing background dot behind the number
         # BUG FIX: col may be a named color (0-1 .r/.g/.b) or color.rgb() (0-255).
         # Use _c255_color() to normalize before passing to color.rgba().
@@ -5761,7 +5826,7 @@ class Game:
                       'dash_cd_bar_bg', 'dash_cd_bar', 'pulse_cd_bar_bg', 'pulse_cd_bar',
                       'heal_flash', 'combo_edge_glow', 'threat_counter_text',
                       'level_up_flash', 'overheal_bar', 'adrenaline_vignette',
-                      'compass_arrow',
+                      'compass_arrow', 'multi_kill_glow',
                       'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
                       'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash',
                       'radar_bg',
@@ -6814,6 +6879,23 @@ class Game:
             position=(0, 0),
             z=1.6,  # Above boss tension but below combo edge glow
         )
+
+        # ── Multi-Kill Escalating Screen Edge Glow ── A warm orange-gold screen
+        # edge tint that intensifies with each kill in a multi-kill streak. The
+        # glow alpha is set when multi-kills happen (in _register_kill) and fades
+        # smoothly when the streak ends. Higher streaks glow brighter, making
+        # rapid kill chains feel progressively more cinematic — a visual "rampage
+        # aura" that rewards aggressive play.
+        self.multi_kill_glow = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 160, 40, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=1.7,  # Above adrenaline vignette
+        )
+        self.multi_kill_glow_alpha = 0.0  # Current glow alpha (fades toward 0)
+        self.multi_kill_glow_target = 0.0  # Target alpha set by multi-kill events
 
         # ── Treasure Compass Arrow ── Golden directional arrow on the HUD that
         # points toward the nearest rare+ collectible when the player has been
@@ -8631,6 +8713,27 @@ class Game:
         else:
             self.adrenaline_vignette.color = color.rgba(255, 120, 30, 0)
 
+        # ── Multi-Kill Escalating Screen Edge Glow ── The glow alpha decays
+        # toward the target each frame. While the multi-kill streak is active
+        # (multi_kill_timer > 0), the target holds at the streak's intensity.
+        # When the streak expires, the target drops to 0 and the glow fades
+        # smoothly — a transient "rampage aura" that lingers briefly after the
+        # last kill then dissipates. A subtle pulse adds energy so the glow
+        # feels alive rather than static.
+        if self.multi_kill_timer <= 0:
+            self.multi_kill_glow_target = 0.0
+        # Exponential decay toward target (frame-rate-independent)
+        glow_decay = 1.0 - math.exp(-MULTI_KILL_GLOW_DECAY * time.dt)
+        self.multi_kill_glow_alpha += (self.multi_kill_glow_target - self.multi_kill_glow_alpha) * glow_decay
+        if self.multi_kill_glow_alpha > 1.0:
+            # Subtle pulse for energy
+            pulse = 0.85 + 0.15 * math.sin(self.t * 7.0)
+            display_alpha = int(self.multi_kill_glow_alpha * pulse)
+        else:
+            display_alpha = int(self.multi_kill_glow_alpha)
+        mgr, mgg, mgb = MULTI_KILL_GLOW_COLOR
+        self.multi_kill_glow.color = color.rgba(mgr, mgg, mgb, max(0, display_alpha))
+
         # ── Treasure Compass ── When the player has been idle for
         # COMPASS_IDLE_DELAY seconds, a golden arrow appears on the HUD
         # pointing toward the nearest rare+ collectible within scan range.
@@ -8864,6 +8967,20 @@ class Game:
                 self._spawn_particles(self.player.position + Vec3(0, 2, 0),
                                       color.rgb(255, 100, 50), count=8)
                 self.screen_shake = max(self.screen_shake, 0.2)
+            # ── Multi-Kill Escalating Screen Edge Glow ── Set the glow target
+            # alpha based on the current kill count in the streak. Each
+            # additional kill brightens the glow, making rapid kill chains feel
+            # progressively more cinematic. The glow fades smoothly when the
+            # streak ends (handled in _update_hud). The alpha is capped at
+            # MULTI_KILL_GLOW_MAX_ALPHA so high streaks don't overwhelm.
+            glow_alpha = min(
+                MULTI_KILL_GLOW_MAX_ALPHA,
+                MULTI_KILL_GLOW_BASE_ALPHA + (self.multi_kill_count - 2) * MULTI_KILL_GLOW_ALPHA_PER_KILL
+            )
+            self.multi_kill_glow_target = glow_alpha
+            # Snap the current alpha up immediately on each kill for a punchy
+            # "flash brighter" effect, then it will decay toward the target
+            self.multi_kill_glow_alpha = max(self.multi_kill_glow_alpha, glow_alpha)
 
         # ── Berserk Mode Rapid Kill Tracking ── Count kills within the berserk
         # window. When the threshold is reached, activate berserk mode and reset
@@ -11983,7 +12100,38 @@ def game_update():
             punch_mult = ENEMY_HIT_SCALE_PUNCH * max(ENEMY_HIT_PUNCH_SIZE_MULT_MIN,
                                                       min(ENEMY_HIT_PUNCH_SIZE_MULT_MAX, size_ratio))
             scale_mult = 1.0 + (punch_mult - 1.0) * punch_t
-            enemy.scale = enemy.original_scale * scale_mult
+            # ── Enemy Hit Directional Stretch ── In addition to the uniform
+            # scale punch, stretch the enemy along the hit direction and
+            # compress perpendicular to it, making hits feel like the projectile
+            # physically pushes through the enemy. The hit direction (stored in
+            # _hit_stretch_dir as a world-space XZ unit vector) is decomposed
+            # into the enemy's local axes using its current rotation_y, then
+            # each local axis is scaled: stretch along the aligned component,
+            # squish along the perpendicular component. The effect decays with
+            # punch_t so it springs back to normal quickly. When no hit direction
+            # is available, the uniform punch applies as before.
+            stretch_dir = getattr(enemy, '_hit_stretch_dir', None)
+            if stretch_dir is not None and dist_to_player < VISUAL_CULL_RANGE:
+                # Decompose hit direction into enemy local space
+                # Local Z (forward) axis in world: (sin(ry), 0, cos(ry))
+                # Local X (right) axis in world:  (cos(ry), 0, -sin(ry))
+                ry_rad = math.radians(enemy.rotation_y)
+                sin_ry = math.sin(ry_rad)
+                cos_ry = math.cos(ry_rad)
+                # Component along local Z (how much the hit comes from front/back)
+                lz = abs(stretch_dir.x * sin_ry + stretch_dir.z * cos_ry)
+                # Component along local X (how much the hit comes from the side)
+                lx = abs(stretch_dir.x * cos_ry - stretch_dir.z * sin_ry)
+                # Stretch along the dominant axis, squish the other (volume feel)
+                stretch_z = 1.0 + ENEMY_HIT_STRETCH_AMOUNT * lz * punch_t - ENEMY_HIT_STRETCH_SQUISH * lx * punch_t
+                stretch_x = 1.0 + ENEMY_HIT_STRETCH_AMOUNT * lx * punch_t - ENEMY_HIT_STRETCH_SQUISH * lz * punch_t
+                enemy.scale = Vec3(
+                    enemy.original_scale * scale_mult * stretch_x,
+                    enemy.original_scale * scale_mult,
+                    enemy.original_scale * scale_mult * stretch_z,
+                )
+            else:
+                enemy.scale = enemy.original_scale * scale_mult
         elif dist_to_player < VISUAL_CULL_RANGE and not enemy.alerted and enemy.alive and not enemy.dying and not getattr(enemy, '_spit_charge_active', False):
             # ── Idle Breathing ── Enemies that haven't detected the player gently
             # breathe in and out (subtle scale oscillation) so the world feels
