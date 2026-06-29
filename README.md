@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.36.1 — 3D!)
+## Features (v2.37.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -243,6 +243,9 @@ python game.py
 - **Size-scaled enemy separation** — the enemy separation radius now scales with each enemy's physical size, so large enemies like Plasma Drakes spread out more than tiny Swarm Mites. Combat formations look natural across all 18 enemy types — big enemies form a loose ring while small enemies cluster tighter, improving visual readability and tactical spacing
 - **Spread shot fan spawn offset** — when the Weapon Upgrade is active, the three spread-shot projectiles now spawn at slightly offset lateral positions matching the fan shape, making the spread immediately readable from the first frame like a shotgun blast instead of all three bolts overlapping at the muzzle
 - **Collectible XP floating numbers** — picking up regular collectibles now spawns a small floating green "+N" number above the item showing the XP gained, making each pickup's progression contribution visible and tangible instead of silently incrementing the XP bar. Rarer items get a satisfying XP pop while common junk stays clean
+- **Loot drop burst velocity** — when an enemy dies and drops loot, each collectible now flies outward from the kill point with an initial burst velocity, like an explosion scattering treasure! The loot arcs upward and outward before settling into its normal bob/spin position, making kills feel viscerally rewarding — you see the treasure physically scatter from the corpse instead of items just appearing on the ground. The velocity decays smoothly with gravity bringing the arc back down
+- **Loot drop pop ring** — each loot-dropped collectible now emits a small expanding ring in the enemy's own color at its landing point, giving combat loot a visual "pop" that draws the eye to where the treasure landed. This complements the burst velocity with a ground-level visual that's visible even after the collectible settles, and only fires for kill-dropped loot (not ambient world respawns), making combat loot feel distinct and exciting
+- **Level-up enemy flash** — when Zorp levels up, all enemies within 40 units briefly flash white, making the level-up feel like a world-impacting power surge — the entire battlefield reacts to Zorp growing stronger, not just the HUD. Enemies recover to their normal colors after a brief moment, complementing the existing golden screen flash, shockwave knockback, FOV punch, and particle burst with an in-world visual that makes level-ups feel truly momentous
 
 ## The Self-Improving Game
 

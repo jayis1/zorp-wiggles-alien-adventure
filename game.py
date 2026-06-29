@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.36.1"
+VERSION = "2.37.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -545,6 +545,32 @@ ENEMY_KNOCKBACK_UP = 2.0       # Upward component of knockback
 # producing a ring/scatter pattern that's easier to vacuum-pickup while moving.
 # The spread radius is also slightly randomized so the fan isn't perfectly rigid.
 LOOT_DROP_FAN_SPREAD = 4.0    # Base radius for the loot drop fan (world units)
+# ── Loot Drop Burst Velocity ── When an enemy dies and drops loot, each
+# collectible gets an initial outward burst velocity from the kill point —
+# like an explosion scattering treasure outward. The velocity is applied
+# during the spawn animation phase and decays smoothly, so loot visibly
+# flies outward before settling into its normal bob/spin. This makes kills
+# feel rewarding and visually exciting — you see the treasure scatter from
+# the corpse instead of items just appearing on the ground.
+LOOT_BURST_SPEED = 8.0         # Initial outward burst speed (world units/sec)
+LOOT_BURST_DECAY = 6.0          # How fast the burst velocity decays (higher = snappier)
+LOOT_BURST_UPWARD = 3.0         # Small upward component so loot arcs up then falls
+# ── Loot Drop Pop Ring ── When loot drops from an enemy kill, a small
+# expanding ring in the enemy's color appears at each drop point — giving
+# the loot a visual "pop" that draws the eye to where items landed. This
+# complements the burst velocity with a ground-level visual that's visible
+# even after the collectible settles. Only fires for kill-dropped loot (not
+# regular world respawns), making combat loot feel distinct from ambient spawns.
+LOOT_DROP_RING_DURATION = 0.30   # How long the loot drop ring expands (seconds)
+LOOT_DROP_RING_MAX_SCALE = 5.0  # Max scale the loot drop ring reaches (tuned for PULSE_WAVE_EXPAND_SPEED)
+LOOT_DROP_RING_ALPHA = 100       # Starting alpha of the loot drop ring
+# ── Level-Up Enemy Flash ── When the player levels up, all enemies within
+# LEVEL_UP_ENEMY_FLASH_RADIUS briefly flash white — a world-impacting
+# "power surge" that makes level-ups feel like they affect the entire
+# battlefield, not just the HUD. The flash is quick and uses the existing
+# enemy hit flash system so it composes cleanly with combat visuals.
+LEVEL_UP_ENEMY_FLASH_RADIUS = 40.0  # How far the flash reaches (world units)
+LEVEL_UP_ENEMY_FLASH_DURATION = 0.25  # How long enemies stay white (seconds)
 
 # ─── Collectible Pop ──────────────────────────────────────────────────────────
 COLLECT_POP_DURATION = 0.18    # Tighter pop for snappier feedback
@@ -3541,9 +3567,40 @@ class Collectible(Entity):
         # gets a random initial timer so beacons don't all fire in sync.
         self.beacon_timer = random.uniform(COLLECT_BEACON_INTERVAL_MIN, COLLECT_BEACON_INTERVAL_MAX)
         self.beacon_active = 0.0  # >0 while the beacon expansion is playing
+        # ── Loot Burst Velocity ── When set (by _drop_loot), the collectible
+        # flies outward from the kill point during its spawn animation. The
+        # velocity decays exponentially and is applied in animate() during the
+        # spawn phase, so loot visibly scatters before settling into normal
+        # bob/spin. Set to Vec3(0,0,0) for normal world-spawned collectibles.
+        self.burst_vel = Vec3(0, 0, 0)
+        self.burst_active = False  # True while burst velocity is still decaying
 
     def animate(self, t):
         """Bob, spin, and pulse glow on the collectible each frame."""
+        # ── Loot Burst Velocity ── Apply outward burst velocity from the
+        # kill point. The velocity decays exponentially and only applies while
+        # burst_active is True. The position is moved in the XZ plane (plus a
+        # small upward arc that gravity pulls back down), making loot fly
+        # outward from the corpse before settling into normal bob/spin.
+        if self.burst_active:
+            self.x += self.burst_vel.x * time.dt
+            self.z += self.burst_vel.z * time.dt
+            # Upward arc — apply Y velocity then apply gravity to bring it back down
+            self.y += self.burst_vel.y * time.dt
+            self.burst_vel.y -= 15.0 * time.dt  # Gravity pulls the arc back down
+            # Exponential decay of horizontal velocity
+            decay_alpha = 1.0 - math.exp(-LOOT_BURST_DECAY * time.dt)
+            self.burst_vel.x = lerp(self.burst_vel.x, 0, decay_alpha)
+            self.burst_vel.z = lerp(self.burst_vel.z, 0, decay_alpha)
+            # Floor the Y so loot doesn't go below ground level
+            if self.y < 0.5:
+                self.y = 0.5
+                self.burst_vel.y = 0
+            # Stop the burst when velocity is negligible
+            if abs(self.burst_vel.x) < 0.5 and abs(self.burst_vel.z) < 0.5 and abs(self.burst_vel.y) < 0.5:
+                self.burst_active = False
+                self.burst_vel = Vec3(0, 0, 0)
+                self.y = 1.0  # Reset to normal bob height
         # Spawn animation: scale up from tiny to full size with an elastic overshoot
         if self.spawn_timer > 0:
             self.spawn_timer -= time.dt
@@ -3566,7 +3623,8 @@ class Collectible(Entity):
             self.glow.visible = True
             self.spawn_timer = -1  # Mark as done
             self.spawn_just_finished = True  # Signal game loop to emit spawn sparkle
-        self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * self.bob_amplitude
+        if not self.burst_active:
+            self.y = 1.0 + math.sin(t * 2 + self.bob_offset) * self.bob_amplitude
         self.rotation_y += self.spin_speed * time.dt
         # Rarity-scaled glow pulse — faster pulse and wider range for rarer items
         pulse = self.glow_min_scale + (self.glow_max_scale - self.glow_min_scale) * (0.5 + 0.5 * math.sin(t * self.glow_pulse_speed + self.bob_offset))
@@ -7709,11 +7767,25 @@ class Game:
         moving and prevents items from stacking on top of each other. The spread
         radius is slightly randomized per drop so the fan isn't perfectly rigid.
         Each drop checks walkability so items don't spawn in unreachable tiles.
+
+        ── Loot Burst Velocity ── Each dropped collectible gets an initial
+        outward burst velocity from the kill point, so loot visibly flies
+        outward like an explosion scattering treasure before settling into
+        its normal bob/spin. A small upward arc makes the loot visually
+        pop upward before falling back to ground level.
+
+        ── Loot Drop Pop Ring ── A small expanding ring in the enemy's color
+        appears at each drop point, giving loot a visual "pop" that draws
+        the eye to where items landed.
         """
         loot_range = ENEMY_LOOT_DROPS.get(enemy_name, (2, 4))
         loot_count = random.randint(loot_range[0], loot_range[1])
         # Use a random base angle so the fan orientation varies per kill
         base_angle = random.uniform(0, math.pi * 2)
+        # Look up the enemy's color for the loot drop pop ring
+        enemy_info = Enemy.TYPES.get(enemy_name, {})
+        enemy_col = enemy_info.get('color', color.white)
+        er, eg, eb = _c255_color(enemy_col)
         for i in range(loot_count):
             angle = base_angle + (i / max(1, loot_count)) * math.pi * 2
             # Randomize the spread radius slightly so the fan isn't a perfect ring
@@ -7723,8 +7795,33 @@ class Game:
             lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
             lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
             if self._is_walkable(lx, lz):
-                c = Collectible(position=Vec3(lx, 1, lz))
+                drop_pos = Vec3(enemy_pos.x, 1, enemy_pos.z)
+                c = Collectible(position=drop_pos)
+                # ── Loot Burst Velocity ── Set outward burst velocity so the
+                # collectible flies from the kill point to its final position.
+                # The direction matches the fan angle, speed is randomized for
+                # organic scatter, and a small upward component gives an arc.
+                burst_dir = Vec3(math.cos(angle), 0, math.sin(angle))
+                burst_speed = LOOT_BURST_SPEED * random.uniform(0.7, 1.3)
+                c.burst_vel = Vec3(
+                    burst_dir.x * burst_speed,
+                    LOOT_BURST_UPWARD * random.uniform(0.7, 1.2),
+                    burst_dir.z * burst_speed,
+                )
+                c.burst_active = True
                 self.collectibles.append(c)
+                # ── Loot Drop Pop Ring ── A small expanding ring at the drop
+                # landing point in the enemy's color, giving each loot drop a
+                # visual "pop" that draws the eye to where the treasure landed.
+                ring = PulseWaveRing(
+                    position=Vec3(lx, 0.03, lz),
+                    base_color=(er, eg, eb),
+                    max_scale=LOOT_DROP_RING_MAX_SCALE,
+                    start_alpha=LOOT_DROP_RING_ALPHA,
+                )
+                ring.lifetime = LOOT_DROP_RING_DURATION
+                ring.max_lifetime = LOOT_DROP_RING_DURATION
+                self.pulse_wave_rings.append(ring)
 
     def _handle_plasma_serpent_split(self, enemy):
         """Handle the Plasma Serpent death split into mini-enemies.
@@ -11392,6 +11489,19 @@ def game_update():
                 force_mult = 1.0 - (dist / LEVEL_UP_SHOCKWAVE_RADIUS) * 0.5
                 kb_dir = Vec3(dx / dist, 0, dz / dist)
                 enemy.knockback_vel += kb_dir * LEVEL_UP_SHOCKWAVE_KNOCKBACK * force_mult
+        # ── Level-Up Enemy Flash ── All enemies within range briefly flash
+        # white, making the level-up feel like a world-impacting power surge
+        # — the entire battlefield reacts to Zorp growing stronger, not just
+        # the HUD. Uses the existing enemy hit_flash system so the flash
+        # composes cleanly with combat visuals and recovers automatically.
+        for enemy in game.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            dx_ef = enemy.position.x - p.position.x
+            dz_ef = enemy.position.z - p.position.z
+            if dx_ef * dx_ef + dz_ef * dz_ef < LEVEL_UP_ENEMY_FLASH_RADIUS * LEVEL_UP_ENEMY_FLASH_RADIUS:
+                enemy.color = color.white
+                invoke(setattr, enemy, 'color', enemy.original_color, delay=LEVEL_UP_ENEMY_FLASH_DURATION)
 
     # ── Milestone Level Cooldown Reset ── At levels 5, 10, 15, 20..., all
     # ability cooldowns are instantly reset and a golden celebration plays.
