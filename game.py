@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.35.0"
+VERSION = "2.35.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -125,6 +125,17 @@ ENEMY_CHASE_RAMP_START = 0.35      # Starting chase speed fraction (between wand
 # ring around the player instead of stacking into a single point.
 ENEMY_SEPARATION_RADIUS = 2.5  # How close enemies get before pushing apart
 ENEMY_SEPARATION_FORCE = 5.0   # Push strength when enemies are too close
+# ── Size-Scaled Separation Radius ── The separation radius now scales with
+# enemy size so large enemies (Plasma Drake, scale 2.2) spread out more than
+# tiny enemies (Swarm Mite, scale 0.5). Previously the flat 2.5-unit radius
+# meant a massive boss and a tiny mite occupied the same personal-space
+# bubble, causing large enemies to overlap their neighbors while small
+# enemies spread too far apart. The scaled radius keeps the effective personal
+# space proportional to the enemy's physical size, making combat formations
+# look natural across all 18 enemy types — big enemies form a loose ring
+# while small enemies cluster tighter.
+ENEMY_SEPARATION_SIZE_BASE = 1.0   # Enemy scale at which radius = base value
+ENEMY_SEPARATION_SIZE_MULT = 1.2   # Radius scales by this factor per unit of scale
 
 # ─── Spawning ─────────────────────────────────────────────────────────────────
 MAX_ACTIVE_ENEMIES = 40
@@ -1904,6 +1915,14 @@ PICKUP_STREAK_XP_PER_MILESTONE = 15  # Bonus XP per milestone
 PICKUP_STREAK_DISPLAY_LIFETIME = 2.5 # How long the streak text stays visible
 PICKUP_STREAK_BAR_FLASH_DURATION = 0.25  # Green flash on the streak bar on each pickup
 PICKUP_STREAK_COLOR = color.rgb(100, 255, 200)  # Mint-cyan for streak text
+# ── Pickup Streak Milestone Celebration ── At every milestone (every 5 pickups
+# in the streak), a dedicated celebration now fires: a larger mint-cyan particle
+# burst, a small screen shake, and a floating "✦+N XP" damage number above Zorp
+# (matching the flawless streak milestone style). Previously the milestone only
+# had a text message and a tiny 10-particle puff — now it feels like a real
+# reward moment that makes hitting pickup streak milestones satisfying.
+PICKUP_STREAK_MILESTONE_PARTICLES = 18    # Particle burst count on milestone
+PICKUP_STREAK_MILESTONE_SCREEN_SHAKE = 0.15  # Screen shake on milestone
 
 # ─── Critical Hit Chain Bonus ───────────────────────────────────────────────
 # Consecutive critical hits within a time window give increasing bonus damage.
@@ -7669,12 +7688,18 @@ class Game:
             bonus_xp = PICKUP_STREAK_XP_PER_MILESTONE * (self.pickup_streak // PICKUP_STREAK_MILESTONE_INTERVAL)
             self.player.gain_xp(bonus_xp)
             self.add_message(f"Pickup Streak x{self.pickup_streak}! +{bonus_xp} bonus XP!")
-            # Small golden particle burst for the milestone
+            # ── Pickup Streak Milestone Celebration ── A larger mint-cyan
+            # particle burst, small screen shake, and floating "✦+N XP"
+            # damage number above Zorp make hitting pickup streak milestones
+            # feel like a real reward moment — matching the polish standard
+            # of the flawless streak and combo milestone celebrations.
             self._spawn_particles(
                 self.player.position + Vec3(0, 1, 0),
                 color.rgb(100, 255, 200),
-                count=10,
+                count=PICKUP_STREAK_MILESTONE_PARTICLES,
             )
+            self.screen_shake = max(self.screen_shake, PICKUP_STREAK_MILESTONE_SCREEN_SHAKE)
+            self.damage_numbers.append(DamageNumber(self.player.position, bonus_xp, is_flawless=True))
 
     def shoot(self):
         """Fire tentacle laser toward the mouse cursor.
@@ -7762,11 +7787,20 @@ class Game:
         if self.player.weapon_upgrade_timer > 0:
             # Spread shot: fire 3 projectiles in a fan pattern
             base_angle = math.atan2(direction.x, direction.z)
+            # Perpendicular vector for lateral spawn offset — so each bolt
+            # starts at a slightly different position along the fan axis, making
+            # the spread visually clear from the first frame instead of all three
+            # bolts overlapping at a single point before diverging.
+            perp = Vec3(-direction.z, 0, direction.x)
             for offset in [-SPREAD_ANGLE, 0, SPREAD_ANGLE]:
                 angle = base_angle + math.radians(offset)
                 spread_dir = Vec3(math.sin(angle), 0, math.cos(angle)).normalized()
+                # Lateral offset proportional to the spread angle so the three
+                # bolts emerge from slightly offset positions, matching the fan
+                # shape — like a shotgun spread.
+                lateral = perp * (offset / SPREAD_ANGLE) * 0.6
                 proj = Projectile(
-                    position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5,
+                    position=self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.5 + lateral,
                     direction=spread_dir,
                     damage=base_damage,
                     speed=PROJECTILE_SPEED,
@@ -11450,6 +11484,14 @@ def game_update():
             # into a ring around the player. Only applies to aggroed enemies
             # within visual range to avoid performance overhead.
             if dist_to_player < VISUAL_CULL_RANGE:
+                # ── Size-Scaled Separation Radius ── The separation radius
+                # scales with the enemy's own size so large enemies spread out
+                # more than small ones, keeping combat formations proportional.
+                # A Plasma Drake (scale 2.2) gets ~3.5 units of personal space
+                # while a Swarm Mite (scale 0.5) gets ~2.1 — making the ring of
+                # enemies look natural regardless of the enemy mix.
+                sep_size_mult = max(0.6, min(2.0, enemy.original_scale / ENEMY_SEPARATION_SIZE_BASE * ENEMY_SEPARATION_SIZE_MULT))
+                sep_radius = ENEMY_SEPARATION_RADIUS * sep_size_mult
                 for other in game.enemies:
                     if other is enemy or not other.alive or other.dying:
                         continue
@@ -11458,10 +11500,10 @@ def game_update():
                     sep_dx = enemy.x - other.x
                     sep_dz = enemy.z - other.z
                     sep_dist_sq = sep_dx * sep_dx + sep_dz * sep_dz
-                    if sep_dist_sq < ENEMY_SEPARATION_RADIUS * ENEMY_SEPARATION_RADIUS and sep_dist_sq > 0.01:
+                    if sep_dist_sq < sep_radius * sep_radius and sep_dist_sq > 0.01:
                         sep_dist = math.sqrt(sep_dist_sq)
                         # Stronger push when closer — inverse distance falloff
-                        push_strength = ENEMY_SEPARATION_FORCE * (1.0 - sep_dist / ENEMY_SEPARATION_RADIUS)
+                        push_strength = ENEMY_SEPARATION_FORCE * (1.0 - sep_dist / sep_radius)
                         push_x = (sep_dx / sep_dist) * push_strength * time.dt
                         push_z = (sep_dz / sep_dist) * push_strength * time.dt
                         if game._is_walkable(enemy.x + push_x, enemy.z + push_z):
@@ -13733,7 +13775,18 @@ def game_update():
                 elif game.pickup_streak >= PICKUP_STREAK_SCORE_TIER1:
                     pickup_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
                 p.score += int(col.value * pickup_score_mult)
-                p.gain_xp(max(1, col.value // 10))
+                collect_xp = max(1, col.value // 10)
+                p.gain_xp(collect_xp)
+                # ── Collectible XP Floating Number ── A small floating "+N"
+                # number in the item's color appears above Zorp on pickup so
+                # the XP gain from collecting items is visible and tangible —
+                # matching the XP gain flash on the XP bar with an in-world
+                # visual cue. Previously regular item XP was completely silent
+                # (only the score number changed); now you see the XP pop.
+                # Only shown for non-trivial XP (2+) to avoid clutter from
+                # common Space Gloop (1 XP).
+                if collect_xp >= 2:
+                    game.damage_numbers.append(DamageNumber(col.position, collect_xp, is_heal=True))
                 # ── Rarity-Scaled Pickup Burst ── More valuable items produce a
                 # bigger particle burst — grabbing a Plasma Core should feel
                 # more rewarding than picking up Space Gloop.
