@@ -5596,11 +5596,17 @@ class Game:
                 # (WORLD_EDGE_BARRIER_HEIGHT, seg_width) made them wide and short
                 # instead of thin and tall. Now matches N/S barrier orientation:
                 # seg_width on X (runs along Z), height on Y (tall wall).
+                # BUG FIX 2: Missing rotation_y=90 — a quad lies in the XY plane by
+                # default (facing ±Z). N/S barriers at z=0/z=world_span face the
+                # player correctly, but E/W barriers at x=0/x=world_span are
+                # edge-on (perpendicular) without rotation, making them invisible.
+                # rotation_y=90 faces them along the X axis so players see the wall.
                 barrier = Entity(
                     model='quad',
                     color=color.rgba(100, 60, 200, WORLD_EDGE_BARRIER_ALPHA),
                     scale=(seg_width, WORLD_EDGE_BARRIER_HEIGHT),
                     position=(edge_x, barrier_y, seg_z),
+                    rotation_y=90,  # Face along X axis for E/W edges
                     billboard=False,
                 )
                 self.world_edge_barriers.append(barrier)
@@ -6598,7 +6604,11 @@ class Game:
         seconds = time_alive % 60
         kill_details = '  '.join(f'{k}:{v}' for k, v in p.kills.items()) if p.kills else 'None'
         item_details = '  '.join(f'{k}:{v}' for k, v in p.inventory.items()) if p.inventory else 'None'
-        kpm = f'{total_kills / max(1, time_alive / 60):.1f}' if time_alive > 0 else '0'
+        # BUG FIX: max(1, time_alive / 60) caps the denominator at 1.0, so for any
+        # survival time < 60s the KPM shows the raw kill count instead of kills/min.
+        # e.g. 5 kills in 30s → max(1, 0.5) = 1.0 → 5.0 KPM (should be 10.0). Using
+        # max(0.001, ...) prevents division by zero while allowing sub-minute rates.
+        kpm = f'{total_kills / max(0.001, time_alive / 60):.1f}' if time_alive > 0 else '0'
         # Include total items collected (tracked across all pickups, not just
         # inventory — power-ups consumed in play aren't in inventory but still
         # count toward total collection for a more complete survival summary).
@@ -7818,6 +7828,10 @@ class Game:
                     base_color=(er, eg, eb),
                     max_scale=LOOT_DROP_RING_MAX_SCALE,
                     start_alpha=LOOT_DROP_RING_ALPHA,
+                    is_shockwave=True,  # BUG FIX: Visual-only ring — without this flag,
+                                         # the pulse wave enemy interaction loop treats it
+                                         # as a real Pulse Wave and deals full damage +
+                                         # knockback to nearby enemies on every loot drop.
                 )
                 ring.lifetime = LOOT_DROP_RING_DURATION
                 ring.max_lifetime = LOOT_DROP_RING_DURATION
@@ -8417,9 +8431,15 @@ class Game:
             # combo_count is now properly reset only in game_update() when
             # combo_timer expires (line ~10593).
 
-        # Combo timer bar update — visual indicator of time remaining before combo resets
-        if self.combo_count >= 2 and self.combo_display_timer > 0:
-            ratio = max(0, self.combo_display_timer / COMBO_TIMEOUT)
+        # Combo timer bar update — visual indicator of time remaining before combo resets.
+        # BUG FIX: Use combo_timer (COMBO_TIMEOUT = 5.0s) — the actual combo lifetime —
+        # NOT combo_display_timer (COMBO_DISPLAY_LIFETIME = 2.5s) which only controls how
+        # long the combo TEXT stays visible. Using display_timer made the bar start at
+        # only 50% (2.5/5.0) and disappear 2.5s before the combo actually expired. The
+        # Combo Timer Ground Ring (line ~10990) already correctly uses combo_timer, so
+        # this fix brings the HUD bar in line with the ground ring.
+        if self.combo_count >= 2 and self.combo_timer > 0:
+            ratio = max(0, self.combo_timer / COMBO_TIMEOUT)
             bar_width = 0.22 * ratio
             # Offset so bar shrinks from right to left (centered origin=0)
             self.combo_bar.scale_x = max(0.001, bar_width)
