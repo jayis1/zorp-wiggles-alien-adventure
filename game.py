@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.34.1"
+VERSION = "2.35.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -465,6 +465,47 @@ DEATH_TILT_WOBBLE_SPEED = 8.0  # How fast the tilt wobbles back and forth
 CAMERA_KILL_ZOOM_FOV = 65      # FOV to zoom to on kill (tighter than 75 normal) — punch-in effect
 CAMERA_KILL_ZOOM_DURATION = 0.2 # How long the zoom lasts before returning to normal
 CAMERA_KILL_ZOOM_LERP_SPEED = 12.0  # How fast the zoom snaps back to normal FOV
+
+# ─── Level-Up Camera FOV Punch ──────────────────────────────────────────────
+# On level-up, the camera briefly zooms in (tighter FOV) then springs back — a
+# cinematic "power surge" effect that makes leveling feel impactful through the
+# camera, not just the HUD. The punch is slightly wider than the kill zoom (so
+# the two don't conflict visually) and recovers with a smooth ease-out. A
+# dedicated timer ensures the level-up punch doesn't interfere with the kill
+# zoom system — level_up_fov_timer takes priority over kill_fov_timer so the
+# celebratory zoom reads clearly even if a kill happens at the same moment.
+LEVEL_UP_FOV_PUNCH = 60          # FOV to zoom to on level-up (tighter than kill zoom)
+LEVEL_UP_FOV_PUNCH_DURATION = 0.4 # How long the zoom lasts before returning to normal
+LEVEL_UP_FOV_LERP_SPEED = 8.0    # How fast the zoom springs back to normal FOV
+
+# ─── Dash Cooldown Ground Ring ───────────────────────────────────────────────
+# While the dash is on cooldown, a thin circular progress ring appears at Zorp's
+# feet, filling up as the cooldown counts down. When the ring completes, it
+# briefly flashes bright cyan before disappearing — giving the player a clear
+# ground-level visual of when their dash will be ready again, without having to
+# glance at the HUD. The ring uses a full circle that visually "empties" from
+# full to empty as cooldown progresses, then snaps to full and flashes when
+# the dash is ready.
+DASH_CD_RING_SCALE = 1.8         # Ring radius in world units
+DASH_CD_RING_ALPHA = 60          # Base alpha of the cooldown ring
+DASH_CD_RING_READY_FLASH_ALPHA = 180  # Alpha when the ring completes (flash)
+DASH_CD_RING_READY_FLASH_DURATION = 0.3  # How long the ready flash lasts
+DASH_CD_RING_COLOR = (0, 200, 255)  # Cyan color for the ring
+
+# ─── Enemy Death Sky Beam ───────────────────────────────────────────────────
+# When an enemy dies, a brief vertical energy beam shoots upward from the death
+# point — a thin translucent pillar of light in the enemy's own color that fades
+# over a fraction of a second. This adds a dramatic "soul departing" visual
+# that's visible from a distance, complementing the existing ground-level death
+# effects (particles, ring, animation) with a vertical skyward presence. The
+# beam is especially striking during boss slow-motion, where it lingers
+# dramatically. The beam color matches the enemy's original color for
+# cohesive, target-tinted feedback.
+ENEMY_DEATH_BEAM_HEIGHT = 20.0     # How tall the beam reaches (world units)
+ENEMY_DEATH_BEAM_WIDTH = 0.3      # Base width of the beam
+ENEMY_DEATH_BEAM_ALPHA = 120       # Starting alpha of the beam
+ENEMY_DEATH_BEAM_DURATION = 0.3    # How long the beam lasts (seconds)
+ENEMY_DEATH_BEAM_SCALE_MAX = 0.5  # Beam width shrinks from base to this over its life
 
 # ─── Enemy Knockback ──────────────────────────────────────────────────────────
 ENEMY_KNOCKBACK_FORCE = 4.0    # How far enemies get pushed on hit
@@ -4973,6 +5014,7 @@ class Game:
         self.boss_slowmo_timer = 0.0
         self.boss_slowmo_time_scale = 1.0  # Current effective time scale (lerps back to 1.0)
         self.kill_fov_timer = 0.0  # Camera FOV punch on kill — brief zoom-in effect
+        self.level_up_fov_timer = 0.0  # Camera FOV punch on level-up — cinematic zoom
         self.current_biome = 'grass'
         # Smoothly-interpolated biome indicator color (r,g,b floats in 0-255 range)
         self.biome_color_current = (10.0, 180.0, 80.0)
@@ -5083,6 +5125,14 @@ class Game:
         # during a dash so we spawn multiple fading ghosts along the dash path
         # instead of just one at the start position.
         self._dash_afterimage_timer = 0.0
+        # ── Dash Cooldown Ground Ring ── A thin circular ring at Zorp's feet
+        # that shows dash cooldown progress. Created lazily and made
+        # visible/hidden as the dash cooldown state changes. The ring starts
+        # full (alpha = DASH_CD_RING_ALPHA) when dash goes on cooldown, then
+        # fades to near-transparent as the cooldown counts down, and flashes
+        # bright cyan when the dash becomes ready again.
+        self.dash_cd_ring = None       # Lazily created Entity
+        self.dash_cd_ring_flash_timer = 0.0  # >0 while the "dash ready" flash is playing
 
         # Idle HP regeneration — rewards standing still with slow HP regen
         self.idle_timer = 0.0        # How long the player has been idle
@@ -5921,6 +5971,12 @@ class Game:
                 if ff and hasattr(ff, 'enabled') and ff.enabled:
                     destroy(ff)
             self.fireflies.clear()
+
+        # Destroy dash cooldown ground ring
+        if hasattr(self, 'dash_cd_ring') and self.dash_cd_ring is not None:
+            if self.dash_cd_ring.enabled:
+                destroy(self.dash_cd_ring)
+            self.dash_cd_ring = None
 
     def _build_terrain(self):
         """Build the 3D terrain from the world grid with height variation per biome.
@@ -7416,6 +7472,34 @@ class Game:
         death_flash.animate_scale(flash_scale * ENEMY_DEATH_FLASH_MAX_SCALE,
                                   duration=ENEMY_DEATH_FLASH_DURATION,
                                   curve=curve.out_expo)
+        # ── Enemy Death Sky Beam ── A brief vertical energy beam shoots
+        # upward from the death point — a thin translucent pillar of light
+        # in the enemy's own color that fades over ~0.3 seconds. This adds
+        # a dramatic "soul departing" visual that's visible from a distance,
+        # complementing the existing ground-level death effects (particles,
+        # ring, animation) with a vertical skyward presence. The beam is
+        # especially striking during boss slow-motion. Color matches the
+        # enemy's original color for cohesive, target-tinted feedback.
+        beam = Entity(
+            model='cube',
+            color=color.rgba(cr, cg, cb, ENEMY_DEATH_BEAM_ALPHA),
+            scale=(ENEMY_DEATH_BEAM_WIDTH, ENEMY_DEATH_BEAM_HEIGHT, ENEMY_DEATH_BEAM_WIDTH),
+            position=Vec3(pos.x, pos.y + ENEMY_DEATH_BEAM_HEIGHT / 2, pos.z),
+        )
+        # Animate the beam shrinking in width and fading out
+        beam.animate_scale(
+            Vec3(ENEMY_DEATH_BEAM_WIDTH * ENEMY_DEATH_BEAM_SCALE_MAX,
+                 ENEMY_DEATH_BEAM_HEIGHT,
+                 ENEMY_DEATH_BEAM_WIDTH * ENEMY_DEATH_BEAM_SCALE_MAX),
+            duration=ENEMY_DEATH_BEAM_DURATION,
+            curve=curve.out_expo,
+        )
+        beam.animate_color(
+            color.rgba(cr, cg, cb, 0),
+            duration=ENEMY_DEATH_BEAM_DURATION,
+            curve=curve.linear,
+        )
+        destroy(beam, delay=ENEMY_DEATH_BEAM_DURATION + 0.01)
         # ── Death Explosion Scale ── Scale particle count and spread with the
         # enemy's max HP. Tougher enemies produce bigger, more dramatic death
         # explosions — a Swarm Mite (12 HP) gets a tiny puff while a Plasma
@@ -9494,6 +9578,13 @@ def game_update():
             game.level_up_timer -= time.dt
             if game.level_up_timer <= 0:
                 game.level_up_text.visible = False
+        # ── Level-Up FOV Punch Recovery (hit-stop) ── Decrement the FOV punch
+        # timer during freeze so the zoom recovery continues smoothly even
+        # if a kill triggers hit-stop at the same moment as a level-up.
+        if game.level_up_fov_timer > 0:
+            game.level_up_fov_timer -= time.dt
+            target_fov_hs = SPEED_BOOST_FOV if p.speed_boost_timer > 0 else DASH_FOV_NORMAL
+            camera.fov = lerp(camera.fov, target_fov_hs, time.dt * LEVEL_UP_FOV_LERP_SPEED)
         target_pos = p.position + Vec3(0, 0, 0)
         shake_offset = Vec3(0, 0, 0)
         if game.screen_shake > 0.01:
@@ -9745,6 +9836,57 @@ def game_update():
         # Dash just came off cooldown — trigger readiness flash
         game._dash_was_on_cooldown = False
         game.dash_ready_flash_timer = DASH_READY_FLASH_DURATION
+    # ── Dash Cooldown Ground Ring ── While dash is on cooldown (and the
+    # player isn't currently dashing), a thin cyan ring at Zorp's feet shows
+    # the cooldown progress. The ring starts bright and fades as the cooldown
+    # counts down, then flashes bright cyan when the dash becomes ready
+    # before disappearing. This gives the player a clear, glance-free visual
+    # of when their dash will be available — no need to look at the HUD.
+    if p.dash_cooldown > 0 and p.dash_timer <= 0:
+        # Lazily create the ring entity on first need
+        if game.dash_cd_ring is None:
+            game.dash_cd_ring = Entity(
+                model='quad',
+                color=color.rgba(DASH_CD_RING_COLOR[0], DASH_CD_RING_COLOR[1],
+                                 DASH_CD_RING_COLOR[2], DASH_CD_RING_ALPHA),
+                scale=DASH_CD_RING_SCALE,
+                position=(p.x, 0.03, p.z),
+                rotation_x=90,
+            )
+        game.dash_cd_ring.visible = True
+        game.dash_cd_ring.position = (p.x, 0.03, p.z)
+        # Fade ring alpha based on remaining cooldown (bright at start, dim at end)
+        cd_ratio = p.dash_cooldown / DASH_COOLDOWN  # 1.0 → 0.0
+        ring_alpha = int(DASH_CD_RING_ALPHA * (0.3 + 0.7 * cd_ratio))
+        # Pulse gently to feel alive
+        pulse = 0.5 + 0.5 * math.sin(game.t * 6)
+        ring_alpha = min(255, int(ring_alpha * (0.7 + 0.3 * pulse)))
+        game.dash_cd_ring.color = color.rgba(
+            DASH_CD_RING_COLOR[0], DASH_CD_RING_COLOR[1],
+            DASH_CD_RING_COLOR[2], ring_alpha
+        )
+        # Scale shrinks slightly as cooldown progresses (full → slightly smaller)
+        game.dash_cd_ring.scale = DASH_CD_RING_SCALE * (1.0 - 0.08 * (1.0 - cd_ratio))
+    elif game.dash_cd_ring is not None and game.dash_cd_ring.visible:
+        if game.dash_cd_ring_flash_timer > 0:
+            # Dash just became ready — play a bright flash before hiding
+            game.dash_cd_ring_flash_timer -= time.dt
+            flash_progress = game.dash_cd_ring_flash_timer / DASH_CD_RING_READY_FLASH_DURATION
+            flash_alpha = int(DASH_CD_RING_READY_FLASH_ALPHA * flash_progress)
+            game.dash_cd_ring.color = color.rgba(
+                DASH_CD_RING_COLOR[0], DASH_CD_RING_COLOR[1],
+                DASH_CD_RING_COLOR[2], flash_alpha
+            )
+            game.dash_cd_ring.scale = DASH_CD_RING_SCALE * (1.0 + 0.3 * flash_progress)
+            game.dash_cd_ring.position = (p.x, 0.03, p.z)
+            if game.dash_cd_ring_flash_timer <= 0:
+                game.dash_cd_ring.visible = False
+        else:
+            # Start the ready flash if not already started
+            game.dash_cd_ring_flash_timer = DASH_CD_RING_READY_FLASH_DURATION
+    # Reset the flash timer when dash is used again (cooldown starts fresh)
+    if p.dash_cooldown > 0 and p.dash_timer <= 0 and game.dash_cd_ring_flash_timer > 0:
+        game.dash_cd_ring_flash_timer = 0.0
     if p.dash_timer > 0:
         # Currently dashing
         p.dash_timer -= time.dt
@@ -9926,6 +10068,11 @@ def game_update():
         p._dash_strike_hit.clear()  # Reset the hit set for this dash
         game.add_message("DASH!")
         game._spawn_particles(p.position, color.cyan, count=5)
+        # Hide the dash cooldown ring while dashing — it would be confusing
+        # to see a cooldown ring while the dash is actively in motion.
+        if game.dash_cd_ring is not None:
+            game.dash_cd_ring.visible = False
+        game.dash_cd_ring_flash_timer = 0.0
         # Reset the afterimage accumulator so the first trailing ghost appears
         # after one interval, not instantly at the dash start position.
         game._dash_afterimage_timer = 0.0
@@ -9949,7 +10096,13 @@ def game_update():
         # lerps back to normal using the same ease-out pattern.
         speed_boost_fov_active = p.speed_boost_timer > 0
         target_fov_normal = SPEED_BOOST_FOV if speed_boost_fov_active else DASH_FOV_NORMAL
-        if game.kill_fov_timer > 0:
+        # ── Level-Up FOV Punch Recovery ── Takes priority over the kill zoom
+        # so the celebratory zoom reads clearly even if they overlap. The FOV
+        # springs back to normal with a smooth ease-out over the duration.
+        if game.level_up_fov_timer > 0:
+            game.level_up_fov_timer -= time.dt
+            camera.fov = lerp(camera.fov, target_fov_normal, time.dt * LEVEL_UP_FOV_LERP_SPEED)
+        elif game.kill_fov_timer > 0:
             game.kill_fov_timer -= time.dt
             # Lerp back to normal FOV after kill zoom punch
             camera.fov = lerp(camera.fov, target_fov_normal, time.dt * CAMERA_KILL_ZOOM_LERP_SPEED)
@@ -10863,6 +11016,13 @@ def game_update():
         # flash for a celebratory full-screen visual impact on level-up.
         game.level_up_flash_timer = LEVEL_UP_FLASH_DURATION
         game.level_up_flash.color = color.rgba(255, 220, 50, LEVEL_UP_FLASH_MAX_ALPHA)
+        # ── Level-Up Camera FOV Punch ── Briefly zoom the camera in for a
+        # cinematic "power surge" effect — the FOV tightens then springs back,
+        # making the level-up feel impactful through the camera, not just the
+        # HUD. The dedicated timer takes priority over the kill zoom so the
+        # celebratory zoom reads clearly even if a kill happens simultaneously.
+        game.level_up_fov_timer = LEVEL_UP_FOV_PUNCH_DURATION
+        camera.fov = LEVEL_UP_FOV_PUNCH
         game.add_message(f"Level Up! Now Lv.{p.level}!")
         # ── Level-Up Magnet Burst ── Pull all nearby collectibles toward the player
         # A satisfying "vortex" effect that rewards leveling up by vacuuming items

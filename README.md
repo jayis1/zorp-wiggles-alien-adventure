@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.34.1 — 3D!)
+## Features (v2.35.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -86,6 +86,9 @@ python game.py
 - Atmospheric fog and lighting with nebula starfield sky
 - Smooth camera follow with screen shake on hits, kills, and crits
 - Enemy death animations (pop upward, shrink, flash, and dissolve)
+- **Enemy Death Sky Beam** — a vertical energy beam shoots skyward from each kill point in the enemy's own color, making deaths visible from anywhere on the map
+- **Level-Up Camera FOV Punch** — the camera briefly zooms in on level-up for a cinematic power-surge effect
+- **Dash Cooldown Ground Ring** — a pulsing cyan ring at Zorp's feet shows when your dash will be ready, so you never need to look at the HUD
 - Level-up flash effect and scale pulse
 - Satisfying collectible pickup burst particles with magnetic pull snap
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
@@ -421,6 +424,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.35.0 — Level-Up Camera FOV Punch, Dash Cooldown Ground Ring & Enemy Death Sky Beam
+- **Level-Up Camera FOV Punch**: On level-up, the camera now briefly zooms in (FOV tightens to 60° from the normal 75°) then springs back smoothly over 0.4 seconds — a cinematic "power surge" effect that makes leveling feel impactful through the camera, not just the HUD text and particle burst. The zoom uses a dedicated timer (`level_up_fov_timer`) that takes priority over the existing kill zoom system, so the celebratory zoom reads clearly even if a kill happens at the exact same moment. The FOV recovery also runs during hit-stop freeze frames, ensuring the zoom always completes smoothly regardless of timing overlap. Previously, level-ups only had HUD and particle feedback — now they have a visceral camera-level impact that makes every level-up feel like a moment of power
+- **Dash Cooldown Ground Ring**: While the dash ability is on cooldown, a thin pulsing cyan ring now appears at Zorp's feet, showing the remaining cooldown progress. The ring starts bright and gradually dims as the cooldown counts down, with a gentle 6 Hz pulse to feel alive. When the dash becomes ready again, the ring flashes bright cyan and expands briefly before disappearing — giving the player a clear, glance-free visual of when their dash will be available, without having to look at the HUD. The ring is hidden during the actual dash and properly cleaned up on restart. Previously, players had to watch the HUD dash cooldown bar to know when their dash was ready — now they can keep their eyes on the action
+- **Enemy Death Sky Beam**: When an enemy dies, a brief vertical energy beam now shoots upward from the death point into the sky — a thin, translucent pillar of light in the enemy's own color that fades over 0.3 seconds. This makes enemy deaths feel more dramatic and visible from a distance, complementing the existing death animation, particle burst, and ground ring with a vertical "soul departing" visual. The beam's color matches the enemy's original color (orange for Lava Crawlers, cyan for Crystal Guardians, etc.), making each kill feel tailored to the enemy type. The beam is especially striking for boss-tier kills, where the slow-motion effect gives the beam time to linger dramatically. Previously, enemy deaths were purely ground-level effects — now they have a skyward presence that's visible from anywhere on the map
 
 ### v2.34.1 — Damage Number Magnitude Scaling, Multi-Kill Screen Glow & Enemy Hit Directional Stretch
 - **Damage number magnitude scaling**: Damage numbers now scale up based on the raw damage amount — heavy hits produce visibly larger numbers than light hits. A logarithmic curve maps the damage to a size boost (up to +50% for very heavy hits), applied on top of the existing category-based scaling (crit, kill, overkill, etc.). A 80-damage crit is now noticeably bigger than a 20-damage hit, making powerful shots feel more impactful at a glance. This enhances the visual hierarchy of hit feedback without requiring any changes to the 43 DamageNumber call sites — the magnitude boost is computed automatically inside the constructor. Previously, all normal hits were the same size regardless of damage; now the number's size communicates the hit's weight
