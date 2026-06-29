@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.35.1"
+VERSION = "2.36.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1679,6 +1679,56 @@ COMBO_MILESTONE_INTERVAL = 5        # Combo milestones: x5, x10, x15, etc.
 COMBO_MILESTONE_PARTICLES = 25      # Particle burst count at combo milestones
 COMBO_MILESTONE_XP_BASE = 20        # Base XP bonus per combo milestone
 COMBO_MILESTONE_XP_PER_TIER = 10    # Extra XP per milestone tier (x5=20, x10=30, x15=40...)
+# ── Combo Milestone Rainbow Screen Flash ── Each combo milestone (x5, x10,
+# x15...) triggers a brief screen-edge flash in a distinct color that cycles
+# through a palette per tier, making each milestone feel visually unique and
+# celebratory. Tier 1 (x5) = red, tier 2 (x10) = cyan, tier 3 (x15) = gold,
+# tier 4 (x20) = purple, tier 5 (x25) = green, then repeats. The flash is
+# subtle (alpha ~40) and short (0.3s) so it doesn't obscure gameplay.
+COMBO_MILESTONE_FLASH_DURATION = 0.3   # How long the milestone flash is visible
+COMBO_MILESTONE_FLASH_ALPHA = 40       # Screen flash alpha (subtle)
+COMBO_MILESTONE_FLASH_COLORS = [
+    color.rgb(255, 60, 60),    # Tier 1 (x5):  Red
+    color.rgb(60, 200, 255),   # Tier 2 (x10): Cyan
+    color.rgb(255, 215, 50),   # Tier 3 (x15): Gold
+    color.rgb(200, 80, 255),   # Tier 4 (x20): Purple
+    color.rgb(80, 255, 120),   # Tier 5 (x25): Green
+    color.rgb(255, 150, 220),  # Tier 6 (x30): Pink
+]
+
+# ─── Threat Proximity Pulse Ring ──────────────────────────────────────────────
+# A red ground ring at Zorp's feet that intensifies (alpha, scale, pulse speed)
+# based on how many enemies are nearby. At 0 nearby enemies it's invisible; at
+# THREAT_RING_TRIGGER_COUNT it starts fading in; at THREAT_RING_MAX_COUNT it's
+# at full intensity with a fast urgent pulse. This gives the player instant
+# at-a-glance spatial awareness of danger density without needing to look at
+# the minimap — you feel the heat of the crowd closing in. The ring uses the
+# existing swarm-escape proximity check interval to avoid per-frame iteration.
+THREAT_RING_TRIGGER_COUNT = 3      # Min nearby enemies to start showing the ring
+THREAT_RING_MAX_COUNT = 10         # Enemy count at which the ring is at full intensity
+THREAT_RING_BASE_RADIUS = 3.0     # Starting radius of the threat ring (world units)
+THREAT_RING_MAX_RADIUS = 5.5      # Max radius when at full threat level
+THREAT_RING_BASE_ALPHA = 30        # Starting alpha when ring first appears
+THREAT_RING_MAX_ALPHA = 90         # Max alpha at full threat level
+THREAT_RING_PULSE_SPEED_BASE = 3.0  # Pulse speed at low threat (slow, calm)
+THREAT_RING_PULSE_SPEED_MAX = 10.0  # Pulse speed at high threat (fast, urgent)
+THREAT_RING_COLOR = color.rgb(255, 40, 40)  # Red — danger
+
+# ─── Combo Timer Ground Ring ──────────────────────────────────────────────────
+# A thin ring on the ground around the player that visually depletes as the
+# combo timer counts down, giving a glance-free visual countdown of how much
+# time remains to maintain the current combo. The ring starts full (bright
+# yellow) when the combo is fresh and shrinks/fades as the timer runs out,
+# making it obvious when the combo is about to expire without needing to look
+# at the HUD combo bar. The ring only appears when a combo is active (x2+).
+COMBO_TIMER_RING_MAX_RADIUS = 2.8   # Ring radius when combo timer is full
+COMBO_TIMER_RING_MIN_RADIUS = 1.0   # Ring radius when combo timer is nearly empty
+COMBO_TIMER_RING_ALPHA = 80         # Base alpha of the combo timer ring
+COMBO_TIMER_RING_LOW_ALPHA = 30     # Alpha when combo is about to expire (< 2s)
+COMBO_TIMER_RING_LOW_THRESHOLD = 2.0  # Seconds remaining below which the ring dims
+COMBO_TIMER_RING_COLOR = color.rgb(255, 215, 50)  # Gold — matches combo display
+COMBO_TIMER_RING_LOW_COLOR = color.rgb(255, 80, 80)  # Red-ish when about to expire
+COMBO_TIMER_RING_THICKNESS = 0.06  # Ring quad height (thin band)
 
 # ─── Combo Shield ────────────────────────────────────────────────────────────
 # At combo x15 (a major milestone), the player gains a one-time "Combo Shield"
@@ -5213,6 +5263,28 @@ class Game:
         # when multiple enemies enrage simultaneously.
         self._last_enrage_warning_time = -999.0
 
+        # ── Threat Proximity Pulse Ring ── A red ground ring at Zorp's feet
+        # that intensifies based on nearby enemy count. Lazily created on
+        # first need, then made visible/invisible based on threat level. The
+        # ring reuses the swarm_escape proximity check (same interval) to
+        # avoid a second per-frame enemy iteration — the nearby enemy count
+        # is stored and the ring update reads from it.
+        self.threat_ring = None             # Lazily created Entity
+        self.threat_nearby_count = 0        # Updated by swarm-escape check
+
+        # ── Combo Timer Ground Ring ── A thin gold ring on the ground around
+        # the player that depletes as the combo timer counts down, giving a
+        # glance-free visual countdown. Lazily created and made visible only
+        # when a combo is active (x2+).
+        self.combo_timer_ring = None        # Lazily created Entity
+
+        # ── Combo Milestone Rainbow Flash ── When a combo milestone is hit,
+        # a brief screen-edge flash in the milestone's tier color fires. The
+        # flash overlay entity is lazily created and the timer counts down.
+        self.combo_milestone_flash_timer = 0.0
+        self.combo_milestone_flash_entity = None  # Lazily created overlay quad
+        self._combo_milestone_flash_color = (255, 60, 60)  # Default red (tier 1)
+
         # Achievement system
         self.achievements = [Achievement(d) for d in Achievement.DEFINITIONS]
         self.achievement_popups = []  # list of (unlock_time, achievement) for display
@@ -6014,6 +6086,24 @@ class Game:
             if self.dash_cd_ring.enabled:
                 destroy(self.dash_cd_ring)
             self.dash_cd_ring = None
+
+        # Destroy threat proximity pulse ring
+        if hasattr(self, 'threat_ring') and self.threat_ring is not None:
+            if self.threat_ring.enabled:
+                destroy(self.threat_ring)
+            self.threat_ring = None
+
+        # Destroy combo timer ground ring
+        if hasattr(self, 'combo_timer_ring') and self.combo_timer_ring is not None:
+            if self.combo_timer_ring.enabled:
+                destroy(self.combo_timer_ring)
+            self.combo_timer_ring = None
+
+        # Destroy combo milestone flash overlay
+        if hasattr(self, 'combo_milestone_flash_entity') and self.combo_milestone_flash_entity is not None:
+            if self.combo_milestone_flash_entity.enabled:
+                destroy(self.combo_milestone_flash_entity)
+            self.combo_milestone_flash_entity = None
 
     def _build_terrain(self):
         """Build the 3D terrain from the world grid with height variation per biome.
@@ -8302,6 +8392,23 @@ class Game:
         else:
             self.berserk_flash.color = color.rgba(255, 30, 10, 0)
 
+        # ── Combo Milestone Rainbow Screen Flash ── Fade the milestone flash
+        # overlay over COMBO_MILESTONE_FLASH_DURATION seconds. The flash
+        # starts at COMBO_MILESTONE_FLASH_ALPHA and linearly fades to 0,
+        # giving a brief color pop that doesn't obscure gameplay. The color
+        # is set by _register_kill when the milestone is crossed and stored in
+        # _combo_milestone_flash_color.
+        if self.combo_milestone_flash_timer > 0:
+            self.combo_milestone_flash_timer -= time.dt
+            if self.combo_milestone_flash_entity is not None:
+                flash_prog = 1.0 - max(0, self.combo_milestone_flash_timer / COMBO_MILESTONE_FLASH_DURATION)
+                flash_a = int(COMBO_MILESTONE_FLASH_ALPHA * (1.0 - flash_prog))
+                fc = getattr(self, '_combo_milestone_flash_color', (255, 60, 60))
+                self.combo_milestone_flash_entity.color = color.rgba(fc[0], fc[1], fc[2], max(0, flash_a))
+        elif self.combo_milestone_flash_entity is not None:
+            fc = getattr(self, '_combo_milestone_flash_color', (255, 60, 60))
+            self.combo_milestone_flash_entity.color = color.rgba(fc[0], fc[1], fc[2], 0)
+
         # ── Combo Break Announcement ── Display a red "COMBO BROKEN!" text when
         # a combo of x3+ expires, using the same pop-in/hold/fade-out animation
         # pattern as the multi-kill announcement for visual consistency. The
@@ -9211,6 +9318,33 @@ class Game:
                     self._spawn_heal_pulse(p.position)
                     self.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
 
+        # ── Combo Milestone Rainbow Screen Flash ── When the effective combo
+        # (combo_count + 1) crosses a COMBO_MILESTONE_INTERVAL boundary (x5,
+        # x10, x15...), trigger a brief screen-edge flash in the milestone's
+        # tier color. The color cycles through COMBO_MILESTONE_FLASH_COLORS
+        # per tier so each milestone feels visually distinct — x5=red, x10=
+        # cyan, x15=gold, x20=purple, x25=green, x30=pink, then repeats. The
+        # flash is subtle (alpha ~40) and short (0.3s) so it doesn't obscure
+        # gameplay but adds a celebratory color pop at each milestone.
+        effective_combo_for_milestone = self.combo_count + 1
+        if effective_combo_for_milestone > 1 and effective_combo_for_milestone % COMBO_MILESTONE_INTERVAL == 0:
+            milestone_tier = effective_combo_for_milestone // COMBO_MILESTONE_INTERVAL
+            flash_color = COMBO_MILESTONE_FLASH_COLORS[(milestone_tier - 1) % len(COMBO_MILESTONE_FLASH_COLORS)]
+            self.combo_milestone_flash_timer = COMBO_MILESTONE_FLASH_DURATION
+            fr, fg, fb = _c255_color(flash_color)
+            self._combo_milestone_flash_color = (fr, fg, fb)
+            # Lazily create the flash overlay entity (full-screen quad on camera.ui)
+            if self.combo_milestone_flash_entity is None:
+                self.combo_milestone_flash_entity = Entity(
+                    parent=camera.ui,
+                    model='quad',
+                    color=color.rgba(fr, fg, fb, COMBO_MILESTONE_FLASH_ALPHA),
+                    scale=(2, 2),
+                    position=(0, 0),
+                    z=-0.1,
+                )
+            self.combo_milestone_flash_entity.color = color.rgba(fr, fg, fb, COMBO_MILESTONE_FLASH_ALPHA)
+
     def _chain_lightning(self, source_pos, combo_count):
         """Attempt to arc chain lightning from a killed enemy to nearby enemies.
 
@@ -9872,8 +10006,49 @@ def game_update():
             if dx * dx + dz * dz < SWARM_ESCAPE_RADIUS * SWARM_ESCAPE_RADIUS:
                 swarm_count += 1
         game.swarm_escape_active = swarm_count >= SWARM_ESCAPE_COUNT
+        # ── Threat Proximity Pulse Ring ── Store the nearby enemy count for
+        # the threat ring update below. We reuse this count instead of
+        # iterating the enemy list a second time, so the threat ring has
+        # zero additional performance cost.
+        game.threat_nearby_count = swarm_count
     if game.swarm_escape_active:
         effective_speed *= SWARM_ESCAPE_SPEED_MULT
+
+    # ── Threat Proximity Pulse Ring Update ── A red ground ring at Zorp's
+    # feet that intensifies (alpha, radius, pulse speed) based on how many
+    # enemies are within SWARM_ESCAPE_RADIUS. At 0 enemies it's invisible;
+    # at THREAT_RING_TRIGGER_COUNT it starts fading in; at THREAT_RING_MAX_COUNT
+    # it's at full intensity with a fast urgent pulse. This gives the player
+    # instant at-a-glance spatial awareness of danger density — you feel the
+    # heat of the crowd closing in without needing to look at the minimap.
+    # The ring reuses the swarm-escape check's enemy count (updated on an
+    # interval) so there's no additional per-frame iteration cost.
+    if game.threat_nearby_count >= THREAT_RING_TRIGGER_COUNT:
+        if game.threat_ring is None:
+            game.threat_ring = Entity(
+                model='quad',
+                color=color.rgba(255, 40, 40, THREAT_RING_BASE_ALPHA),
+                scale=THREAT_RING_BASE_RADIUS * 2,
+                position=(p.x, 0.04, p.z),
+                rotation_x=90,
+            )
+        game.threat_ring.visible = True
+        game.threat_ring.position = (p.x, 0.04, p.z)
+        # Threat level: 0 at trigger count, 1 at max count
+        threat_t = min(1.0, (game.threat_nearby_count - THREAT_RING_TRIGGER_COUNT) /
+                       max(1, THREAT_RING_MAX_COUNT - THREAT_RING_TRIGGER_COUNT))
+        # Pulse: slow at low threat, fast at high threat
+        pulse_speed = THREAT_RING_PULSE_SPEED_BASE + (THREAT_RING_PULSE_SPEED_MAX - THREAT_RING_PULSE_SPEED_BASE) * threat_t
+        pulse = 0.5 + 0.5 * math.sin(game.t * pulse_speed)
+        # Alpha and radius scale with threat level and pulse
+        base_alpha = THREAT_RING_BASE_ALPHA + (THREAT_RING_MAX_ALPHA - THREAT_RING_BASE_ALPHA) * threat_t
+        ring_alpha = int(base_alpha * (0.6 + 0.4 * pulse))
+        ring_radius = THREAT_RING_BASE_RADIUS + (THREAT_RING_MAX_RADIUS - THREAT_RING_BASE_RADIUS) * threat_t
+        ring_radius *= (1.0 + 0.08 * pulse)  # Subtle pulse on the radius too
+        game.threat_ring.color = color.rgba(255, 40, 40, ring_alpha)
+        game.threat_ring.scale = (ring_radius * 2, 1, ring_radius * 2)
+    elif game.threat_ring is not None and game.threat_ring.visible:
+        game.threat_ring.visible = False
 
     # ── Level-Up Speed Burst ── A brief movement speed surge after leveling up,
     # making each level feel empowering — you literally surge with energy. The
@@ -10665,6 +10840,52 @@ def game_update():
     # Now it's only decremented here in game_update().
     if game.combo_display_timer > 0:
         game.combo_display_timer -= time.dt
+
+    # ── Combo Timer Ground Ring ── A thin gold ring on the ground around the
+    # player that depletes (shrinks and dims) as the combo timer counts down,
+    # giving a glance-free visual countdown of how much time remains to
+    # maintain the current combo. The ring is only visible when a combo is
+    # active (combo_count >= 2 and combo_timer > 0). When the combo timer is
+    # nearly expired (< COMBO_TIMER_RING_LOW_THRESHOLD seconds), the ring
+    # shifts from gold to red and dims further to communicate urgency —
+    # "your combo is about to break, get a kill NOW!" The ring scales from
+    # COMBO_TIMER_RING_MAX_RADIUS (full timer) to COMBO_TIMER_RING_MIN_RADIUS
+    # (nearly expired), so it visually "shrinks" as time runs out.
+    if game.combo_count >= 2 and game.combo_timer > 0:
+        if game.combo_timer_ring is None:
+            game.combo_timer_ring = Entity(
+                model='quad',
+                color=color.rgba(255, 215, 50, COMBO_TIMER_RING_ALPHA),
+                scale=(COMBO_TIMER_RING_MAX_RADIUS * 2, 1, COMBO_TIMER_RING_MAX_RADIUS * 2),
+                position=(p.x, 0.035, p.z),
+                rotation_x=90,
+            )
+        game.combo_timer_ring.visible = True
+        game.combo_timer_ring.position = (p.x, 0.035, p.z)
+        # Progress: 1.0 = full timer, 0.0 = nearly expired
+        timer_progress = max(0, game.combo_timer / COMBO_TIMEOUT)
+        # Radius shrinks from max to min as timer depletes
+        ring_r = COMBO_TIMER_RING_MIN_RADIUS + (COMBO_TIMER_RING_MAX_RADIUS - COMBO_TIMER_RING_MIN_RADIUS) * timer_progress
+        # Low-time urgency: shift color toward red and dim alpha when < threshold
+        if game.combo_timer < COMBO_TIMER_RING_LOW_THRESHOLD:
+            urgency = 1.0 - (game.combo_timer / COMBO_TIMER_RING_LOW_THRESHOLD)
+            # Lerp from gold to red
+            r = int(255 + (255 - 255) * urgency)  # stays 255
+            g = int(215 + (80 - 215) * urgency)
+            b = int(50 + (80 - 50) * urgency)
+            alpha = int(COMBO_TIMER_RING_ALPHA + (COMBO_TIMER_RING_LOW_ALPHA - COMBO_TIMER_RING_ALPHA) * urgency)
+            # Faster pulse when about to expire for urgency
+            urgency_pulse = 0.5 + 0.5 * math.sin(game.t * 12.0)
+            alpha = int(alpha * (0.5 + 0.5 * urgency_pulse))
+            game.combo_timer_ring.color = color.rgba(r, g, b, max(0, alpha))
+        else:
+            # Normal gold with a gentle breathing pulse
+            breath = 0.5 + 0.5 * math.sin(game.t * 5.0)
+            alpha = int(COMBO_TIMER_RING_ALPHA * (0.7 + 0.3 * breath))
+            game.combo_timer_ring.color = color.rgba(255, 215, 50, alpha)
+        game.combo_timer_ring.scale = (ring_r * 2, 1, ring_r * 2)
+    elif game.combo_timer_ring is not None and game.combo_timer_ring.visible:
+        game.combo_timer_ring.visible = False
 
     # Multi-Kill timer — counts down the window for chaining rapid kills
     if game.multi_kill_timer > 0:

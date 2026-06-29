@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.35.1 — 3D!)
+## Features (v2.36.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -428,6 +428,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.36.0 — Threat Proximity Ring, Combo Timer Ground Ring & Combo Milestone Rainbow Flash
+- **Threat Proximity Pulse Ring**: A red ground ring now appears at Zorp's feet when 3+ enemies are nearby, intensifying in alpha, radius, and pulse speed as more enemies close in. At 3 enemies it's a faint slow pulse; at 10+ enemies it's a bright, fast, urgent red ring screaming "you're surrounded!" This gives the player instant at-a-glance spatial awareness of danger density without needing to look at the minimap — you feel the heat of the mob closing in through your peripheral vision. The ring reuses the existing swarm-escape proximity check's enemy count (updated on a 0.25s interval) so there's zero additional per-frame iteration cost. Previously, the only indication of being surrounded was a small HUD text indicator; now there's a visceral ground-level visual that communicates threat through size, brightness, and pulse urgency
+- **Combo Timer Ground Ring**: A thin gold ring on the ground around the player now depletes (shrinks and dims) as the combo timer counts down, giving a glance-free visual countdown of how much time remains to maintain the current combo. The ring starts at full radius with a gentle gold breathing pulse when the combo is fresh, then shrinks toward a minimum radius as the timer runs out. When the combo is about to expire (< 2 seconds), the ring shifts from gold to red and pulses faster to communicate urgency — "your combo is about to break, get a kill NOW!" The ring only appears when a combo of x2+ is active and disappears when the combo breaks. Previously, players had to watch the HUD combo bar to know how much combo time remained; now the countdown is visible on the ground right at Zorp's feet, letting players keep their eyes on the action
+- **Combo Milestone Rainbow Screen Flash**: Each combo milestone (x5, x10, x15, x20...) now triggers a brief screen-edge color flash in a distinct color that cycles through a 6-color rainbow palette per tier — x5=red, x10=cyan, x15=gold, x20=purple, x25=green, x30=pink, then repeats. This makes each milestone tier feel visually unique and celebratory instead of all milestones looking the same. The flash is subtle (alpha ~40) and short (0.3s) so it doesn't obscure gameplay but adds a satisfying color pop that communicates "you hit a new tier." The color is triggered centrally in `_register_kill()` so it fires for every kill type (projectile, dash strike, AOE, pulse wave, Void Bomber friendly-fire) without duplicating code at each kill site. Previously, combo milestones only had a generic particle burst and text announcement; now each tier has its own color identity, making progression through milestone tiers more visually rewarding
 
 ### v2.35.1 — Pickup Streak Celebration, Size-Scaled Separation & Spread Shot Fan Offset
 - **Pickup streak milestone celebration**: Hitting a pickup streak milestone (every 5 rapid pickups) now triggers a full celebration: a larger 18-particle mint-cyan burst, a small screen shake, and a floating golden "✦+N XP" damage number above Zorp — matching the polish standard of the flawless streak and combo milestone celebrations. Previously the milestone only had a text message and a tiny 10-particle puff that was easy to miss. Now reaching x5, x10, x15 pickup streaks feels like a genuine reward moment with tangible visual feedback, making item-gathering runs more satisfying and giving players a clear sense of progression momentum
