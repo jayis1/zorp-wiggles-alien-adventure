@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.37.0"
+VERSION = "2.37.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -389,7 +389,24 @@ MUZZLE_RING_START_SCALE = 0.4      # Starting scale of the muzzle ring
 MUZZLE_RING_MAX_SCALE = 1.8        # Max scale the muzzle ring reaches
 MUZZLE_RING_ALPHA = 90             # Starting alpha of the muzzle ring
 
-# ─── Projectile Glow Aura ──────────────────────────────────────────────────────
+# ─── Collectible XP Level Scaling ──────────────────────────────────────────────
+# Collectible XP is normally flat (item.value // 10), which makes collection
+# increasingly irrelevant at higher levels when XP requirements grow
+# exponentially. A small per-level bonus keeps item-gathering rewarding
+# throughout the game without making it overpowered — at level 10 you get
+# +1 XP per pickup, at level 20 +2, etc. The bonus is linear and modest so
+# it supplements (not replaces) kill XP as a progression source.
+COLLECT_XP_LEVEL_BONUS_PER_LEVEL = 0.1  # Bonus XP per player level per collectible
+
+# ─── Smooth Player Facing Rotation ──────────────────────────────────────────────
+# The player model currently snaps instantly to face the mouse cursor via
+# look_at_2d. While the facing *vector* updates instantly (so shooting is
+# always accurate), the visual model rotation now smoothly interpolates toward
+# the target angle — matching the smooth rotation already used by enemies. This
+# makes Zorp feel more organic and alive as he turns, rather than snapping like
+# a turret. The turn speed is high enough that aim feels responsive but low
+# enough that you see the model actually rotating.
+PLAYER_TURN_SPEED = 25.0  # Degrees per second for smooth model rotation toward aim
 PROJECTILE_AURA_COLOR = color.rgba(0, 255, 255, 60)   # Soft cyan glow around projectiles
 PROJECTILE_AURA_SCALE = 1.8                           # Aura sphere scale multiplier (relative to projectile)
 # ─── Projectile Impact Flash ──────────────────────────────────────────────────
@@ -410,6 +427,16 @@ PROJECTILE_IMPACT_FLASH_COLOR = color.rgba(255, 255, 240, 220)  # Bright warm-wh
 # the air — a simple but dramatic visual upgrade to the core combat feel.
 PROJECTILE_BOLT_LENGTH = 2.2   # Scale multiplier along travel direction (elongated)
 PROJECTILE_BOLT_WIDTH = 0.7    # Scale multiplier perpendicular to travel (slightly compressed)
+# ── Projectile Spawn Scale-In ── When a projectile is first fired, it briefly
+# scales up from a small size to full size over PROJECTILE_SPAWN_IN_DURATION
+# seconds. This makes shots feel like they're being *launched* from the muzzle
+# instead of just popping into existence at full size — a subtle "juice" touch
+# that adds a sense of emergence and momentum to the very first frames of each
+# shot. The scale-in uses an ease-out curve so the bolt snaps up quickly then
+# settles, matching the snappy shooting feel. The effect is very brief (0.05s)
+# so it doesn't affect gameplay or aim perception.
+PROJECTILE_SPAWN_IN_DURATION = 0.05  # How long the scale-in animation lasts (seconds)
+PROJECTILE_SPAWN_IN_START = 0.4      # Starting scale multiplier (0.4 = 40% of full size)
 # Combo-scaling aura: as the combo grows, the projectile aura pulses faster and
 # brighter — the laser visually "charges up" during kill streaks, making high
 # combos feel more powerful and giving immediate visual feedback that you're on
@@ -2911,13 +2938,26 @@ class Player(Entity):
             self.rotation_z = 0.0
 
     def set_facing_from_mouse(self, cam_pivot):
-        """Point the alien toward where the mouse ray hits the ground."""
+        """Point the alien toward where the mouse ray hits the ground.
+
+        Updates the facing vector instantly for accurate shooting, but
+        smoothly interpolates the model rotation toward the aim direction
+        for a more organic turning feel.
+        """
         hit_info = mouse.world_point
         if hit_info:
             direction = Vec3(hit_info.x - self.x, 0, hit_info.z - self.z)
             if direction.length() > 0.1:
                 self.facing = direction.normalized()
-                self.look_at_2d(Vec3(hit_info.x, self.y, hit_info.z))
+                # Smooth rotation toward aim (matching the game_update path)
+                target_angle = math.degrees(math.atan2(direction.x, direction.z))
+                current = self.rotation_y
+                diff = (target_angle - current + 180) % 360 - 180
+                max_turn = PLAYER_TURN_SPEED * time.dt
+                if abs(diff) < max_turn:
+                    self.rotation_y = target_angle
+                else:
+                    self.rotation_y = current + max_turn * (1 if diff > 0 else -1)
 
 
 # ─── Enemy ─────────────────────────────────────────────────────────────────────
@@ -3357,7 +3397,7 @@ class Enemy(Entity):
         # phase variation so multiple low-HP enemies don't pulse in sync.
         if ratio < ENEMY_LOW_HP_THRESHOLD and ratio > 0:
             pulse = 0.5 + 0.5 * math.sin(
-                time.t * ENEMY_LOW_HP_PULSE_SPEED + id(self) % 100 * 0.1
+                time.t * ENEMY_LOW_HP_PULSE_SPEED + (id(self) % 628) / 100.0
             )
             # Bright red pulse color (overrides the normal gradient)
             self.hp_bar.color = color.rgb(255, int(30 * (1 - pulse)), int(30 * (1 - pulse)))
@@ -3426,7 +3466,7 @@ class Enemy(Entity):
         # at the very end as the enemy dissolves). Uses a sine wobble with a
         # per-enemy random phase offset so group kills don't wobble in sync.
         tilt_amp = DEATH_TILT_MAX * math.sin(progress * math.pi)  # 0→max→0 over lifetime
-        wobble_phase = id(self) % 100 * 0.1
+        wobble_phase = (id(self) % 628) / 100.0
         self.rotation_x = tilt_amp * math.sin(time.t * DEATH_TILT_WOBBLE_SPEED + wobble_phase)
         self.rotation_z = tilt_amp * math.cos(time.t * DEATH_TILT_WOBBLE_SPEED + wobble_phase * 1.3)
         # Flash between white and original color, dissolving at end
@@ -4761,6 +4801,13 @@ class Projectile(Entity):
         # Trail spawning timer
         self.trail_timer = 0.0
 
+        # ── Projectile Spawn Scale-In ── Brief scale-up from small to full
+        # size over the first few frames, making the shot feel *launched* from
+        # the muzzle instead of popping in at full size. The timer counts down
+        # from PROJECTILE_SPAWN_IN_DURATION to 0; while > 0, the bolt's scale
+        # is multiplied by an ease-out factor from PROJECTILE_SPAWN_IN_START to 1.0.
+        self.spawn_in_timer = PROJECTILE_SPAWN_IN_DURATION
+
         # ── Critical Hit Pierce ── When a crit triggers a pierce, this set
         # tracks which enemies the projectile has already passed through so
         # it doesn't hit the same enemy twice. is_piercing is set to True
@@ -4780,6 +4827,25 @@ class Projectile(Entity):
         """
         self.position += self.direction * self.speed * dt
         self.lifetime -= dt
+        # ── Projectile Spawn Scale-In ── During the first few frames, scale
+        # the bolt up from a small size to full size with an ease-out curve.
+        # This makes the shot feel *launched* from the muzzle — you see the
+        # bolt emerge and grow as it departs, adding a sense of momentum and
+        # emergence to each shot. The effect is very brief so it doesn't
+        # affect collision or aim perception.
+        if self.spawn_in_timer > 0:
+            self.spawn_in_timer -= dt
+            if self.spawn_in_timer < 0:
+                self.spawn_in_timer = 0
+            spawn_progress = 1.0 - (self.spawn_in_timer / PROJECTILE_SPAWN_IN_DURATION)
+            # Ease-out: snaps up fast then settles
+            ease = 1.0 - (1.0 - spawn_progress) ** 2
+            spawn_mult = PROJECTILE_SPAWN_IN_START + (1.0 - PROJECTILE_SPAWN_IN_START) * ease
+            self.scale = Vec3(
+                PROJECTILE_BOLT_WIDTH * spawn_mult,
+                PROJECTILE_BOLT_WIDTH * spawn_mult,
+                PROJECTILE_BOLT_LENGTH * spawn_mult,
+            )
         # Combo-scaling aura: pulse faster and grow larger at high combos
         combo_t = max(0.0, min(1.0, (combo_count - PROJECTILE_AURA_COMBO_TIER) / 10.0))
         pulse_speed = lerp(PROJECTILE_AURA_PULSE_SPEED_BASE, PROJECTILE_AURA_PULSE_SPEED_MAX, combo_t)
@@ -11271,12 +11337,25 @@ def game_update():
             p._trail_accumulator = 0.0
 
     # Face mouse
+    # ── Smooth Player Facing ── The facing *vector* updates instantly (so
+    # shooting direction is always accurate to the cursor), but the model's
+    # visual rotation smoothly interpolates toward the target angle — matching
+    # the smooth rotation already used by enemies. This makes Zorp feel more
+    # organic and alive as he turns, rather than snapping like a turret.
     hit = mouse.world_point
     if hit:
         face_dir = Vec3(hit.x - p.x, 0, hit.z - p.z)
         if face_dir.length() > 0.1:
             p.facing = face_dir.normalized()
-            p.look_at_2d(Vec3(hit.x, p.y, hit.z))
+            # Smooth model rotation toward the aim direction
+            target_angle = math.degrees(math.atan2(face_dir.x, face_dir.z))
+            current = p.rotation_y
+            diff = (target_angle - current + 180) % 360 - 180
+            max_turn = PLAYER_TURN_SPEED * time.dt
+            if abs(diff) < max_turn:
+                p.rotation_y = target_angle
+            else:
+                p.rotation_y = current + max_turn * (1 if diff > 0 else -1)
 
     # Bob animation
     p.animate_bob(game.t)
@@ -11822,7 +11901,7 @@ def game_update():
                 # red aura sphere pulses in alpha and scale so enraged enemies
                 # are immediately identifiable and feel dangerous at a glance.
                 if hasattr(enemy, 'enrage_aura') and enemy.enrage_aura and enemy.enrage_aura.visible:
-                    aura_pulse = 0.5 + 0.5 * math.sin(game.t * 8.0 + id(enemy) % 100 * 0.1)
+                    aura_pulse = 0.5 + 0.5 * math.sin(game.t * 8.0 + (id(enemy) % 628) / 100.0)
                     enemy.enrage_aura.color = color.rgba(
                         255, int(30 + 40 * aura_pulse), int(30 + 40 * aura_pulse),
                         int(ENRAGE_AURA_ALPHA * (0.6 + 0.4 * aura_pulse))
@@ -12761,7 +12840,12 @@ def game_update():
             # breathe in and out (subtle scale oscillation) so the world feels
             # alive instead of populated with frozen statues. Only applies to
             # idle, non-aggroed, non-hit enemies within visual range.
-            breath = 1.0 + 0.04 * math.sin(game.t * 1.8 + id(enemy) % 100 * 0.01)
+            # ── Full-Range Phase Variation ── The phase offset now covers the
+            # full 2π range (was only ~0-1 radian), so groups of idle enemies
+            # breathe at completely different points in their cycle — some
+            # inhaling while others exhale. This makes clusters of idle enemies
+            # look organic and unsynchronized rather than breathing in unison.
+            breath = 1.0 + 0.04 * math.sin(game.t * 1.8 + (id(enemy) % 628) / 100.0)
             enemy.scale = enemy.original_scale * breath
         elif dist_to_player < VISUAL_CULL_RANGE and enemy.alerted and enemy.alive and not enemy.dying and not getattr(enemy, '_spit_charge_active', False):
             # ── Combat Breathing ── Aggroed enemies that are actively chasing
@@ -12774,7 +12858,7 @@ def game_update():
             # active so it composes cleanly with those higher-priority effects.
             if not enemy._attack_windup_active:
                 breath = 1.0 + ENEMY_COMBAT_BREATHE_AMOUNT * math.sin(
-                    game.t * ENEMY_COMBAT_BREATHE_SPEED + id(enemy) % 100 * 0.07)
+                    game.t * ENEMY_COMBAT_BREATHE_SPEED + (id(enemy) % 628) / 100.0)
                 enemy.scale = enemy.original_scale * breath
 
         # ── Alert "!" Indicator Update ── Track the enemy's position and fade
@@ -14187,7 +14271,14 @@ def game_update():
                 elif game.pickup_streak >= PICKUP_STREAK_SCORE_TIER1:
                     pickup_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
                 p.score += int(col.value * pickup_score_mult)
-                collect_xp = max(1, col.value // 10)
+                # ── Collectible XP Level Scaling ── A small per-level bonus is
+                # added to the base collectible XP so item-gathering stays
+                # rewarding at higher levels (when XP requirements grow
+                # exponentially). At level 1 the bonus is negligible (+0.1);
+                # at level 10 it adds +1 XP per pickup; at level 20 +2. This
+                # keeps collection relevant as a supplementary XP source without
+                # making it overpowered compared to kill XP.
+                collect_xp = max(1, col.value // 10 + int(p.level * COLLECT_XP_LEVEL_BONUS_PER_LEVEL))
                 p.gain_xp(collect_xp)
                 # ── Collectible XP Floating Number ── A small floating "+N"
                 # number in the item's color appears above Zorp on pickup so
@@ -14227,7 +14318,7 @@ def game_update():
                 elif game.pickup_streak >= PICKUP_STREAK_SCORE_TIER1:
                     p_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
                 p.score += int(col.value * p_score_mult)
-                p.gain_xp(max(1, col.value // 10))
+                p.gain_xp(max(1, col.value // 10 + int(p.level * COLLECT_XP_LEVEL_BONUS_PER_LEVEL)))
             # Start pop animation instead of immediate destroy
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION
