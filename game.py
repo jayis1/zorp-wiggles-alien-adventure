@@ -4719,7 +4719,11 @@ class EnemyProjectile(Entity):
         # Pulse the aura brightness so the projectile visibly glows
         self._aura_phase += dt * ENEMY_PROJECTILE_AURA_PULSE_SPEED
         pulse = 0.5 + 0.5 * math.sin(self._aura_phase)
-        a = max(20, min(255, int(self.aura_base_alpha * (0.5 + 0.5 * pulse))))
+        # BUG FIX: Previously alpha was multiplied by (0.5 + 0.5 * pulse),
+        # but pulse is already 0..1 — so the multiplier only ranged 0.5-1.0,
+        # collapsing the pulse to a barely-visible 25-50 alpha range.
+        # Now use the full 0.4-1.0 range for a visible pulsing effect.
+        a = max(20, min(255, int(self.aura_base_alpha * (0.4 + 0.6 * pulse))))
         r, g, b = _c255_color(ENEMY_PROJECTILE_AURA_COLOR)
         self.aura.color = color.rgba(r, g, b, a)
         # Accumulate trail timer — the caller reads this to spawn trail dots
@@ -4849,6 +4853,13 @@ class DamageNumber:
         self.popin_timer = DMG_NUMBER_POPIN_DURATION
         self._base_text_scale = DMG_NUMBER_SCALE * scale_factor * 0.7
         self._base_bg_scale = 0.6 * scale_factor
+        # BUG FIX: Store the bg_dot's category color so update() can preserve it
+        # instead of hardcoding white every frame (which overrode the colored
+        # tint set in __init__, making all bg_dots appear white regardless of
+        # the damage category — heal=green, flawless=gold, overkill=red, etc.)
+        self._bg_r = cr
+        self._bg_g = cg
+        self._bg_b = cb
         # Start at the pop-in starting scale
         self.text_ent.scale = self._base_text_scale * DMG_NUMBER_POPIN_START_SCALE
         self.bg_dot.scale = self._base_bg_scale * DMG_NUMBER_POPIN_START_SCALE
@@ -4915,7 +4926,10 @@ class DamageNumber:
             self.text_ent.color = color.rgba(255, 200, 0, int(255 * alpha))
         else:
             self.text_ent.color = color.rgba(255, 255, 255, int(255 * alpha))
-        self.bg_dot.color = color.rgba(255, 255, 255, int(80 * alpha))
+        # BUG FIX: Preserve the bg_dot's category color (stored in __init__)
+        # instead of hardcoding white — so heal numbers get a green bg_dot,
+        # flawless gets gold, overkill gets red, etc.
+        self.bg_dot.color = color.rgba(self._bg_r, self._bg_g, self._bg_b, int(80 * alpha))
         if self.lifetime <= 0:
             self.alive = False
             return True
@@ -5402,10 +5416,14 @@ class Game:
             for seg in range(8):
                 seg_width = world_span / 8
                 seg_z = seg_width / 2 + seg * seg_width
+                # BUG FIX: East/West barriers had swapped scale dimensions —
+                # (WORLD_EDGE_BARRIER_HEIGHT, seg_width) made them wide and short
+                # instead of thin and tall. Now matches N/S barrier orientation:
+                # seg_width on X (runs along Z), height on Y (tall wall).
                 barrier = Entity(
                     model='quad',
                     color=color.rgba(100, 60, 200, WORLD_EDGE_BARRIER_ALPHA),
-                    scale=(WORLD_EDGE_BARRIER_HEIGHT, seg_width),
+                    scale=(seg_width, WORLD_EDGE_BARRIER_HEIGHT),
                     position=(edge_x, barrier_y, seg_z),
                     billboard=False,
                 )
@@ -8141,8 +8159,15 @@ class Game:
                 self.combo_text.visible = False
         else:
             self.combo_text.visible = False
-            if self.combo_count > 0:
-                self.combo_count = 0
+            # BUG FIX: Do NOT reset combo_count here. The combo_display_timer
+            # (COMBO_DISPLAY_LIFETIME = 2.5s) is only a DISPLAY timer — it
+            # controls how long the combo text is visible. The actual combo
+            # lifetime is governed by combo_timer (COMBO_TIMEOUT = 5.0s),
+            # which is decremented and reset in game_update(). Resetting
+            # combo_count here prematurely killed the combo (and its damage
+            # buff + XP bonus) 2.5s before the actual combo timeout.
+            # combo_count is now properly reset only in game_update() when
+            # combo_timer expires (line ~10593).
 
         # Combo timer bar update — visual indicator of time remaining before combo resets
         if self.combo_count >= 2 and self.combo_display_timer > 0:
@@ -8591,7 +8616,13 @@ class Game:
                 arrow_ent.scale = 2.0 * pulse
                 new_indicators.append((arrow_ent, dmg_dir, remaining))
             else:
-                arrow_ent.color = color.rgba(255, 50, 50, 0)
+                # BUG FIX: Check if a spawn indicator is also using this arrow
+                # before hiding it. Without this check, expiring a damage
+                # indicator could prematurely hide an active spawn indicator
+                # sharing the same arrow entity.
+                spawn_using = any(s[0] is arrow_ent for s in self.spawn_indicators)
+                if not spawn_using:
+                    arrow_ent.color = color.rgba(255, 50, 50, 0)
         self.damage_indicators = new_indicators
         # Show the most recent achievement popup for ACHIEVEMENT_POPUP_DURATION seconds
         # BUG FIX: Prune expired popups so the list doesn't grow unbounded over long
@@ -12742,6 +12773,11 @@ def game_update():
                         destroy(proj)
                         if proj in game.projectiles:
                             game.projectiles.remove(proj)
+                        # BUG FIX: Must break here to exit the enemy loop.
+                        # Without this, execution falls through to the
+                        # out-of-world check (line ~12976) which accesses
+                        # proj.x/.z on the already-destroyed entity.
+                        break
                     else:
                         # Continue piercing — handle kill without destroying
                         if killed:
@@ -14402,6 +14438,12 @@ def game_update():
                 game._spawn_heal_pulse(p.position)
                 # Show a green healing number so the player sees the heal value
                 game.damage_numbers.append(DamageNumber(p.position, heal_amt, is_heal=True))
+    else:
+        # BUG FIX: Reset the heal tick when the player leaves the spawn heal
+        # zone or is at full HP. Without this, the accumulated tick value
+        # persisted — on re-entry, the first heal tick could fire much
+        # earlier than the intended 1-second interval.
+        game._spawn_heal_tick = 0.0
 
     # ── Spawn Heal Zone Ring Pulse ──
     if hasattr(game, 'spawn_heal_ring') and game.spawn_heal_ring:
