@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.36.0"
+VERSION = "2.36.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -240,6 +240,15 @@ ENEMY_HIT_RIPPLE_DURATION = 0.5       # How long the expanding impact ring lasts
 ENEMY_HIT_RIPPLE_EXPAND_SPEED = 8.0   # How fast the impact ring expands
 ENEMY_HIT_RIPPLE_MAX_SCALE = 3.0      # Maximum scale the impact ring reaches
 ENEMY_HIT_RIPPLE_START_SCALE = 0.3    # Starting scale of the impact ring
+# ── Damage-Scaled Hit Particles ── The number of hit particles spawned on a
+# projectile hit now scales logarithmically with the damage dealt — a 20-damage
+# shot produces the base count while an 80-damage crit spawns up to 50% more
+# particles. This makes heavy hits (high-level crits, combo buffed shots, etc.)
+# visually more impactful than light hits, adding a satisfying weight scaling
+# to combat feedback. The scaling is logarithmic so it doesn't explode into
+# screen-filling particle storms on high-damage hits.
+ENEMY_HIT_PARTICLE_DAMAGE_SCALE = 0.5  # Max fractional bonus particles at very high damage
+ENEMY_HIT_PARTICLE_DAMAGE_REF = 20    # Reference damage for baseline particle count
 # ─── Enemy Hit Flash Tint ────────────────────────────────────────────────────
 # On hit, enemies flash a brightened version of their OWN color instead of pure
 # white. This produces cohesive, target-tinted feedback — hitting a Lava Crawler
@@ -272,6 +281,16 @@ ENRAGE_SPEED_MULT = 1.35           # Speed multiplier while enraged
 ENRAGE_COLOR_MIX = 0.6              # How far to lerp toward red (0=own color, 1=full red)
 ENRAGE_PARTICLE_INTERVAL = 0.4     # Seconds between rage particle emissions
 ENRAGE_PARTICLE_COUNT = 3          # Particles per emission
+# ── Desperation-Scaled Rage Particles ── As an enraged enemy's HP drops from
+# 25% toward 0%, its rage particle emission rate accelerates and the count per
+# emission increases — making the enemy look increasingly desperate and
+# dangerous as it nears death. At 25% HP the interval is the base value and
+# count is the base; at near-0% HP the interval shrinks to half and the count
+# doubles. This creates a visible escalation of fury that makes finishing off
+# an enraged enemy feel urgent and rewarding — the enemy is visibly losing
+# control as it dies.
+ENRAGE_DESPERATION_INTERVAL_MULT = 0.5   # Particle interval at near-0 HP (half the base)
+ENRAGE_DESPERATION_COUNT_MULT = 2.0     # Particle count multiplier at near-0 HP
 ENRAGE_AURA_ALPHA = 50            # Alpha of the persistent red aura while enraged
 ENRAGE_AURA_SCALE = 1.4           # Scale multiplier for the enrage aura sphere
 
@@ -1631,6 +1650,14 @@ PULSE_WAVE_COOLDOWN = 8.0            # Cooldown between pulse wave uses
 PULSE_WAVE_RADIUS = 10.0             # How far the shockwave reaches
 PULSE_WAVE_EXPAND_SPEED = 25.0       # How fast the ring expands outward
 PULSE_WAVE_PUSH_FORCE = 18.0        # How strongly enemies are pushed away
+# ── Proximity-Scaled Knockback ── The knockback force now scales with how close
+# the enemy is to Zorp when the wave hits them. Enemies right next to Zorp get
+# blasted with full force, while enemies at the wave's edge get a gentler nudge.
+# This creates a more satisfying "shockwave" feel where using Pulse Wave in a
+# clutch moment (surrounded by enemies) actually launches nearby threats away
+# hard, while distant enemies just get disrupted. The falloff is linear from
+# 1.0× at point-blank to PULSE_WAVE_KNOCKBACK_EDGE_MULT at max range.
+PULSE_WAVE_KNOCKBACK_EDGE_MULT = 0.4  # Knockback multiplier at the wave's edge (40%)
 PULSE_WAVE_DAMAGE = 10              # Moderate base damage dealt by the wave — rewards using it as a finisher
 PULSE_WAVE_LEVEL_DAMAGE_BONUS = 1.5 # Extra damage per player level — keeps Pulse Wave relevant in late game
 # Without this scaling the flat 10 damage becomes irrelevant once enemies have 100+ HP,
@@ -11675,10 +11702,23 @@ def game_update():
                 # Periodic red rage particles while enraged
                 if dist_to_player < VISUAL_CULL_RANGE:
                     enemy.enrage_particle_timer -= time.dt
+                    # ── Desperation-Scaled Rage Particles ── As the enraged
+                    # enemy's HP drops from 25% toward 0%, its rage particle
+                    # emission accelerates (shorter interval) and each emission
+                    # spawns more particles — making the enemy look increasingly
+                    # desperate and out of control as it nears death. At 25% HP
+                    # the interval/count are at base values; at near-0% HP the
+                    # interval is halved and the count is doubled. This creates
+                    # a visible escalation of fury that makes finishing off an
+                    # enraged enemy feel urgent and rewarding.
+                    hp_ratio_enraged = max(0.0, enemy.hp / enemy.max_hp) if enemy.max_hp > 0 else 0
+                    desperation_t = 1.0 - min(1.0, hp_ratio_enraged / ENRAGE_HP_THRESHOLD)
+                    effective_interval = ENRAGE_PARTICLE_INTERVAL * (1.0 - (1.0 - ENRAGE_DESPERATION_INTERVAL_MULT) * desperation_t)
                     if enemy.enrage_particle_timer <= 0:
-                        enemy.enrage_particle_timer = ENRAGE_PARTICLE_INTERVAL
+                        enemy.enrage_particle_timer = effective_interval
+                        effective_count = int(ENRAGE_PARTICLE_COUNT * (1.0 + (ENRAGE_DESPERATION_COUNT_MULT - 1.0) * desperation_t))
                         game._spawn_particles(enemy.position + Vec3(0, 0.5, 0),
-                                              color.rgb(255, 30, 30), count=ENRAGE_PARTICLE_COUNT)
+                                              color.rgb(255, 30, 30), count=effective_count)
             direction = (p.position - enemy.position).normalized()
             direction.y = 0
             new_pos = enemy.position + direction * enemy.speed * speed_mult * time.dt
@@ -12754,9 +12794,19 @@ def game_update():
                     game._spawn_shrapnel(enemy.position, proj.direction, color.rgb(255, 220, 80))
                 else:
                     game._spawn_impact_flash(enemy.position)
+                # ── Damage-Scaled Hit Particles ── The particle count scales
+                # logarithmically with the damage dealt, so heavy hits (high-
+                # level crits, combo-buffed shots) produce visibly more particles
+                # than light hits. A 20-damage shot gets the base count; an
+                # 80-damage hit gets up to 50% more. The log scale prevents
+                # screen-filling storms on very high damage.
+                damage_particle_bonus = ENEMY_HIT_PARTICLE_DAMAGE_SCALE * min(
+                    1.0, math.log(max(1, damage) / ENEMY_HIT_PARTICLE_DAMAGE_REF) / math.log(4)
+                )
                 if is_crit:
                     # Critical hit: extra particles and bigger shake
-                    game._spawn_particles(enemy.position, color.rgb(255, 200, 0), count=PARTICLE_HIT_COUNT + 5)
+                    crit_particle_count = int((PARTICLE_HIT_COUNT + 5) * (1.0 + damage_particle_bonus))
+                    game._spawn_particles(enemy.position, color.rgb(255, 200, 0), count=crit_particle_count)
                     game.screen_shake = max(game.screen_shake, CRIT_SCREEN_SHAKE)
                     game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=False, is_crit=True))
                     # Brief hit-stop on crit for satisfying impact
@@ -12779,7 +12829,8 @@ def game_update():
                         min(255, (eg + 200) // 2),
                         (eb + 0) // 2,
                     )
-                    game._spawn_particles(enemy.position, blended, count=PARTICLE_HIT_COUNT)
+                    normal_particle_count = int(PARTICLE_HIT_COUNT * (1.0 + damage_particle_bonus))
+                    game._spawn_particles(enemy.position, blended, count=normal_particle_count)
                     # ── Impact Shrapnel Cone ── Enemy-tinted directional shrapnel
                     # bursts perpendicular to the shot direction, communicating
                     # the shot direction through the spread of debris.
@@ -13503,10 +13554,20 @@ def game_update():
                 push_dir = Vec3(enemy.x - pwr.x, 0, enemy.z - pwr.z)
                 if push_dir.length() > 0.01:
                     push_dir = push_dir.normalized()
+                    # ── Proximity-Scaled Knockback ── Enemies closer to Zorp get
+                    # blasted harder — full force at point-blank, tapering to
+                    # PULSE_WAVE_KNOCKBACK_EDGE_MULT at the wave's edge. This
+                    # makes using Pulse Wave while surrounded feel dramatically
+                    # more satisfying — nearby threats get launched away while
+                    # distant ones just get disrupted. The falloff is linear
+                    # from the wave origin to the wave's max radius.
+                    proximity_t = max(0.0, min(1.0, e_dist / PULSE_WAVE_RADIUS))
+                    knockback_mult = 1.0 - (1.0 - PULSE_WAVE_KNOCKBACK_EDGE_MULT) * proximity_t
+                    kb_force = PULSE_WAVE_PUSH_FORCE * knockback_mult
                     enemy.knockback_vel = Vec3(
-                        push_dir.x * PULSE_WAVE_PUSH_FORCE,
+                        push_dir.x * kb_force,
                         ENEMY_KNOCKBACK_UP * 0.7,  # Slightly less upward than projectile knockback
-                        push_dir.z * PULSE_WAVE_PUSH_FORCE,
+                        push_dir.z * kb_force,
                     )
                 # Deal damage with visual feedback — hit flash + damage number
                 # IMPROVED: Pulse Wave damage now scales with player level (like

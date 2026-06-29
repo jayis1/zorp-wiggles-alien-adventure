@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.36.0 — 3D!)
+## Features (v2.36.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -428,6 +428,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.36.1 — Damage-Scaled Hit Particles, Pulse Wave Proximity Knockback & Enrage Desperation Particles
+- **Damage-scaled hit particles**: The number of particles spawned when a projectile hits an enemy now scales logarithmically with the damage dealt — a 20-damage shot produces the base particle count while an 80-damage crit spawns up to 50% more. This makes heavy hits (high-level crits, combo-buffed shots, berserk mode, monolith damage buffs) visually more impactful than light hits, adding a satisfying weight scaling to combat feedback. A level-20 critical hit with a x10+ combo damage buff now erupts in a visibly larger particle burst than a level-1 peashooter shot, making power progression feel tangible through the visual density of each impact. The logarithmic scaling curve prevents screen-filling particle storms on very high damage values
+- **Pulse Wave proximity-scaled knockback**: The Pulse Wave ability's knockback force now scales with how close the enemy is to Zorp when the wave hits them. Enemies right next to Zorp get blasted with full force (1.0×), tapering linearly to 40% force at the wave's edge. This makes using Pulse Wave while surrounded feel dramatically more satisfying — nearby threats get launched away hard, creating real breathing room in clutch moments, while distant enemies at the wave's edge just get disrupted. Previously, every enemy hit by the wave received the same flat knockback regardless of distance, which made the shockwave feel uniform and less impactful as a panic button. Now the wave has a physical "blast radius" feel — you can feel the force radiating outward from Zorp
+- **Enrage desperation-scaled rage particles**: As an enraged enemy's HP drops from 25% (enrage threshold) toward 0%, its rage particle emission rate accelerates and each emission spawns more particles. At 25% HP the particle interval and count are at base values (0.4s interval, 3 particles); at near-0% HP the interval is halved (0.2s) and the count is doubled (6). This creates a visible escalation of fury — the enemy looks increasingly desperate and out of control as it nears death, making finishing off an enraged enemy feel urgent and rewarding. The enemy is visibly losing control, spewing rage faster and faster, which communicates "I'm about to die but I'm going down swinging!" This complements the existing enrage speed boost and red aura with a dynamic particle system that intensifies as the fight reaches its climax
 
 ### v2.36.0 — Threat Proximity Ring, Combo Timer Ground Ring & Combo Milestone Rainbow Flash
 - **Threat Proximity Pulse Ring**: A red ground ring now appears at Zorp's feet when 3+ enemies are nearby, intensifying in alpha, radius, and pulse speed as more enemies close in. At 3 enemies it's a faint slow pulse; at 10+ enemies it's a bright, fast, urgent red ring screaming "you're surrounded!" This gives the player instant at-a-glance spatial awareness of danger density without needing to look at the minimap — you feel the heat of the mob closing in through your peripheral vision. The ring reuses the existing swarm-escape proximity check's enemy count (updated on a 0.25s interval) so there's zero additional per-frame iteration cost. Previously, the only indication of being surrounded was a small HUD text indicator; now there's a visceral ground-level visual that communicates threat through size, brightness, and pulse urgency
