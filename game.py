@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.38.0"
+VERSION = "2.38.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -2190,6 +2190,48 @@ ENEMY_ATTACK_SPARK_LIFETIME = 0.30      # How long each spark lives (seconds)
 PROJ_SHRAPNEL_COUNT = 5                # Shrapnel particles per hit
 PROJ_SHRAPNEL_SPEED = 12.0             # How fast shrapnel flies outward
 PROJ_SHRAPNEL_LIFETIME = 0.25          # Shrapnel particle lifetime (seconds)
+
+# ─── Projectile Impact Glance Spark ──────────────────────────────────────────
+# On projectile hit, a brief thin bright "glance streak" shoots forward from
+# the impact point along the projectile's travel direction — like a ricochet
+# glance or spark skipping off the target. This adds a directional energy
+# streak that communicates the shot's momentum continuing through the hit,
+# complementing the existing omnidirectional particle burst and shrapnel cone
+# with a forward-pointing visual. Crits get a golden streak; normal hits get a
+# warm white streak. The streak is a thin elongated cube that scales and fades
+# quickly via animate_scale + animate_color, so no per-frame update is needed.
+PROJ_GLANCE_DURATION = 0.12        # How long the glance streak lasts (seconds)
+PROJ_GLANCE_LENGTH = 2.5           # Streak length along travel direction
+PROJ_GLANCE_WIDTH = 0.08           # Streak thickness (X/Z)
+PROJ_GLANCE_ALPHA = 200             # Starting alpha of the streak
+PROJ_GLANCE_CRIT_COLOR = color.rgba(255, 220, 80, PROJ_GLANCE_ALPHA)   # Gold for crits
+PROJ_GLANCE_HIT_COLOR = color.rgba(255, 240, 200, PROJ_GLANCE_ALPHA)  # Warm white for hits
+
+# ─── Enemy Death Color Bloom ──────────────────────────────────────────────────
+# On enemy death, a large gentle translucent sphere blooms outward from the
+# kill point in the enemy's own color, expanding far beyond the death flash
+# sphere and fading slowly. Unlike the existing death flash (which is small,
+# fast, and bright), the bloom is large, slow, and soft — a hazy color wash
+# that lingers briefly to give the death area visual weight and atmosphere.
+# This makes kills feel like they leave a temporary "energy stain" in the
+# world, making the battlefield feel alive with the aftermath of combat. The
+# bloom scales with enemy toughness so boss deaths produce a massive color
+# wash while small enemies produce a modest puff.
+ENEMY_DEATH_BLOOM_DURATION = 0.5   # How long the bloom sphere lasts (seconds)
+ENEMY_DEATH_BLOOM_BASE_SCALE = 2.0  # Starting scale multiplier on enemy scale
+ENEMY_DEATH_BLOOM_MAX_SCALE = 6.0   # Max scale multiplier the bloom expands to
+ENEMY_DEATH_BLOOM_ALPHA = 45        # Starting alpha of the bloom (translucent)
+
+# ─── Dash Afterimage Buff-Tinted Color ────────────────────────────────────────
+# Dash afterimages and trail particles normally use a fixed green color
+# matching Zorp's base alien color. When a power-up is active, the afterimages
+# now tint to match the active buff's color — so dashing with Shield active
+# leaves cyan ghosts, dashing with Speed Boost leaves green ghosts, dashing
+# with Berserk leaves red-orange ghosts, etc. This makes the dash feel
+# connected to the player's current power state, making power-ups feel more
+# integrated into the core movement feel. The tint is a subtle 60% blend so
+# the base green remains recognizable.
+DASH_AFTERIMAGE_TINT_BLEND = 0.6  # How far to lerp from green toward buff color
 
 # ─── Mission Progress Notification ───────────────────────────────────────────
 # When a kill or collection advances an active (not-yet-complete) mission, a
@@ -7707,6 +7749,53 @@ class Game:
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.5, 1.5)))
 
+    def _dash_afterimage_color(self):
+        """Return the buff-tinted color for dash afterimages and trail particles.
+
+        Dash afterimages normally use a fixed green (matching Zorp's base alien
+        color). When a power-up is active, the afterimages tint toward the
+        active buff's color — so dashing with Shield active leaves cyan ghosts,
+        dashing with Berserk leaves red-orange ghosts, etc. The tint is a
+        DASH_AFTERIMAGE_TINT_BLEND lerp from the base green toward the buff
+        color, so the base green remains recognizable while reflecting the
+        player's current power state. Priority follows the same order as the
+        powerup_ring: shield > berserk > adrenaline > speed > magnet > weapon >
+        fireball > photon > crit > mirror > regen.
+        """
+        p = self.player
+        base_r, base_g, base_b = 0, 230, 70  # Default Zorp green
+        buff_color = None
+        if p.shield_timer > 0:
+            buff_color = (100, 200, 255)   # Cyan
+        elif p.berserk_timer > 0:
+            buff_color = (255, 50, 20)     # Red-orange
+        elif p.adrenaline_timer > 0:
+            buff_color = (255, 140, 30)    # Orange-gold
+        elif p.speed_boost_timer > 0 or p.monolith_speed_timer > 0:
+            buff_color = (50, 255, 50)     # Green
+        elif p.magnet_timer > 0:
+            buff_color = (200, 50, 255)    # Purple
+        elif p.weapon_upgrade_timer > 0:
+            buff_color = (255, 150, 0)     # Orange
+        elif p.fireball_timer > 0:
+            buff_color = (255, 80, 20)     # Red-orange
+        elif p.photon_boots_timer > 0:
+            buff_color = (100, 220, 255)   # Cyan-blue
+        elif p.crit_boost_timer > 0:
+            buff_color = (50, 255, 50)     # Bright green
+        elif p.mirror_timer > 0:
+            buff_color = (200, 230, 255)   # Silver
+        elif p.regen_timer > 0:
+            buff_color = (50, 255, 120)    # Soft green
+        if buff_color is None:
+            return color.rgba(base_r, base_g, base_b, DASH_AFTERIMAGE_ALPHA)
+        br, bg, bb = buff_color
+        blend = DASH_AFTERIMAGE_TINT_BLEND
+        r = int(base_r + (br - base_r) * blend)
+        g = int(base_g + (bg - base_g) * blend)
+        b = int(base_b + (bb - base_b) * blend)
+        return color.rgba(r, g, b, DASH_AFTERIMAGE_ALPHA)
+
     def _spawn_impact_flash(self, pos, col=PROJECTILE_IMPACT_FLASH_COLOR):
         """Spawn a brief bright flash sphere at an impact point.
 
@@ -7743,11 +7832,51 @@ class Game:
         the existing omnidirectional particle burst, communicating the shot
         direction through the spread of debris. The sparks are small, fast,
         and short-lived so they add punch without cluttering the screen.
+
+        Also spawns a brief forward-pointing "glance streak" — a thin elongated
+        cube that shoots forward from the impact point along the projectile's
+        travel direction, like a spark ricocheting forward through the target.
+        Crits get a golden streak; normal hits get a warm white streak. The
+        streak scales and fades via animate_scale + animate_color so no
+        per-frame update is needed.
         """
         if proj_dir.length() < 0.01:
             return
         d = proj_dir.normalized()
         d.y = 0
+        # ── Projectile Impact Glance Spark ── A brief thin bright streak
+        # shoots forward from the impact point along the projectile's
+        # travel direction. This communicates the shot's momentum
+        # continuing through the hit — like a spark glancing forward off
+        # the target. The streak is a thin elongated cube oriented along
+        # the travel direction, scaling up slightly and fading over
+        # PROJ_GLANCE_DURATION seconds. Crits produce a golden streak
+        # (matching the crit particle/flash color); normal hits produce a
+        # warm white streak.
+        cr_s, cg_s, cb_s = _c255_color(col)
+        is_crit_glance = (cr_s >= 240 and cg_s >= 180 and cb_s <= 120)
+        glance_col = PROJ_GLANCE_CRIT_COLOR if is_crit_glance else PROJ_GLANCE_HIT_COLOR
+        gr, gg, gb = _c255_color(glance_col)
+        glance = Entity(
+            model='cube',
+            color=color.rgba(gr, gg, gb, PROJ_GLANCE_ALPHA),
+            scale=(PROJ_GLANCE_WIDTH, PROJ_GLANCE_WIDTH, PROJ_GLANCE_LENGTH),
+            position=Vec3(pos.x, pos.y, pos.z),
+        )
+        # Orient the streak along the projectile's travel direction
+        glance.look_at(glance.position + d)
+        # Scale up slightly then fade out — a quick forward flicker
+        glance.animate_scale(
+            Vec3(PROJ_GLANCE_WIDTH * 0.3, PROJ_GLANCE_WIDTH * 0.3, PROJ_GLANCE_LENGTH * 1.3),
+            duration=PROJ_GLANCE_DURATION,
+            curve=curve.out_expo,
+        )
+        glance.animate_color(
+            color.rgba(gr, gg, gb, 0),
+            duration=PROJ_GLANCE_DURATION,
+            curve=curve.linear,
+        )
+        destroy(glance, delay=PROJ_GLANCE_DURATION + 0.01)
         # Two perpendicular vectors in the ground plane
         perp = Vec3(-d.z, 0, d.x)
         cr, cg, cb = _c255_color(col)
@@ -7858,6 +7987,39 @@ class Game:
             curve=curve.linear,
         )
         destroy(beam, delay=ENEMY_DEATH_BEAM_DURATION + 0.01)
+        # ── Enemy Death Color Bloom ── A large gentle translucent sphere
+        # blooms outward from the kill point in the enemy's own color,
+        # expanding far beyond the death flash and fading slowly. Unlike
+        # the death flash (small, fast, bright), the bloom is large, slow,
+        # and soft — a hazy color wash that lingers briefly to give the
+        # death area visual weight. This makes kills feel like they leave
+        # a temporary "energy stain" in the world, making the battlefield
+        # feel alive with the aftermath of combat. The bloom scales with
+        # enemy toughness so boss deaths produce a massive color wash.
+        bloom_base = ENEMY_DEATH_BLOOM_BASE_SCALE
+        bloom_max = ENEMY_DEATH_BLOOM_MAX_SCALE
+        if enemy_max_hp is not None and enemy_max_hp > 0:
+            hp_ratio_bloom = enemy_max_hp / DEATH_BURST_HP_BASE
+            bloom_scale_mult = max(0.5, min(2.0, 0.5 + 0.5 * math.log2(max(1.0, hp_ratio_bloom))))
+            bloom_base *= bloom_scale_mult
+            bloom_max *= bloom_scale_mult
+        bloom = Entity(
+            model='sphere',
+            color=color.rgba(cr, cg, cb, ENEMY_DEATH_BLOOM_ALPHA),
+            scale=bloom_base,
+            position=pos,
+        )
+        bloom.animate_scale(
+            bloom_max,
+            duration=ENEMY_DEATH_BLOOM_DURATION,
+            curve=curve.out_expo,
+        )
+        bloom.animate_color(
+            color.rgba(cr, cg, cb, 0),
+            duration=ENEMY_DEATH_BLOOM_DURATION,
+            curve=curve.linear,
+        )
+        destroy(bloom, delay=ENEMY_DEATH_BLOOM_DURATION + 0.01)
         # ── Death Explosion Scale ── Scale particle count and spread with the
         # enemy's max HP. Tougher enemies produce bigger, more dramatic death
         # explosions — a Swarm Mite (12 HP) gets a tiny puff while a Plasma
@@ -10472,19 +10634,30 @@ def game_update():
             p.x = max(1, min(dash_pos.x, (WORLD_SIZE - 1) * TILE_SCALE))
             p.z = max(1, min(dash_pos.z, (WORLD_SIZE - 1) * TILE_SCALE))
         # Dash trail particles
+        # ── Dash Afterimage Buff-Tinted Color ── When a power-up is active,
+        # dash trail particles and afterimages tint to match the active
+        # buff's color instead of always being green — so dashing with
+        # Shield leaves cyan trails, dashing with Berserk leaves red-orange
+        # trails, etc. This makes the dash feel connected to the player's
+        # current power state.
         if int(game.t * 30) % 2 == 0:
-            game._spawn_particles(p.position + Vec3(0, 0.5, 0), color.rgba(0, 230, 70, 180), count=DASH_TRAIL_PARTICLES)
+            dash_trail_col = game._dash_afterimage_color()
+            trail_r, trail_g, trail_b = _c255_color(dash_trail_col)
+            game._spawn_particles(p.position + Vec3(0, 0.5, 0),
+                                  color.rgba(trail_r, trail_g, trail_b, 180),
+                                  count=DASH_TRAIL_PARTICLES)
         # ── Dash Multi-Afterimage ── Spawn multiple fading ghost silhouettes
         # along the dash path at regular intervals, creating a streaking trail
         # that communicates the dash direction and speed far more clearly than
         # a single afterimage at the start position. Each ghost is a faint
-        # green sphere that fades over DASH_AFTERIMAGE_DURATION seconds.
+        # sphere (tinted to match the active power-up) that fades over
+        # DASH_AFTERIMAGE_DURATION seconds.
         game._dash_afterimage_timer += time.dt
         if game._dash_afterimage_timer >= DASH_AFTERIMAGE_INTERVAL:
             game._dash_afterimage_timer = 0.0
             afterimage = Entity(
                 model='sphere',
-                color=color.rgba(0, 230, 70, DASH_AFTERIMAGE_ALPHA),
+                color=game._dash_afterimage_color(),
                 scale=p.scale_x * 1.0,
                 position=p.position,
             )
@@ -10654,10 +10827,15 @@ def game_update():
         # after one interval, not instantly at the dash start position.
         game._dash_afterimage_timer = 0.0
         # Dash afterimage: leave a fading ghost silhouette at the start position
-        # for a more dramatic speed effect that communicates the dash direction clearly
+        # for a more dramatic speed effect that communicates the dash direction clearly.
+        # Tinted to match the active power-up color for visual cohesion with buffs.
+        start_afterimage_col = game._dash_afterimage_color()
+        # The start afterimage is slightly more opaque (alpha=120) for a
+        # stronger "departure" visual at the dash origin.
+        si_r, si_g, si_b = _c255_color(start_afterimage_col)
         afterimage = Entity(
             model='sphere',
-            color=color.rgba(0, 230, 70, 120),
+            color=color.rgba(si_r, si_g, si_b, 120),
             scale=p.scale_x * 1.1,
             position=p.position,
         )
