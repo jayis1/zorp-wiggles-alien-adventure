@@ -1082,7 +1082,11 @@ RUINS_WALL_CHANCE = 0.05
 # The boots glow with a bright cyan-blue energy color.
 PHOTON_BOOTS_DURATION = 5.0           # Seconds of double-dash ability
 PHOTON_BOOTS_COLOR = color.rgb(100, 220, 255)
-PHOTON_BOOTS_FREE_DASH_THRESHOLD = 0.5  # If cooldown is above this, reset it to 0
+# NOTE: PHOTON_BOOTS_FREE_DASH_THRESHOLD was removed — it was defined but never
+# used. The actual Photon Boots implementation unconditionally resets
+# p.dash_cooldown to 0 every frame while active (continuous dashing), which is
+# the intended behavior. The threshold constant described gating logic that
+# was never implemented.
 
 # ─── Shard Golem (New Enemy) ──────────────────────────────────────────────────
 # A slow, tanky enemy that periodically raises a crystal shield, becoming
@@ -8561,6 +8565,16 @@ class Game:
             self.hp_bar_bg.y += jitter_y
             if self.hp_bar_shake_timer <= 0:
                 self.hp_bar_shake_timer = 0
+                # BUG FIX: Reset hp_bar_bg and hp_bar.y to their base positions
+                # after the shake ends. Without this, accumulated jitter from
+                # `+= random.uniform(...)` permanently offsets the HP bar background
+                # (whose x and y are never set by the ratio formula above) and the
+                # hp_bar's y (only hp_bar.x is reset each frame by the ratio
+                # calculation). Over many damage events the HP bar background
+                # visibly drifts away from its intended position at (-0.55, 0.46).
+                self.hp_bar_bg.x = -0.55
+                self.hp_bar_bg.y = 0.46
+                self.hp_bar.y = 0.46
 
         # Low-HP danger vignette — red pulsing overlay at screen edges when health is low
         # Enhanced: adds a sharper "thump" effect with brief bright flash at heartbeat peak
