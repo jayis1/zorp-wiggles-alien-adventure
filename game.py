@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.39.1"
+VERSION = "2.40.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -193,6 +193,18 @@ KILL_SCORE_MIN = 30                    # Minimum score awarded per kill (before 
 DEATH_ANIM_DURATION = 0.5             # Slightly longer death for better readability
 SCREEN_SHAKE_DAMAGE = 0.4             # Stronger shake on player damage — clearer feedback
 SCREEN_SHAKE_KILL = 0.75              # More impactful kill shake
+# ── Combo-Scaled Kill Screen Shake ── Each kill's screen shake intensifies
+# with the current combo count, so high kill streaks feel progressively more
+# impactful — each successive kill in a big combo shakes the screen harder,
+# building visceral momentum. At combo x1 the shake is the base value; at
+# x10 it gets +50% (1.125); at x20+ it's capped at +75% (1.3). The scaling
+# uses the same COMBO_MAX_TIER cap as the XP/score multipliers so it doesn't
+# grow unbounded. This makes sustained kill chains feel like an escalating
+# physical event through the camera, complementing the combo edge glow and
+# milestone fireworks with a tactile sense of growing power.
+COMBO_SHAKE_TIER = 5          # Combo count per +25% shake increment
+COMBO_SHAKE_PER_TIER = 0.25   # +25% shake per tier (every 5 combo)
+COMBO_SHAKE_MAX_BONUS = 0.75  # Max +75% shake at high combos
 SCREEN_SHAKE_DECAY = 8.0              # Slower decay so shake lingers a touch longer
 LEVEL_UP_FLASH_DURATION = 2.5          # Longer level-up visibility so players notice it
 CAMERA_LERP_SPEED = 6.0
@@ -1473,6 +1485,26 @@ ENEMY_LOW_HP_BAR_SCALE_PULSE = 0.15  # Scale jitter amount for the low-HP pulse
 # (on damage); healing snaps instantly. A lerp speed of 12 gives a quick but
 # visible drain (full to empty in ~0.15s at 60fps).
 ENEMY_HP_BAR_DRAIN_SPEED = 12.0
+
+# ─── Enemy Near-Death Shudder ────────────────────────────────────────────────
+# When an enemy's HP drops below ENEMY_SHUDDER_HP_THRESHOLD (10%), it
+# periodically shudders — a brief, rapid scale jitter on the X/Z axes —
+# signaling it's one hit from death. This complements the existing enrage
+# aura (25% HP, red aura + speed boost) and low-HP HP bar pulse (25% HP,
+# red bar) with a model-level telegraph that's visible directly on the
+# enemy body. The shudder uses a high-frequency oscillation (30 Hz) that's
+# distinct from the breathing/aggro/cob animations, making it read as a
+# "trembling in fear" or "about to collapse" visual. It fires at random
+# intervals so multiple near-death enemies don't shudder in sync, and the
+# shudder amplitude scales with how close to 0% HP the enemy is — at 10%
+# HP the shudder is subtle; at near-0% HP it's violent and unmistakable.
+ENEMY_SHUDDER_HP_THRESHOLD = 0.10   # HP ratio below which shudder activates
+ENEMY_SHUDDER_INTERVAL_MIN = 0.4    # Min seconds between shudder bursts
+ENEMY_SHUDDER_INTERVAL_MAX = 0.9    # Max seconds between shudder bursts
+ENEMY_SHUDDER_DURATION = 0.15       # How long each shudder burst lasts (seconds)
+ENEMY_SHUDDER_FREQ = 30.0            # Oscillation frequency (Hz) — fast tremor
+ENEMY_SHUDDER_AMP_BASE = 0.04       # Min amplitude (at 10% HP)
+ENEMY_SHUDDER_AMP_MAX = 0.10        # Max amplitude (at near-0% HP)
 
 # ─── Enemy Combat Breathing ──────────────────────────────────────────────────
 # When an enemy has detected the player and is actively chasing, it gently
@@ -3204,6 +3236,15 @@ class Enemy(Entity):
         # controls the periodic red particle emission.
         self.enraged = False
         self.enrage_particle_timer = 0.0
+
+        # ── Near-Death Shudder ── When HP drops below ENEMY_SHUDDER_HP_THRESHOLD
+        # (10%), the enemy periodically shudders — a brief rapid X/Z scale
+        # jitter signaling it's one hit from death. The shudder_timer counts
+        # down to the next burst; while shudder_active > 0, the update loop
+        # applies the tremor. Each enemy gets a random initial timer so
+        # multiple near-death enemies don't shudder in sync.
+        self.shudder_timer = random.uniform(ENEMY_SHUDDER_INTERVAL_MIN, ENEMY_SHUDDER_INTERVAL_MAX)
+        self.shudder_active = 0.0  # >0 while a shudder burst is playing
 
         # Nebula Phantom: flying enemy that orbits and dive-attacks
         self.is_nebula_phantom = (enemy_type == 'Nebula Phantom')
@@ -5518,6 +5559,14 @@ class Game:
         self.vacuum_pulse_cooldown = 0.0
         self.vacuum_pulse_active_timer = 0.0  # >0 while the pulse is pulling
         self.vacuum_pulse_rings = []           # Visual ring entities
+        # ── Vacuum Pulse Item Counter ── Tracks how many collectibles were
+        # vacuumed during the active pulse window. Reset to 0 on activation
+        # and displayed as a summary message + small screen shake when the
+        # pulse ends, giving the player feedback on how effective the vacuum
+        # pulse was. Without this, the vacuum pulse just silently pulls items
+        # with no summary of results — you can't tell if you vacuumed 3 items
+        # or 20.
+        self.vacuum_pulse_collected_count = 0
 
         # Auto-fire toggle (X key) — continuous shooting without holding mouse
         self.auto_fire_enabled = False
@@ -9723,6 +9772,30 @@ class Game:
         if len(self.missions) < 3:
             self._assign_missions(count=1)
 
+    def _combo_scaled_kill_shake(self):
+        """Return a combo-scaled screen shake value for a kill.
+
+        The base kill shake (SCREEN_SHAKE_KILL) intensifies with the current
+        combo count so high kill streaks feel progressively more impactful.
+        At combo x1 the shake is the base (0.75); at x10 it's +50% (1.125);
+        at x20+ it's capped at +75% (1.3125). The scaling uses COMBO_MAX_TIER
+        as the ceiling so it doesn't grow unbounded, matching the XP/score
+        multiplier cap. This is called from every kill site in place of the
+        old flat `SCREEN_SHAKE_KILL` assignment.
+
+        NOTE: At call time, combo_count has already been incremented for the
+        current kill (all kill paths increment combo_count before the shake
+        assignment). So at the 1st kill (combo=1) the shake is the base value;
+        at the 10th consecutive kill (combo=10) it gets the +50% bonus. This
+        makes each successive kill in a streak feel more impactful than the
+        last.
+        """
+        # Each COMBO_SHAKE_TIER combo counts adds COMBO_SHAKE_PER_TIER to the
+        # shake multiplier, capped at COMBO_SHAKE_MAX_BONUS.
+        tier = min(self.combo_count, COMBO_MAX_TIER) // COMBO_SHAKE_TIER
+        bonus = min(tier * COMBO_SHAKE_PER_TIER, COMBO_SHAKE_MAX_BONUS)
+        return SCREEN_SHAKE_KILL * (1.0 + bonus)
+
     def _register_kill(self):
         """Track a kill for the Multi-Kill announcement system.
 
@@ -10034,7 +10107,7 @@ class Game:
                 camera.fov = CAMERA_KILL_ZOOM_FOV
                 self.kill_flash_timer = KILL_FLASH_DURATION
                 self.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
-                self.screen_shake = SCREEN_SHAKE_KILL
+                self.screen_shake = self._combo_scaled_kill_shake()
                 if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
                     self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
                     self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
@@ -10235,6 +10308,9 @@ class Game:
         p = self.player
         self.vacuum_pulse_cooldown = VACUUM_PULSE_COOLDOWN
         self.vacuum_pulse_active_timer = VACUUM_PULSE_ACTIVE_DURATION  # Pull lasts long enough to reach edge items
+        # Reset the item counter for this pulse — will be incremented as
+        # collectibles are picked up during the active window
+        self.vacuum_pulse_collected_count = 0
         # Visual: expanding gold ring
         # BUG FIX: Pass the vacuum pulse color directly to the constructor instead
         # of setting it afterward. The old approach (ring.color = ...) was
@@ -10819,7 +10895,7 @@ def game_update():
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                    game.screen_shake = SCREEN_SHAKE_KILL
+                    game.screen_shake = game._combo_scaled_kill_shake()
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
                     camera.fov = CAMERA_KILL_ZOOM_FOV
@@ -11359,6 +11435,28 @@ def game_update():
                 vacuum_dir = (p.position - col.position).normalized()
                 col.position += vacuum_dir * VACUUM_PULSE_PULL_SPEED * time.dt
                 col.rotation_y += 400 * time.dt  # Spin items as they get vacuumed
+        # ── Vacuum Pulse End Summary ── When the active timer reaches 0,
+        # display a summary of how many items were vacuumed during the pulse
+        # window. A gold message and small screen shake give the player
+        # satisfying feedback on the pulse's effectiveness — you see exactly
+        # how much loot you harvested. Only fires if at least 1 item was
+        # collected so empty vacuums don't spam the message feed.
+        if game.vacuum_pulse_active_timer <= 0:
+            game.vacuum_pulse_active_timer = 0
+            if game.vacuum_pulse_collected_count > 0:
+                game.add_message(
+                    f"🌀 Vacuum Pulse complete! {game.vacuum_pulse_collected_count} "
+                    f"item{'s' if game.vacuum_pulse_collected_count != 1 else ''} vacuumed!"
+                )
+                # Small screen shake scaled by item count (capped)
+                shake = min(0.3, 0.05 + game.vacuum_pulse_collected_count * 0.02)
+                game.screen_shake = max(game.screen_shake, shake)
+                # Gold particle burst around the player for a satisfying "harvest" celebration
+                game._spawn_particles(
+                    p.position + Vec3(0, 1, 0),
+                    VACUUM_PULSE_RING_COLOR,
+                    count=min(20, 4 + game.vacuum_pulse_collected_count * 2),
+                )
 
     # Update vacuum pulse visual rings (reuse PulseWaveRing update logic)
     for vpr in game.vacuum_pulse_rings[:]:
@@ -12621,7 +12719,7 @@ def game_update():
                                     p.gain_xp(xp_gain)
                                     p.score += max(KILL_SCORE_MIN, int(other_enemy.max_hp * combo_score_mult))
                                     # BUG FIX: Void Bomber friendly-fire kills were missing the kill screen shake.
-                                    game.screen_shake = SCREEN_SHAKE_KILL
+                                    game.screen_shake = game._combo_scaled_kill_shake()
                                     if is_overkill:
                                         game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True, is_overkill=True))
                                     else:
@@ -13300,6 +13398,44 @@ def game_update():
                     game.t * ENEMY_COMBAT_BREATHE_SPEED + (id(enemy) % 628) / 100.0)
                 enemy.scale = enemy.original_scale * breath
 
+        # ── Near-Death Shudder ── When an enemy's HP drops below 10%, it
+        # periodically shudders — a brief rapid X/Z scale jitter signaling
+        # it's one hit from death. This is a model-level telegraph that
+        # complements the enrage aura (25%) and low-HP HP bar pulse (25%)
+        # with a body-level "trembling" visual. The shudder timer counts
+        # down to the next burst at random intervals; while the burst is
+        # active, a high-frequency oscillation is applied to the X and Z
+        # scale axes on top of whatever scale was already set by the
+        # breathing/bob/hit-punch logic above. The amplitude scales with
+        # how close to 0% HP the enemy is — subtle at 10%, violent at 1%.
+        # Only applies to living, non-dying enemies within visual range.
+        if enemy.alive and not enemy.dying and dist_to_player < VISUAL_CULL_RANGE:
+            hp_ratio = enemy.hp / enemy.max_hp if enemy.max_hp > 0 else 1.0
+            if hp_ratio < ENEMY_SHUDDER_HP_THRESHOLD and hp_ratio > 0:
+                # Count down to the next shudder burst
+                if enemy.shudder_active <= 0:
+                    enemy.shudder_timer -= time.dt
+                    if enemy.shudder_timer <= 0:
+                        enemy.shudder_active = ENEMY_SHUDDER_DURATION
+                        enemy.shudder_timer = random.uniform(
+                            ENEMY_SHUDDER_INTERVAL_MIN, ENEMY_SHUDDER_INTERVAL_MAX)
+                # Apply the shudder while the burst is active
+                if enemy.shudder_active > 0:
+                    enemy.shudder_active -= time.dt
+                    if enemy.shudder_active < 0:
+                        enemy.shudder_active = 0
+                    # Amplitude scales with how close to death (0 = dead, 1 = threshold)
+                    death_proximity = 1.0 - (hp_ratio / ENEMY_SHUDDER_HP_THRESHOLD)
+                    amp = ENEMY_SHUDDER_AMP_BASE + (ENEMY_SHUDDER_AMP_MAX - ENEMY_SHUDDER_AMP_BASE) * death_proximity
+                    # High-frequency tremor — distinct from the slow breathing oscillation
+                    tremor = math.sin(game.t * ENEMY_SHUDDER_FREQ * 2 * math.pi)
+                    jitter = 1.0 + amp * tremor
+                    enemy.scale = Vec3(
+                        enemy.scale_x * jitter,
+                        enemy.scale_y,
+                        enemy.scale_z * jitter,
+                    )
+
         # ── Alert "!" Indicator Update ── Track the enemy's position and fade
         # out the billboard "!" over ENEMY_ALERT_INDICATOR_DURATION. The indicator
         # pops in at full size/alpha, holds briefly, then shrinks and fades for a
@@ -13593,7 +13729,7 @@ def game_update():
                                 p.gain_xp(aoe_xp_gain)
                                 p.score += max(KILL_SCORE_MIN, int(nearby_enemy.max_hp * combo_score_mult))
                                 # BUG FIX: AOE kills were missing the kill screen shake.
-                                game.screen_shake = SCREEN_SHAKE_KILL
+                                game.screen_shake = game._combo_scaled_kill_shake()
                                 if is_overkill:
                                     game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True, is_overkill=True))
                                 else:
@@ -13710,7 +13846,7 @@ def game_update():
                             game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                         p.gain_xp(xp_gain)
                         p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                        game.screen_shake = SCREEN_SHAKE_KILL
+                        game.screen_shake = game._combo_scaled_kill_shake()
                         game.hit_stop_timer = HIT_STOP_KILL_DURATION
                         game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
                         camera.fov = CAMERA_KILL_ZOOM_FOV
@@ -13812,7 +13948,7 @@ def game_update():
                                 game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                             p.gain_xp(xp_gain)
                             p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                            game.screen_shake = SCREEN_SHAKE_KILL
+                            game.screen_shake = game._combo_scaled_kill_shake()
                             # BUG FIX: Subsequent piercing kills were missing hit-stop,
                             # FOV punch, and kill flash — present in all other kill paths.
                             game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -13943,7 +14079,7 @@ def game_update():
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                    game.screen_shake = SCREEN_SHAKE_KILL
+                    game.screen_shake = game._combo_scaled_kill_shake()
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     # Camera FOV punch: brief zoom-in on kill for cinematic impact
@@ -14384,7 +14520,7 @@ def game_update():
                     # Pulse Wave kills worth less score at high combo tiers.
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                     # BUG FIX: Pulse Wave kills were missing the kill screen shake.
-                    game.screen_shake = SCREEN_SHAKE_KILL
+                    game.screen_shake = game._combo_scaled_kill_shake()
                     # BUG FIX: Pulse Wave kills were missing hit-stop, FOV punch,
                     # and kill flash — present in all other primary kill paths.
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -14839,6 +14975,11 @@ def game_update():
             col.pop_timer = COLLECT_POP_DURATION
             col._pop_base_y = None  # Reset so the pop loop captures current Y on first frame
             game.total_items_collected += 1
+            # ── Vacuum Pulse Item Counter ── If the vacuum pulse is active,
+            # count this pickup toward the vacuum pulse summary so the player
+            # gets a final tally of how many items were harvested.
+            if game.vacuum_pulse_active_timer > 0:
+                game.vacuum_pulse_collected_count += 1
             # ── Player Glow Ring Pickup Pulse ── Zorp's green ground glow ring
             # briefly flashes in the item's color and expands, giving ground-
             # level player feedback visible from the third-person camera. This
