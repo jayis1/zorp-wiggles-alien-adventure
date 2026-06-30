@@ -13566,6 +13566,14 @@ def game_update():
                                 game._handle_plasma_serpent_split(enemy)
                         break  # Exit enemy loop — projectile continues
                     break  # Exit enemy loop (projectile destroyed)
+                # BUG FIX: If this is a piercing projectile hitting an ALREADY-pierced
+                # enemy (still overlapping from a previous frame), skip it — don't
+                # fall through to the normal hit code which would destroy the projectile
+                # and deal a second hit. Without this, a piercing bolt that's still
+                # inside an enemy it already pierced gets destroyed as a "normal hit"
+                # and double-damages the enemy.
+                if proj.is_piercing and id(enemy) in proj._pierced_enemies:
+                    continue
                 # Normal hit (no pierce) — destroy the projectile
                 destroy(proj)
                 if proj in game.projectiles:
