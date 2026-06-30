@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.38.1"
+VERSION = "2.39.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1665,6 +1665,48 @@ COLLECTIBLE_RESPAWN_RANGE_MIN = 20  # Min distance from player for collectible r
 COLLECTIBLE_RESPAWN_RANGE_MAX = 50  # Max distance from player for collectible respawns
 MIN_SPAWN_INTERVAL = 3.0            # Minimum enemy spawn interval (seconds)
 
+# ── Projectile Interception ── Player projectiles (tentacle lasers) can now
+# shoot down incoming enemy projectiles (Spore Spitter spit, etc.) — giving the
+# player an active defense option against ranged attacks. When a player bolt
+# passes close enough to an enemy projectile, both are destroyed in a bright
+# cyan-orange spark collision. This makes combat against Spore Spitters more
+# interactive: instead of only dodging or reflecting, the player can
+# proactively intercept incoming fire with well-timed shots, adding a skill
+# layer to ranged duels. The interception radius is generous so it feels
+# rewarding rather than pixel-perfect.
+PROJ_INTERCEPT_RADIUS = 1.2          # How close a player bolt must be to intercept enemy fire
+PROJ_INTERCEPT_PARTICLE_COUNT = 12   # Spark particles on interception
+PROJ_INTERCEPT_SCREEN_SHAKE = 0.15   # Small shake on interception
+PROJ_INTERCEPT_XP = 3               # Small XP reward for intercepting (rewards active defense)
+
+# ── Enemy Projectile Proximity Warning ── When an enemy projectile gets close
+# to the player (but hasn't hit yet), it begins emitting a pulsing red warning
+# glow and leaves a brief expanding red ring on the ground below it — giving the
+# player a clear visual cue that incoming fire is approaching. This is especially
+# helpful in chaotic combat with multiple Spore Spitters where tracking all
+# incoming projectiles can be difficult. The warning only activates within a
+# proximity radius (larger than the hit radius) so distant projectiles don't
+# create noise. The red glow intensifies as the projectile gets closer.
+ENEMY_PROJ_WARN_RADIUS = 8.0         # Distance at which warning glow activates
+ENEMY_PROJ_WARN_RING_INTERVAL = 0.15 # How often to drop a warning ring (seconds)
+ENEMY_PROJ_WARN_RING_ALPHA = 60      # Alpha of warning rings
+ENEMY_PROJ_WARN_RING_SCALE = 0.6     # Scale of warning rings
+ENEMY_PROJ_WARN_RING_DURATION = 0.3  # How long warning rings last
+
+# ── Movement-Based HP Regeneration ── Zorp regenerates a small trickle of HP
+# while moving at speed — rewarding active, mobile play over turtling. The regen
+# only activates above a minimum velocity threshold and scales linearly up to
+# full regen rate at max speed. This synergizes with the kite-and-shoot
+# playstyle: staying on the move not only helps you dodge but also slowly heals
+# you, making aggressive movement a sustainable strategy. The regen rate is
+# modest (0.5% of max HP per second at full speed) so it supplements but does
+# not replace Health Potions and level-up heals. Does NOT activate while
+# invulnerable (during dash i-frames) to prevent stacking with dash invuln.
+REGEN_MOVE_SPEED_MIN = 4.0           # Speed above which regen activates
+REGEN_HP_PERCENT_PER_SEC = 0.005     # 0.5% of max HP per second at full speed
+REGEN_INTERVAL = 0.5                 # Apply regen in 0.5s ticks (smoother than per-frame)
+REGEN_FX_INTERVAL = 1.0             # Spawn a healing spark particle every 1.0s while regenerating
+
 # ─── Sky Nebula ──────────────────────────────────────────────────────────────
 NEBULA_CLOUD_COUNT = 12
 NEBULA_SPREAD = 250
@@ -2558,6 +2600,9 @@ class Player(Entity):
 
         # Regen Crystal timer — regenerates HP over time
         self.regen_timer = 0.0
+        # Move-regen accumulators — trickle HP regen while moving at speed
+        self.move_regen_accum = 0.0
+        self.move_regen_fx_timer = 0.0
 
         # Lucky Clover timer — boosts critical hit chance
         self.crit_boost_timer = 0.0
@@ -5022,6 +5067,7 @@ class EnemyProjectile(Entity):
         self.damage = damage
         self.speed = speed
         self.lifetime = 3.0
+        self.intercepted = False  # Set True when a player bolt shoots it down
 
         # ── Glow Aura ── A larger translucent sphere parented to the projectile
         # that gives the enemy shot a glowing energy-ball look, making it much
@@ -5037,6 +5083,8 @@ class EnemyProjectile(Entity):
         # Trail spawning timer — leaves a fading orange trail so the projectile
         # is easy to track and dodge, matching the player projectile trail system
         self.trail_timer = 0.0
+        # Warning ring timer — drops red ground rings when close to the player
+        self.warn_ring_timer = 0.0
 
     def move(self, dt):
         """Move the enemy projectile forward. Returns False when lifetime expires.
@@ -11657,6 +11705,37 @@ def game_update():
             p.stop_squish = 1.0
         p._prev_speed = current_speed
 
+        # ── Movement-Based HP Regeneration ── Zorp regenerates a small trickle
+        # of HP while moving at speed — rewarding active, mobile play over
+        # turtling. The regen scales linearly from 0 (at REGEN_MOVE_SPEED_MIN)
+        # to full rate (at PLAYER_SPEED). Only activates when not dashing
+        # (dash_timer <= 0 is already guaranteed by the outer if) and when
+        # the player is not at full HP. The regen is applied in discrete ticks
+        # for smoothness and spawns an occasional green healing spark for
+        # visual feedback. This supplements (not replaces) Health Potions and
+        # level-up heals — the rate is modest (0.5% max HP/sec at full speed).
+        if current_speed > REGEN_MOVE_SPEED_MIN and p.hp < p.max_hp and p.invuln_timer <= 0:
+            # Scale regen rate from 0 to 1 based on speed
+            speed_factor = min(1.0, (current_speed - REGEN_MOVE_SPEED_MIN) / (PLAYER_SPEED - REGEN_MOVE_SPEED_MIN))
+            regen_amount = p.max_hp * REGEN_HP_PERCENT_PER_SEC * speed_factor * time.dt
+            p.move_regen_accum += regen_amount
+            if p.move_regen_accum >= 1.0:
+                heal_int = int(p.move_regen_accum)
+                p.hp = min(p.max_hp, p.hp + heal_int)
+                p.move_regen_accum -= heal_int
+            # Spawn occasional healing spark particle for visual feedback
+            p.move_regen_fx_timer += time.dt
+            if p.move_regen_fx_timer >= REGEN_FX_INTERVAL:
+                p.move_regen_fx_timer = 0.0
+                if len(game.particles) < MAX_PARTICLES:
+                    spark = Entity(
+                        model='sphere',
+                        color=color.rgba(100, 255, 100, 120),
+                        scale=0.12,
+                        position=Vec3(p.x + random.uniform(-0.5, 0.5), p.y + random.uniform(0.5, 1.5), p.z + random.uniform(-0.5, 0.5)),
+                    )
+                    game.particles.append((spark, Vec3(random.uniform(-0.5, 0.5), 1.5, random.uniform(-0.5, 0.5)), 0.6))
+
     # ── Player Movement Trail ── While Zorp is running at high speed, a subtle
     # fading green afterimage trail appears behind him — thin ghost copies that
     # fade out over a fraction of a second. This gives movement a dynamic,
@@ -13889,6 +13968,42 @@ def game_update():
                         game._handle_plasma_serpent_split(enemy)
                 break
 
+        # ── Projectile Interception ── Check if this player bolt passes close
+        # enough to any enemy projectile to shoot it down. This gives the player
+        # an active defense against incoming Spore Spitter fire — you can
+        # intercept enemy projectiles with well-timed shots. Both projectiles
+        # are destroyed in a bright cyan-orange spark collision.
+        for eproj in game.enemy_projectiles[:]:
+            if eproj.intercepted:
+                continue
+            ep_dx = proj_x - eproj.x
+            ep_dz = proj_z - eproj.z
+            if ep_dx * ep_dx + ep_dz * ep_dz > PROJ_INTERCEPT_RADIUS * PROJ_INTERCEPT_RADIUS:
+                continue
+            if (proj.position - eproj.position).length() < PROJ_INTERCEPT_RADIUS:
+                # Interception! Destroy both projectiles
+                eproj.intercepted = True
+                intercept_pos = eproj.position
+                # Spark burst — blend cyan (player) with orange (enemy) for a vivid collision
+                game._spawn_particles(intercept_pos, color.rgb(100, 255, 255), count=PROJ_INTERCEPT_PARTICLE_COUNT // 2)
+                game._spawn_particles(intercept_pos, color.rgb(255, 160, 40), count=PROJ_INTERCEPT_PARTICLE_COUNT // 2)
+                # Impact flash
+                game._spawn_impact_flash(intercept_pos, col=color.rgba(255, 220, 150, 200))
+                # Small expanding ring
+                game.hit_ripples.append(HitRipple(intercept_pos, col=color.rgba(255, 200, 100, 180)))
+                game.screen_shake = max(game.screen_shake, PROJ_INTERCEPT_SCREEN_SHAKE)
+                # Small XP reward for skillful interception
+                p.gain_xp(PROJ_INTERCEPT_XP)
+                # Destroy enemy projectile
+                destroy(eproj)
+                if eproj in game.enemy_projectiles:
+                    game.enemy_projectiles.remove(eproj)
+                # Destroy player projectile too (the bolt was consumed)
+                destroy(proj)
+                if proj in game.projectiles:
+                    game.projectiles.remove(proj)
+                break
+
         # Remove if out of world
         if proj.x < -10 or proj.x > WORLD_SIZE * TILE_SCALE + 10 or proj.z < -10 or proj.z > WORLD_SIZE * TILE_SCALE + 10:
             destroy(proj)
@@ -13909,6 +14024,38 @@ def game_update():
             eproj.trail_timer = 0.0
             trail = ProjectileTrail(position=Vec3(eproj.x, eproj.y, eproj.z), col=ENEMY_PROJ_TRAIL_COLOR)
             game.projectile_trails.append(trail)
+        # ── Proximity Warning ── When the enemy projectile is close to the
+        # player (but not yet hitting), drop periodic red ground rings below
+        # it and intensify the aura toward red — a clear "incoming!" cue that
+        # helps the player track and dodge incoming fire in chaotic combat.
+        warn_dist = (eproj.position - p.position).length()
+        if warn_dist < ENEMY_PROJ_WARN_RADIUS:
+            # Intensify the aura color toward red as the projectile gets closer
+            proximity_factor = 1.0 - (warn_dist / ENEMY_PROJ_WARN_RADIUS)  # 0..1
+            r, g, b = _c255_color(ENEMY_PROJECTILE_AURA_COLOR)
+            warn_r = min(255, int(r + (255 - r) * proximity_factor))
+            warn_g = max(0, int(g * (1.0 - proximity_factor * 0.5)))
+            warn_b = max(0, int(b * (1.0 - proximity_factor * 0.8)))
+            pulse = 0.5 + 0.5 * math.sin(eproj._aura_phase)
+            warn_a = max(40, min(255, int(eproj.aura_base_alpha * (0.5 + 0.5 * pulse) + 60 * proximity_factor)))
+            eproj.aura.color = color.rgba(warn_r, warn_g, warn_b, warn_a)
+            # Drop periodic red ground rings below the projectile
+            eproj.warn_ring_timer += time.dt
+            if eproj.warn_ring_timer >= ENEMY_PROJ_WARN_RING_INTERVAL:
+                eproj.warn_ring_timer = 0.0
+                warn_ring = Entity(
+                    model='quad',
+                    color=color.rgba(255, 60, 60, int(ENEMY_PROJ_WARN_RING_ALPHA * proximity_factor)),
+                    scale=ENEMY_PROJ_WARN_RING_SCALE,
+                    position=Vec3(eproj.x, 0.1, eproj.z),
+                    rotation_x=90,
+                )
+                warn_ring.animate_scale(Vec3(ENEMY_PROJ_WARN_RING_SCALE * 2.5, 1, ENEMY_PROJ_WARN_RING_SCALE * 2.5),
+                                         duration=ENEMY_PROJ_WARN_RING_DURATION, curve=curve.out_expo)
+                wr, wg, wb = _c255_color(color.rgba(255, 60, 60, 0))
+                warn_ring.animate_color(color.rgba(wr, wg, wb, 0),
+                                         duration=ENEMY_PROJ_WARN_RING_DURATION, curve=curve.linear)
+                destroy(warn_ring, delay=ENEMY_PROJ_WARN_RING_DURATION + 0.01)
         # Check collision with player
         dist = (eproj.position - p.position).length()
         if dist < ENEMY_PROJECTILE_HIT_RADIUS:
