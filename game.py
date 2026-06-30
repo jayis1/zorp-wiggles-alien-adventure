@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.37.1"
+VERSION = "2.38.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1904,6 +1904,50 @@ DEATH_BURST_SPREAD_MULT = 1.5      # How much farther big-enemy burst particles 
 ENEMY_DEATH_FLASH_DURATION = 0.15    # How long the flash sphere lasts (seconds)
 ENEMY_DEATH_FLASH_MAX_SCALE = 2.5    # Max scale multiplier the flash expands to
 
+# ─── Enemy Death Shatter Fragments ───────────────────────────────────────────
+# When an enemy dies, small fragment entities using the enemy's own model shape
+# fly outward from the death point and fade over a fraction of a second — a
+# "shatter" effect that makes kills feel like the enemy physically broke apart,
+# complementing the existing particle burst, death flash, sky beam, and ground
+# ring with a 3D debris visual. The fragments use the enemy's model (sphere,
+# cube, diamond) so the shatter matches the enemy's silhouette — a Slime Blob
+# shatters into round blobs, a Space Beetle shatters into cubes, a Crystal
+# Guardian shatters into diamonds. Fragment count and velocity scale with enemy
+# toughness so big enemies shatter into more, faster-moving debris.
+ENEMY_DEATH_SHATTER_COUNT = 5        # Base number of shatter fragments
+ENEMY_DEATH_SHATTER_DURATION = 0.45  # How long fragments live before fading (seconds)
+ENEMY_DEATH_SHATTER_SPEED = 6.0      # Base outward velocity of fragments (units/sec)
+ENEMY_DEATH_SHATTER_UP_SPEED = 4.0   # Upward velocity component (arc before falling)
+ENEMY_DEATH_SHATTER_SCALE = 0.3      # Fragment scale relative to enemy original scale
+# Note: gravity is handled by the particle system's built-in PARTICLE_GRAVITY
+
+# ─── Combo Milestone Projectile Aura Surge ──────────────────────────────────
+# When the player hits a combo milestone (x5, x10, x15...), all currently active
+# projectiles get a brief aura scale boost and brightness flash — making the
+# milestone feel impactful through the player's active shots, not just the HUD
+# and particle celebration. Every bolt in the air momentarily swells brighter
+# and larger, as if the kill streak is supercharging your in-flight lasers. This
+# gives combo milestones a tangible in-world effect you can see and feel through
+# your weapons, not just in the HUD counter.
+COMBO_MILESTONE_PROJ_SURGE_DURATION = 0.4   # How long the surge lasts on each projectile
+COMBO_MILESTONE_PROJ_SURGE_SCALE = 1.8     # Aura scale multiplier during the surge
+COMBO_MILESTONE_PROJ_SURGE_ALPHA = 200      # Aura alpha during the surge (brighter pulse)
+
+# ─── Sprint Kick-Up Dust ─────────────────────────────────────────────────────
+# While running at high speed, small directional dust particles kick up BEHIND
+# Zorp (opposite to movement direction) — a "kicking up dust" effect that gives
+# sprinting a dynamic, athletic feel. Unlike the existing ambient movement dust
+# (which spawns randomly around the player), sprint kick-up dust is directional:
+# particles fly backward from Zorp's feet in the opposite direction of movement,
+# simulating the dust kicked up by running feet. Only triggers above a minimum
+# speed threshold so it doesn't appear during slow adjustments. The kick interval
+# is independent of the existing dust and footstep ripple timers.
+SPRINT_KICKUP_SPEED_THRESHOLD = 8.0    # Min velocity to trigger sprint kick-up dust
+SPRINT_KICKUP_INTERVAL = 0.12          # Seconds between kick-up dust emissions
+SPRINT_KICKUP_PARTICLE_COUNT = 3       # Particles per kick-up emission
+SPRINT_KICKUP_SPEED = 3.5              # Backward velocity of kick-up particles
+SPRINT_KICKUP_UP_SPEED = 1.5           # Upward velocity of kick-up particles
+
 # ─── Dash Landing Impact Ring ────────────────────────────────────────────────
 # When the dash ends, an expanding ground ring radiates from Zorp's landing
 # point in addition to the existing dust burst — a clear visual "impact" cue
@@ -2998,6 +3042,7 @@ class Enemy(Entity):
             collider='sphere',
         )
         self.name = enemy_type
+        self.model_name = info['model']  # Store model name for death shatter fragments
         self.hp = info['hp']
         self.max_hp = info['hp']
         self.speed = info['speed']
@@ -4816,6 +4861,14 @@ class Projectile(Entity):
         self._pierced_enemies = set()
         self.is_piercing = False
 
+        # ── Combo Milestone Aura Surge ── When the player hits a combo milestone,
+        # this timer is set to COMBO_MILESTONE_PROJ_SURGE_DURATION. While > 0,
+        # the projectile's aura gets a temporary scale boost and brighter alpha
+        # flash — making the milestone feel impactful through the player's
+        # active shots. The surge decays over the duration and the aura returns
+        # to its normal combo-scaling behavior.
+        self._milestone_surge_timer = 0.0
+
     def move(self, dt, combo_count=0):
         """Move the projectile forward. Returns False when lifetime expires.
 
@@ -4858,6 +4911,23 @@ class Projectile(Entity):
         r, g, b = _c255_color(PROJECTILE_AURA_COLOR)
         self.aura.color = color.rgba(r, g, b, a)
         self.aura.scale = PROJECTILE_AURA_SCALE * aura_scale_mult
+        # ── Combo Milestone Aura Surge ── When the surge timer is active
+        # (set by the game when a combo milestone is hit), override the
+        # aura with a brief scale boost and brighter alpha flash. The
+        # surge decays over COMBO_MILESTONE_PROJ_SURGE_DURATION seconds,
+        # blending smoothly back to the normal combo-scaling aura. This
+        # makes every active shot in the air momentarily swell brighter
+        # and larger when you hit a milestone — your kill streak
+        # supercharges your in-flight lasers.
+        if self._milestone_surge_timer > 0:
+            self._milestone_surge_timer -= dt
+            if self._milestone_surge_timer < 0:
+                self._milestone_surge_timer = 0
+            surge_t = self._milestone_surge_timer / COMBO_MILESTONE_PROJ_SURGE_DURATION
+            surge_scale = PROJECTILE_AURA_SCALE * aura_scale_mult * lerp(1.0, COMBO_MILESTONE_PROJ_SURGE_SCALE, surge_t)
+            surge_alpha = min(255, int(a + (COMBO_MILESTONE_PROJ_SURGE_ALPHA - a) * surge_t))
+            self.aura.color = color.rgba(r, g, b, surge_alpha)
+            self.aura.scale = surge_scale
         # ── Combo Warm Tint ── At high combos the core bolt lerps from pure
         # cyan toward a warm cyan-gold, making the laser visibly "heat up"
         # during kill streaks. This complements the aura pulse/scale scaling
@@ -7721,7 +7791,7 @@ class Game:
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.4, 1.0)))
 
-    def _spawn_kill_burst(self, pos, col, enemy_max_hp=None):
+    def _spawn_kill_burst(self, pos, col, enemy_max_hp=None, shatter_model='sphere'):
         """Spawn a radial ring burst effect on enemy kills for more satisfying, explosive feedback.
 
         Unlike _spawn_collect_burst which is a flat ring, this creates particles that
@@ -7822,6 +7892,56 @@ class Game:
             p = Entity(model='sphere', color=varied_col, scale=p_scale,
                        position=pos)
             self.particles.append((p, vel, random.uniform(0.4, 0.9) * min(1.5, scale_mult)))
+
+        # ── Death Shatter Fragments ── Spawn small fragment entities using the
+        # enemy's model shape that fly outward and fade. The fragments use the
+        # same model as the enemy (sphere, cube, diamond) so the shatter visually
+        # matches the enemy's silhouette. Fragment count and speed scale with
+        # enemy toughness (via the same scale_mult computed above) so a Plasma
+        # Drake shatters into more, faster-moving debris than a Swarm Mite.
+        # The fragments are managed via the particle system for cleanup, with
+        # custom velocity that includes gravity for a natural arc.
+        if enemy_max_hp is not None and enemy_max_hp > 0:
+            shatter_count = max(3, int(ENEMY_DEATH_SHATTER_COUNT * scale_mult))
+            shatter_count = min(shatter_count, 8)  # Cap for performance
+            # Use the enemy's model shape — we detect it from the TYPES dict.
+            # Since we don't have the enemy object here, use 'sphere' as a
+            # universal fallback (it looks like organic debris for all types).
+            # The caller can pass the model via the 'shatter_model' parameter.
+            shatter_model = shatter_model
+            frag_scale = ENEMY_DEATH_SHATTER_SCALE * (0.7 + 0.3 * min(1.5, scale_mult))
+            for i in range(shatter_count):
+                angle = (i / shatter_count) * math.pi * 2 + random.uniform(-0.3, 0.3)
+                frag_vel = Vec3(
+                    math.cos(angle) * ENEMY_DEATH_SHATTER_SPEED * scale_mult,
+                    random.uniform(ENEMY_DEATH_SHATTER_UP_SPEED * 0.7, ENEMY_DEATH_SHATTER_UP_SPEED * 1.3) * scale_mult,
+                    math.sin(angle) * ENEMY_DEATH_SHATTER_SPEED * scale_mult,
+                )
+                frag = Entity(
+                    model=shatter_model,
+                    color=color.rgba(cr, cg, cb, 220),
+                    scale=frag_scale * random.uniform(0.7, 1.3),
+                    position=Vec3(pos.x, pos.y, pos.z),
+                )
+                self.particles.append((frag, frag_vel, ENEMY_DEATH_SHATTER_DURATION))
+        else:
+            # No enemy_max_hp provided — spawn a minimal shatter
+            shatter_count = ENEMY_DEATH_SHATTER_COUNT
+            shatter_model = shatter_model
+            for i in range(shatter_count):
+                angle = (i / shatter_count) * math.pi * 2 + random.uniform(-0.3, 0.3)
+                frag_vel = Vec3(
+                    math.cos(angle) * ENEMY_DEATH_SHATTER_SPEED,
+                    random.uniform(ENEMY_DEATH_SHATTER_UP_SPEED * 0.7, ENEMY_DEATH_SHATTER_UP_SPEED * 1.3),
+                    math.sin(angle) * ENEMY_DEATH_SHATTER_SPEED,
+                )
+                frag = Entity(
+                    model=shatter_model,
+                    color=color.rgba(cr, cg, cb, 220),
+                    scale=ENEMY_DEATH_SHATTER_SCALE,
+                    position=Vec3(pos.x, pos.y, pos.z),
+                )
+                self.particles.append((frag, frag_vel, ENEMY_DEATH_SHATTER_DURATION))
 
     def _spawn_heal_pulse(self, position):
         """Spawn a healing pulse ring at the given position.
@@ -9554,6 +9674,13 @@ class Game:
                     z=-0.1,
                 )
             self.combo_milestone_flash_entity.color = color.rgba(fr, fg, fb, COMBO_MILESTONE_FLASH_ALPHA)
+            # ── Combo Milestone Projectile Aura Surge ── Trigger a brief aura
+            # surge on ALL active projectiles, making every in-flight shot
+            # momentarily swell brighter and larger. This gives the milestone
+            # a tangible in-world effect through the player's weapons — you
+            # see your lasers charge up when you hit a kill streak milestone.
+            for proj in self.projectiles:
+                proj._milestone_surge_timer = COMBO_MILESTONE_PROJ_SURGE_DURATION
 
     def _chain_lightning(self, source_pos, combo_count):
         """Attempt to arc chain lightning from a killed enemy to nearby enemies.
@@ -9701,7 +9828,7 @@ class Game:
                     self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True))
                 self._drop_loot(enemy.position, enemy.name)
                 self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
-                self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                 self.enemy_death_rings.append(EnemyDeathRing(
                     position=Vec3(enemy.x, 0, enemy.z),
                     col=enemy.original_color,
@@ -10473,7 +10600,7 @@ def game_update():
                     else:
                         game.damage_numbers.append(DamageNumber(enemy.position, dash_strike_dmg, is_kill=True))
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
-                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                     game.enemy_death_rings.append(EnemyDeathRing(
                         position=Vec3(enemy.x, 0, enemy.z),
                         col=enemy.original_color,
@@ -11246,9 +11373,49 @@ def game_update():
             p._footstep_timer = 0.0
             ripple_col = game._biome_dust_color(game.current_biome)
             game.footstep_ripples.append(FootstepRipple(position=Vec3(p.x, 0, p.z), col=ripple_col))
+        # ── Sprint Kick-Up Dust ── While running at high speed, directional
+        # dust particles kick up BEHIND Zorp (opposite to movement direction),
+        # simulating the dust kicked up by running feet. Unlike the existing
+        # ambient movement dust (which spawns randomly around the player),
+        # sprint kick-up dust is directional — particles fly backward from
+        # Zorp's feet in the opposite direction of movement. Only triggers
+        # above SPRINT_KICKUP_SPEED_THRESHOLD so it doesn't appear during slow
+        # adjustments. The kick interval is independent of the existing dust
+        # and footstep ripple timers for a distinct, athletic "sprint" feel.
+        current_speed = p.velocity.length()
+        if current_speed >= SPRINT_KICKUP_SPEED_THRESHOLD:
+            p._sprint_kickup_timer = getattr(p, '_sprint_kickup_timer', 0.0) + time.dt
+            if p._sprint_kickup_timer >= SPRINT_KICKUP_INTERVAL:
+                p._sprint_kickup_timer = 0.0
+                # Direction opposite to movement
+                if current_speed > 0.1:
+                    move_dir = p.velocity / current_speed
+                    back_dir = -move_dir
+                    dust_col = game._biome_dust_color(game.current_biome)
+                    for _ in range(SPRINT_KICKUP_PARTICLE_COUNT):
+                        # Slight randomization perpendicular to back_dir
+                        perp = Vec3(-back_dir.z, 0, back_dir.x)
+                        jitter = perp * random.uniform(-0.4, 0.4)
+                        kick_vel = (back_dir * SPRINT_KICKUP_SPEED + jitter)
+                        kick_vel_y = random.uniform(SPRINT_KICKUP_UP_SPEED * 0.5, SPRINT_KICKUP_UP_SPEED * 1.2)
+                        kick_pos = Vec3(
+                            p.x + back_dir.x * 0.5 + random.uniform(-0.2, 0.2),
+                            0.1,
+                            p.z + back_dir.z * 0.5 + random.uniform(-0.2, 0.2),
+                        )
+                        dust_p = Entity(
+                            model='sphere',
+                            color=dust_col,
+                            scale=random.uniform(0.08, 0.16),
+                            position=kick_pos,
+                        )
+                        game.particles.append((dust_p, Vec3(kick_vel.x, kick_vel_y, kick_vel.z), random.uniform(0.2, 0.4)))
+        else:
+            p._sprint_kickup_timer = getattr(p, '_sprint_kickup_timer', 0.0)
     else:
         p._dust_timer = getattr(p, '_dust_timer', 0.0)
         p._footstep_timer = getattr(p, '_footstep_timer', 0.0)
+        p._sprint_kickup_timer = getattr(p, '_sprint_kickup_timer', 0.0)
 
     if p.dash_timer <= 0:
         # ── Smooth Acceleration/Deceleration ──
@@ -12194,7 +12361,7 @@ def game_update():
                                     # beyond XP/score and no visual death feedback.
                                     game._drop_loot(other_enemy.position, other_enemy.name)
                                     game._spawn_particles(other_enemy.position, other_enemy.original_color, count=PARTICLE_KILL_COUNT)
-                                    game._spawn_kill_burst(other_enemy.position, other_enemy.original_color, enemy_max_hp=other_enemy.max_hp)
+                                    game._spawn_kill_burst(other_enemy.position, other_enemy.original_color, enemy_max_hp=other_enemy.max_hp, shatter_model=getattr(other_enemy, 'model_name', 'sphere'))
                                     game.enemy_death_rings.append(EnemyDeathRing(
                                         position=Vec3(other_enemy.x, 0, other_enemy.z),
                                         col=other_enemy.original_color,
@@ -13160,7 +13327,7 @@ def game_update():
                                 else:
                                     game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True))
                                 game._spawn_particles(nearby_enemy.position, nearby_enemy.original_color, count=PARTICLE_KILL_COUNT)
-                                game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color, enemy_max_hp=nearby_enemy.max_hp)
+                                game._spawn_kill_burst(nearby_enemy.position, nearby_enemy.original_color, enemy_max_hp=nearby_enemy.max_hp, shatter_model=getattr(nearby_enemy, 'model_name', 'sphere'))
                                 # BUG FIX: AOE kills were missing enemy_death_ring,
                                 # hit-stop, FOV punch, and kill flash — all present
                                 # in the normal projectile kill path. Without these,
@@ -13281,7 +13448,7 @@ def game_update():
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                         game._drop_loot(enemy.position, enemy.name)
                         game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
-                        game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                        game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                         game.enemy_death_rings.append(EnemyDeathRing(
                             position=Vec3(enemy.x, 0, enemy.z),
                             col=enemy.original_color,
@@ -13387,7 +13554,7 @@ def game_update():
                                 game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                             game._drop_loot(enemy.position, enemy.name)
                             game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
-                            game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                            game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                             game.enemy_death_rings.append(EnemyDeathRing(
                                 position=Vec3(enemy.x, 0, enemy.z),
                                 col=enemy.original_color,
@@ -13516,7 +13683,7 @@ def game_update():
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     # Kill burst: radial ring of particles for satisfying, explosive kill feedback
                     # Scaled with enemy max HP — tougher enemies produce bigger death explosions
-                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                     # ── Enemy Death Ground Ring ── A brief expanding ground ring
                     # in the enemy's color radiates from the death point, giving
                     # the kill a ground-level visual that's visible from the
@@ -13884,7 +14051,7 @@ def game_update():
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
-                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp)
+                    game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                     # ── Enemy Death Ground Ring ── (Pulse Wave kill variant)
                     game.enemy_death_rings.append(EnemyDeathRing(
                         position=Vec3(enemy.x, 0, enemy.z),
