@@ -2951,8 +2951,15 @@ class Player(Entity):
         mag = max(0.001, math.sqrt(fx * fx + fz * fz))
         ox = (fx / mag) * 0.12
         oz = (fz / mag) * 0.12
-        self.pupil_l.position = Vec3(-0.3, 0.4, -0.6) + Vec3(ox * 0.5, 0, oz * 0.5)
-        self.pupil_r.position = Vec3(0.3, 0.4, -0.6) + Vec3(ox * 0.5, 0, oz * 0.5)
+        # BUG FIX: Pupils are parented to the eyes (parent=self.eye_l/r), so
+        # .position is LOCAL relative to the eye — NOT relative to the player.
+        # The eye's local position is (-0.3, 0.4, -0.6) for eye_l, but the pupil's
+        # local position should be (0, 0, -0.3) (set in __init__). Previously the
+        # code used the eye's position as the pupil's base, which doubled the
+        # offset — placing pupils at (-0.6, 0.8, -1.2) relative to the player
+        # instead of (-0.3, 0.4, -0.9), making them float off the eyes entirely.
+        self.pupil_l.position = Vec3(0, 0, -0.3) + Vec3(ox * 0.5, 0, oz * 0.5)
+        self.pupil_r.position = Vec3(0, 0, -0.3) + Vec3(ox * 0.5, 0, oz * 0.5)
 
     def animate_bob(self, t):
         """Apply vertical bob and squish/stretch animation to the player.
@@ -11615,8 +11622,16 @@ def game_update():
                 p._sprint_kickup_timer = 0.0
                 # Direction opposite to movement
                 if current_speed > 0.1:
-                    move_dir = p.velocity / current_speed
-                    back_dir = -move_dir
+                    # BUG FIX: Use a local variable instead of reassigning move_dir.
+                    # move_dir is the WASD input direction used by the movement
+                    # physics below. Reassigning it to the velocity direction
+                    # contaminated the acceleration calculation, causing the player
+                    # to accelerate toward their current velocity direction instead
+                    # of the input direction on frames where sprint kick-up dust
+                    # fired — producing subtle but noticeable "drift" when changing
+                    # direction at high speed.
+                    vel_dir = p.velocity / current_speed
+                    back_dir = -vel_dir
                     dust_col = game._biome_dust_color(game.current_biome)
                     for _ in range(SPRINT_KICKUP_PARTICLE_COUNT):
                         # Slight randomization perpendicular to back_dir
