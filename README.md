@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.39.0 — 3D!)
+## Features (v2.39.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -438,6 +438,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.39.1 — Game Feel Balance Pass
+- **Snappier player deceleration**: Player deceleration increased from 32.0 to 36.0, making stops feel more precise and responsive — Zorp no longer slides as much when releasing movement keys, improving kiting precision and making direction changes feel sharper. The movement remains smooth (exponential smoothing) but settles to a stop ~12% faster, reducing the "ice-skating" feel during rapid direction changes in combat
+- **Shorter dash cooldown**: Dash cooldown reduced from 2.0s to 1.8s, making the core dodge ability feel more responsive and fluid in fast-paced combat. The 10% reduction keeps the dash from feeling gated during intense encounters while preserving its tactical role — you can dash more frequently to dodge enemy attacks, reposition, or dash-strike through enemies. This makes the game feel more dynamic and aggressive without making the dash spammable
+- **Shorter Pulse Wave cooldown**: Pulse Wave cooldown reduced from 8.0s to 7.0s, making the crowd-control ability more usable in sustained fights. When surrounded by a mob, waiting 8 seconds between Pulse Waves often felt too long — the 1-second reduction lets you use it more freely as a panic button and crowd-clearing tool, keeping the action flowing during extended combat encounters
+- **More forgiving pickup radius**: Collectible pickup radius increased from 2.8 to 3.0 units, reducing the frustration of near-miss pickups during fast movement. Items you sprint past at high speed are now more reliably collected, making the collection loop feel smoother and more satisfying — especially during kiting where you're moving quickly through loot fields
 
 ### v2.39.0 — Projectile Interception, Enemy Projectile Proximity Warning & Movement-Based HP Regen
 - **Projectile interception**: Player tentacle lasers can now shoot down incoming enemy projectiles (Spore Spitter spit, etc.) — giving you an active defense option against ranged attacks! When your bolt passes close to an enemy projectile, both are destroyed in a bright cyan-orange spark collision with an expanding impact ring and screen shake. This makes combat against Spore Spitters far more interactive: instead of only dodging or relying on Mirror Shard reflection, you can proactively intercept incoming fire with well-timed shots. The interception radius is generous (1.2 units) so it feels rewarding rather than pixel-perfect, and you earn a small XP reward (3 XP) for each successful interception — rewarding skillful active defense. Previously, enemy projectiles could only be avoided by dodging or reflected with the Mirror Shard power-up; now you can shoot them out of the sky

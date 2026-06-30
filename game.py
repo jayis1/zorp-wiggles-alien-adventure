@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.39.0"
+VERSION = "2.39.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -22,7 +22,7 @@ TILE_SCALE = 4
 # ─── Player ───────────────────────────────────────────────────────────────────
 PLAYER_SPEED = 12
 PLAYER_ACCELERATION = 45.0         # How fast the player accelerates (higher = snappier)
-PLAYER_DECELERATION = 32.0          # How fast the player decelerates (lower = more slide)
+PLAYER_DECELERATION = 36.0          # How fast the player decelerates (lower = more slide) — snappier stops for more precise kiting
 PLAYER_INVULN_DURATION = 0.5
 PLAYER_BLINK_RATE = 20
 PLAYER_START_XP = 80               # Smoother early-game: first level-up comes sooner (was 100)
@@ -30,7 +30,7 @@ PLAYER_START_HP = 120
 
 # ─── Combat ───────────────────────────────────────────────────────────────────
 SHOOT_COOLDOWN = 0.11               # Slightly snappier shooting feel
-COLLECT_RADIUS = 2.8                # More forgiving pickup radius
+COLLECT_RADIUS = 3.0                # More forgiving pickup radius — reduces near-miss pickup frustration during fast movement
 COLLECT_PULL_RADIUS = 5.5           # Magnetic pull starts a bit further out
 COLLECT_PULL_SPEED = 16.0           # Items zip to you faster — more satisfying snap
 PROJECTILE_BASE_DAMAGE = 20
@@ -785,7 +785,7 @@ SPAWN_CLEAR_RADIUS = 5
 SPAWN_PAD_RADIUS = 3
 
 # ─── Dash ─────────────────────────────────────────────────────────────────────
-DASH_COOLDOWN = 2.0
+DASH_COOLDOWN = 1.8                 # Slightly shorter cooldown — makes the core dodge ability feel more responsive in fast-paced combat
 DASH_SPEED = 60
 DASH_DURATION = 0.2
 DASH_TRAIL_PARTICLES = 6
@@ -1741,7 +1741,7 @@ C_STAR_FRUIT = color.rgb(255, 255, 100)
 C_TOXIC_BOG = color.rgb(80, 120, 20)
 
 # ─── Pulse Wave Ability (Q key) ──────────────────────────────────────────
-PULSE_WAVE_COOLDOWN = 8.0            # Cooldown between pulse wave uses
+PULSE_WAVE_COOLDOWN = 7.0            # Cooldown between pulse wave uses — slightly shorter for more usable crowd control in sustained fights
 PULSE_WAVE_RADIUS = 10.0             # How far the shockwave reaches
 PULSE_WAVE_EXPAND_SPEED = 25.0       # How fast the ring expands outward
 PULSE_WAVE_PUSH_FORCE = 18.0        # How strongly enemies are pushed away
