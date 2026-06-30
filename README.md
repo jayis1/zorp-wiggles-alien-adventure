@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.40.0 — 3D!)
+## Features (v2.40.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -95,7 +95,9 @@ python game.py
 - Satisfying collectible pickup burst particles with magnetic pull snap
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
+- **Cinematic death screen** with staggered fade-in animation and score roll-up! The title, score, stats, and restart prompt cascade in sequence (ease-out cubic, 0.25s stagger) instead of snapping visible — death feels weighty and cinematic. The final score counts up from 0 to the real value, making the final tally feel earned
 - Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak, best flawless streak)
+- **Crosshair enemy-proximity tint** — the crosshair subtly tints warm red-orange when hovering near an enemy, giving target-acquisition feedback before you fire! Smoothly interpolates from white to red-orange based on cursor-to-enemy distance, making target prioritization in crowded combat faster and more intuitive
 - Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
 - Enemy respawning and loot drops
@@ -440,6 +442,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.40.1 — Death Screen Cinematic Fade-In, Crosshair Target Tint & Score Roll-Up
+- **Death screen staggered fade-in**: The game over screen now cascades in with a staggered fade-in animation instead of all elements snapping visible at once. The "GAME OVER" title fades in first (ease-out cubic over 0.5s), then the score subtitle, then the detailed stats block, then the "Press R to Restart" prompt — each delayed by 0.25s after the previous. This makes death feel cinematic and weighty: the title hits first like a punch, then the details materialize in sequence, giving the player a moment to process each piece of information rather than being overwhelmed by a full-screen dump. The restart prompt also gently pulses once fully visible to draw the eye and indicate interaction is possible. Previously, the entire death screen appeared instantly the moment HP hit zero — a jarring, abrupt transition from gameplay to a wall of text
+- **Death screen score roll-up**: The final score on the death screen now counts up from 0 to the actual value using the same smooth lerp animation as the in-game HUD score rollup, making the final number feel earned and dramatic instead of instantly displayed. You watch your score climb to its peak as the subtitle fades in, creating a satisfying "final tally" moment that mirrors the rollup you've been watching all game. The count-up speed (8.0 lerp rate) is tuned to take ~1–2 seconds for typical end-game scores, so it's a brief satisfying reveal rather than a slow grind. Previously, the death screen showed the final score as a static number the instant it appeared
+- **Crosshair enemy-proximity tint**: The crosshair now subtly tints toward a warm red-orange when hovering near an enemy — giving target-acquisition feedback BEFORE you fire. The tint smoothly interpolates based on how close the cursor is to the nearest enemy within 3.5 world units: subtle at the edge of the radius, full warm red-orange when directly over a target. This makes aiming feel more connected to the world — you can see at a glance that your crosshair is "on target" without needing to shoot first, making target prioritization in crowded combat faster and more intuitive. Only checks enemies within 40 units of the player (with a cursor distance pre-check) to avoid performance impact, and hit-confirmation flashes take priority over the proximity tint so confirmed hits still read clearly. Previously, the crosshair only reacted to shooting (recoil expand) and hits (flash), with no feedback for when you were simply aiming at an enemy
 
 ### v2.40.0 — Combo-Scaled Kill Shake, Near-Death Shudder & Vacuum Pulse Summary
 - **Combo-scaled kill screen shake**: Each kill's screen shake now intensifies with the current combo count, making high kill streaks feel progressively more impactful through the camera. At combo x1 the shake is the standard 0.75; at x10 it grows to 1.125 (+50%); at x20+ it's capped at 1.3125 (+75%). Every consecutive kill in a big combo shakes the screen harder than the last, building visceral momentum that complements the combo edge glow, milestone fireworks, and damage buff. The scaling uses the same COMBO_MAX_TIER cap as the XP/score multipliers so it doesn't grow unbounded. This applies to ALL kill types — projectile, dash strike, AOE, piercing crit, chain lightning, pulse wave, and Void Bomber friendly-fire — so every kill in a streak feels more powerful regardless of how you scored it. Previously, every kill produced the same flat screen shake regardless of combo, making high streaks feel no different from individual kills through the camera

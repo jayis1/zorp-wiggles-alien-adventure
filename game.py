@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.40.0"
+VERSION = "2.40.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -748,6 +748,34 @@ LEVEL_UP_SPEED_BURST_MULT = 1.3         # Speed multiplier during the burst
 # ─── Death Screen ────────────────────────────────────────────────────────────
 DEATH_SCREEN_TITLE_COLOR = color.rgb(255, 40, 40)    # Brighter red for more impact
 DEATH_SCREEN_STATS_COLOR = color.rgba(220, 220, 255, 255)  # Slightly blue-white for readability
+# ── Death Screen Staggered Fade-In ── When the player dies, the death screen
+# elements (title, subtitle, stats, restart prompt) cascade in with a staggered
+# fade-in instead of all snapping visible at once. Each element starts at 0
+# alpha and ramps to full over DEATH_SCREEN_FADE_DURATION seconds, with a
+# DEATH_SCREEN_FADE_STAGGER delay between successive elements. This makes
+# death feel cinematic and weighty — the title hits first, then the score
+# counts up, then the full stats materialize, then the restart prompt appears
+# — instead of a jarring instant full-screen reveal. The score in the subtitle
+# also rolls up from 0 to the final value (using the same lerp as the HUD score
+# rollup) so the final number feels earned, not just dumped on screen.
+DEATH_SCREEN_FADE_DURATION = 0.5    # Seconds for each element to fade from 0 to full alpha
+DEATH_SCREEN_FADE_STAGGER = 0.25    # Delay between successive elements starting their fade
+DEATH_SCREEN_SCORE_ROLLUP_SPEED = 8.0  # Lerp speed for the death-screen score count-up
+
+# ─── Crosshair Enemy-Proximity Tint ──────────────────────────────────────────
+# When the mouse cursor's world position is near an enemy, the crosshair
+# subtly tints toward a warm red-orange — giving target-acquisition feedback
+# BEFORE you fire. This makes aiming feel more connected to the world: you can
+# see at a glance that your crosshair is "on target" without needing to shoot
+# first. The tint smoothly interpolates based on how close the cursor is to
+# the nearest enemy, so it's subtle at the edge of the proximity radius and
+# full-strength when directly over a target. Only checks nearby enemies
+# (within CROSSHAIR_PROXIMITY_CHECK_RADIUS of the player) to avoid iterating
+# the entire enemy list every frame.
+CROSSHAIR_PROXIMITY_RADIUS = 3.5       # How close cursor must be to an enemy to trigger tint (world units)
+CROSSHAIR_PROXIMITY_CHECK_RADIUS = 40  # Only check enemies within this distance of the player
+CROSSHAIR_PROXIMITY_TINT_COLOR = color.rgb(255, 100, 60)  # Warm red-orange target hint
+CROSSHAIR_PROXIMITY_TINT_ALPHA = 200   # Max alpha boost when directly over an enemy
 
 # ─── Stars ────────────────────────────────────────────────────────────────────
 STAR_COUNT = 80
@@ -5449,6 +5477,16 @@ class Game:
         self.spawn_timer = 0
         self.mission_timer = 0
 
+        # ── Death Screen Fade-In State ── Tracks the staggered fade-in
+        # animation for the death screen. When _show_death_screen() is called,
+        # death_fade_timer is set to the total animation duration and counts
+        # down in real time. Each element's alpha is computed from how much
+        # time has elapsed since its stagger offset. The death_score_displayed
+        # ramps from 0 to the final score via lerp for a satisfying count-up.
+        self.death_fade_timer = 0.0
+        self.death_score_displayed = 0.0
+        self.death_final_score = 0
+
         # Visual effects state
         self.screen_shake = 0.0
         self.level_up_timer = 0.0
@@ -6877,12 +6915,25 @@ class Game:
         return math.sqrt(dx * dx + dz * dz)
 
     def _show_death_screen(self, p):
-        """Display the game over screen with detailed survival stats."""
+        """Display the game over screen with detailed survival stats.
+
+        The death screen uses a staggered fade-in: elements appear in sequence
+        (title → subtitle → stats → restart prompt) rather than all snapping
+        visible at once, making death feel cinematic and weighty. The subtitle
+        score also rolls up from 0 to the final value for a satisfying count-up
+        reveal, mirroring the in-game HUD score rollup.
+        """
         self.game_over = True
-        self.game_over_text.visible = True
+        # Total fade-in duration = all stagger offsets + one fade duration
+        # Elements: title (stagger 0), subtitle (stagger 1), stats (stagger 2), restart (stagger 3)
+        self.death_fade_timer = (3 * DEATH_SCREEN_FADE_STAGGER) + DEATH_SCREEN_FADE_DURATION
+        self.death_final_score = p.score
+        self.death_score_displayed = 0.0
+
+        # Set text content immediately but start at 0 alpha — the fade-in
+        # is driven by the game_over update block in game_update().
         self.game_over_text.text = 'GAME OVER'
-        self.game_over_sub.visible = True
-        self.game_over_sub.text = f'Score: {p.score:,}  Level: {p.level}'
+        self.game_over_sub.text = f'Score: 0  Level: {p.level}'
         total_kills = sum(p.kills.values())
         total_items = sum(p.inventory.values())
         time_alive = int(self.t)
@@ -6907,10 +6958,20 @@ class Game:
             f'Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
         ]
-        self.game_over_stats.visible = True
         self.game_over_stats.text = '\n'.join(stats_lines)
-        self.game_over_restart.visible = True
         self.game_over_restart.text = 'Press R to Restart'
+        # Make all elements visible — the fade-in controls alpha, not visibility.
+        # They start at 0 alpha (set by the update loop) so they're invisible
+        # until their stagger offset passes.
+        self.game_over_text.visible = True
+        self.game_over_sub.visible = True
+        self.game_over_stats.visible = True
+        self.game_over_restart.visible = True
+        # Store the original colors so we can lerp alpha from 0 to full
+        self._death_title_color_255 = _c255_color(DEATH_SCREEN_TITLE_COLOR)
+        self._death_sub_color_255 = _c255_color(color.white)
+        self._death_stats_color_255 = _c255_color(DEATH_SCREEN_STATS_COLOR)
+        self._death_restart_color_255 = _c255_color(color.yellow)
 
     def _spawn_initial_entities(self):
         """Populate the world with initial collectibles and enemies.
@@ -9525,8 +9586,8 @@ class Game:
             self.crosshair_hit_flash_timer -= time.dt
             if self.crosshair_hit_flash_timer <= 0:
                 self.crosshair_hit_flash_timer = 0
-                self.crosshair.color = color.rgba(255, 255, 255, 128)
-                self.crosshair2.color = color.rgba(255, 255, 255, 128)
+                # Don't reset to white here — the proximity tint logic below
+                # will set the appropriate color based on enemy proximity.
             else:
                 flash_ratio = self.crosshair_hit_flash_timer / CROSSHAIR_HIT_FLASH_DURATION
                 # Blend from the flash color toward normal white
@@ -9537,6 +9598,66 @@ class Game:
                 a = int(128 + 127 * flash_ratio)  # Brighter during flash
                 self.crosshair.color = color.rgba(r, g, b, a)
                 self.crosshair2.color = color.rgba(r, g, b, a)
+
+        # ── Crosshair Enemy-Proximity Tint ── When the mouse cursor's world
+        # position is near an enemy, the crosshair subtly tints toward a warm
+        # red-orange — giving target-acquisition feedback BEFORE you fire.
+        # This makes aiming feel more connected to the world: you can see at
+        # a glance that your crosshair is "on target" without needing to shoot
+        # first. The tint smoothly interpolates based on how close the cursor
+        # is to the nearest enemy within CROSSHAIR_PROXIMITY_RADIUS. Only
+        # checks nearby enemies (within CROSSHAIR_PROXIMITY_CHECK_RADIUS of
+        # the player) to avoid iterating the entire enemy list every frame.
+        # Skipped while the hit-flash is active so hit confirmation takes
+        # priority over the proximity hint.
+        if self.crosshair_hit_flash_timer <= 0:
+            mouse_pt = mouse.world_point
+            if mouse_pt is not None:
+                mx, mz = mouse_pt.x, mouse_pt.z
+                px, pz = p.x, p.z
+                # Quick distance pre-check: only run the enemy loop if the
+                # cursor is within the check radius of the player
+                cursor_dist_sq = (mx - px) ** 2 + (mz - pz) ** 2
+                check_rad_sq = CROSSHAIR_PROXIMITY_CHECK_RADIUS ** 2
+                if cursor_dist_sq < check_rad_sq:
+                    best_prox = 0.0  # 0 = no enemy near cursor, 1 = directly on
+                    prox_rad_sq = CROSSHAIR_PROXIMITY_RADIUS ** 2
+                    for e in self.enemies:
+                        if not e.alive or e.dying:
+                            continue
+                        # Skip enemies too far from the player (performance)
+                        dx_e = e.x - px
+                        dz_e = e.z - pz
+                        if dx_e * dx_e + dz_e * dz_e > check_rad_sq:
+                            continue
+                        # Distance from cursor to enemy
+                        dx_c = e.x - mx
+                        dz_c = e.z - mz
+                        dist_sq_c = dx_c * dx_c + dz_c * dz_c
+                        if dist_sq_c < prox_rad_sq:
+                            dist_c = math.sqrt(dist_sq_c)
+                            # Proximity: 0 at edge of radius, 1 at center
+                            prox = 1.0 - (dist_c / CROSSHAIR_PROXIMITY_RADIUS)
+                            if prox > best_prox:
+                                best_prox = prox
+                    if best_prox > 0:
+                        # Blend from white (255,255,255) toward warm red-orange
+                        pr, pg, pb = _c255_color(CROSSHAIR_PROXIMITY_TINT_COLOR)
+                        r = int(255 + (pr - 255) * best_prox)
+                        g = int(255 + (pg - 255) * best_prox)
+                        b = int(255 + (pb - 255) * best_prox)
+                        a = int(128 + (CROSSHAIR_PROXIMITY_TINT_ALPHA - 128) * best_prox)
+                        self.crosshair.color = color.rgba(r, g, b, a)
+                        self.crosshair2.color = color.rgba(r, g, b, a)
+                    else:
+                        self.crosshair.color = color.rgba(255, 255, 255, 128)
+                        self.crosshair2.color = color.rgba(255, 255, 255, 128)
+                else:
+                    self.crosshair.color = color.rgba(255, 255, 255, 128)
+                    self.crosshair2.color = color.rgba(255, 255, 255, 128)
+            else:
+                self.crosshair.color = color.rgba(255, 255, 255, 128)
+                self.crosshair2.color = color.rgba(255, 255, 255, 128)
 
         # ── Overheal Barrier HP Bar ── Golden extension to the right of the
         # normal HP bar, showing how much overheal buffer the player has.
@@ -10352,6 +10473,85 @@ def game_update():
     global game
 
     if game.game_over:
+        # ── Death Screen Staggered Fade-In ── Drive the cascade animation
+        # that makes the death screen elements appear in sequence rather than
+        # all at once. The death_fade_timer counts down from the total
+        # animation duration; each element's alpha is computed from the
+        # elapsed time since its stagger offset. The subtitle score also
+        # rolls up from 0 to the final value.
+        if game.death_fade_timer > 0:
+            game.death_fade_timer -= time.dt
+            if game.death_fade_timer < 0:
+                game.death_fade_timer = 0
+            # Total animation duration for reference
+            total_dur = (3 * DEATH_SCREEN_FADE_STAGGER) + DEATH_SCREEN_FADE_DURATION
+            elapsed = total_dur - game.death_fade_timer
+            # Helper: compute fade alpha (0-1) for a given stagger index
+            def _death_fade_alpha(stagger_idx):
+                t = elapsed - (stagger_idx * DEATH_SCREEN_FADE_STAGGER)
+                if t <= 0:
+                    return 0.0
+                if t >= DEATH_SCREEN_FADE_DURATION:
+                    return 1.0
+                # Ease-out cubic for a smooth, decelerating fade
+                t_norm = t / DEATH_SCREEN_FADE_DURATION
+                return 1.0 - (1.0 - t_norm) ** 3
+
+            # Element 0: Title ("GAME OVER")
+            a0 = _death_fade_alpha(0)
+            tr, tg, tb = game._death_title_color_255
+            game.game_over_text.color = color.rgba(tr, tg, tb, int(255 * a0))
+
+            # Element 1: Subtitle (score + level) — score rolls up
+            a1 = _death_fade_alpha(1)
+            # Score count-up: lerp from 0 to final while this element is fading in
+            if a1 > 0 and a1 < 1.0:
+                game.death_score_displayed = lerp(
+                    game.death_score_displayed, game.death_final_score,
+                    min(1.0, DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt))
+            elif a1 >= 1.0:
+                # Keep rolling up until we reach the final score
+                if game.death_score_displayed < game.death_final_score - 0.5:
+                    game.death_score_displayed = lerp(
+                        game.death_score_displayed, game.death_final_score,
+                        min(1.0, DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt))
+                else:
+                    game.death_score_displayed = game.death_final_score
+            displayed = int(game.death_score_displayed)
+            game.game_over_sub.text = f'Score: {displayed:,}  Level: {game.player.level}'
+            sr, sg, sb = game._death_sub_color_255
+            game.game_over_sub.color = color.rgba(sr, sg, sb, int(255 * a1))
+
+            # Element 2: Stats
+            a2 = _death_fade_alpha(2)
+            str_r, str_g, str_b = game._death_stats_color_255
+            game.game_over_stats.color = color.rgba(str_r, str_g, str_b, int(255 * a2))
+
+            # Element 3: Restart prompt
+            a3 = _death_fade_alpha(3)
+            rr, rg, rb = game._death_restart_color_255
+            game.game_over_restart.color = color.rgba(rr, rg, rb, int(255 * a3))
+
+        else:
+            # ── Post-Fade-In: Restart Prompt Pulse ── Once the fade-in is
+            # complete, the restart prompt gently pulses to draw the player's
+            # eye and indicate interaction is possible. Uses time.dt as the
+            # time base (accumulated via a dedicated timer since game.t is
+            # frozen during game_over). The other elements stay at full alpha.
+            if not hasattr(game, '_death_pulse_time'):
+                game._death_pulse_time = 0.0
+            game._death_pulse_time += time.dt
+            pulse = 0.85 + 0.15 * math.sin(game._death_pulse_time * 3)
+            rr, rg, rb = game._death_restart_color_255
+            game.game_over_restart.color = color.rgba(rr, rg, rb, int(255 * pulse))
+            # Ensure score display has finished rolling up
+            if game.death_score_displayed < game.death_final_score - 0.5:
+                game.death_score_displayed = lerp(
+                    game.death_score_displayed, game.death_final_score,
+                    min(1.0, DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt))
+                displayed = int(game.death_score_displayed)
+                game.game_over_sub.text = f'Score: {displayed:,}  Level: {game.player.level}'
+
         # Check for restart
         if held_keys['r']:
             # Bug fix: instead of destroying ALL scene entities (which kills camera,
