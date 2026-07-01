@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.41.0"
+VERSION = "2.41.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -92,6 +92,22 @@ ENEMY_ATTACK_LUNGE_DISTANCE = 1.5    # Base forward lunge distance (world units)
 ENEMY_ATTACK_LUNGE_DURATION = 0.15   # How long the lunge movement lasts (seconds)
 ENEMY_ATTACK_LUNGE_SIZE_BASE = 1.0   # Enemy scale at which lunge = base distance
 ENEMY_ATTACK_LUNGE_SIZE_MULT_MIN = 0.3  # Min lunge multiplier (for very large enemies)
+# ── Smooth Lunge Slide ── The attack lunge now uses a velocity-based smooth
+# slide over ENEMY_ATTACK_LUNGE_DURATION instead of teleporting instantly.
+# The enemy gets a lunge_vel that's applied each frame and decays, so it
+# visibly slides forward toward the player during the strike — a much more
+# dynamic and readable attack motion than a snap-to-position teleport.
+# Combined with the directional stretch below, this makes enemy melee
+# attacks feel like committed physical strikes.
+ENEMY_ATTACK_LUNGE_DECAY = 8.0      # How fast lunge velocity decays (higher = snappier)
+# ── Enemy Attack Lunge Directional Stretch ── During the lunge slide, the
+# enemy briefly stretches along the lunge direction (elongated in the strike
+# direction, compressed perpendicular) — a directional squash & stretch that
+# makes the attack feel like a committed forward thrust rather than a slide.
+# The stretch decays with the lunge velocity so it's strongest at the start
+# of the strike and eases back to normal as the lunge settles.
+ENEMY_ATTACK_LUNGE_STRETCH = 0.20   # Max elongation along lunge direction (0.20 = 120%)
+ENEMY_ATTACK_LUNGE_SQUISH = 0.10    # Max compression perpendicular to lunge (0.10 = 90%)
 
 # ── Enemy Spawn Grace Shield Visual ── During the spawn grace period
 # (ENEMY_SPAWN_GRACE_PERIOD), enemies are non-hostile but previously showed
@@ -1433,6 +1449,22 @@ SWARM_ESCAPE_SPEED_MULT = 1.2       # +20% movement speed while surrounded
 SWARM_ESCAPE_CHECK_INTERVAL = 0.25  # How often to recount (seconds)
 
 # ─── HP Bar Damage Shake ──────────────────────────────────────────────────────
+# ── Player Damage Ground Impact Ring ── When Zorp takes damage, a brief
+# expanding red ring radiates outward from his position on the ground —
+# matching the established visual language of heal pulse rings (green),
+# dash landing rings (biome-tinted), footstep ripples, muzzle flash rings
+# (cyan), enemy death rings, and pickup rings. Every other gameplay event
+# has a ground ring, but player damage didn't — making hits feel less
+# grounded than they should. The red impact ring makes each hit feel like
+# it has physical presence in the world: you see the damage ripple outward
+# from where Zorp was standing, complementing the existing screen shake,
+# HP bar shake, damage particles, danger vignette, and damage direction
+# indicator with a ground-level visual that's visible from the third-person
+# camera even when looking straight down.
+PLAYER_DAMAGE_RING_DURATION = 0.35    # How long the ring expands (seconds)
+PLAYER_DAMAGE_RING_START_SCALE = 0.5  # Starting scale of the impact ring
+PLAYER_DAMAGE_RING_MAX_SCALE = 3.0    # Max scale the impact ring reaches
+PLAYER_DAMAGE_RING_ALPHA = 120        # Starting alpha of the impact ring
 HP_BAR_SHAKE_DURATION = 0.4      # How long the HP bar shakes after taking damage
 HP_BAR_SHAKE_INTENSITY = 0.012  # Max pixel offset of the HP bar shake
 
@@ -3371,6 +3403,13 @@ class Enemy(Entity):
         self._hit_stretch_dir = None  # Direction of the last hit (for directional stretch)
         self.decor_entities = []
         self.knockback_vel = Vec3(0, 0, 0)  # Knockback velocity from being hit
+        # ── Smooth Attack Lunge ── When the enemy attacks, it gets a brief
+        # forward lunge velocity that decays over time, producing a smooth
+        # slide toward the player instead of an instant teleport. The
+        # lunge_stretch_dir stores the lunge direction for the directional
+        # stretch visual that accompanies the slide.
+        self.lunge_vel = Vec3(0, 0, 0)
+        self.lunge_stretch_dir = None  # Direction of active lunge for stretch visual
         self.alerted = False                  # Whether enemy has detected the player (for alert flash)
         self.alert_flash_timer = 0.0          # Timer for the detection alert flash
         self.alert_indicator = None           # Billboard "!" Text entity shown on first detection
@@ -4395,6 +4434,46 @@ class MuzzleFlashRing(Entity):
         # Fade alpha out smoothly
         alpha = max(0, int(MUZZLE_RING_ALPHA * (1.0 - progress)))
         self.color = color.rgba(0, 255, 255, alpha)
+        return False
+
+
+# ─── Player Damage Ground Impact Ring ──────────────────────────────────────
+class PlayerDamageRing(Entity):
+    """A brief expanding red ring that radiates from Zorp's position when hit.
+
+    Every other gameplay event (heal, dash, pickup, kill, footstep, muzzle
+    flash) has a ground ring, but player damage didn't — making hits feel
+    less grounded than they should. The red impact ring makes each hit feel
+    like it has physical presence in the world: you see the damage ripple
+    outward from where Zorp was standing. Complements the existing screen
+    shake, HP bar shake, damage particles, danger vignette, and damage
+    direction indicator with a ground-level visual visible from the
+    third-person camera even when looking straight down.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='quad',
+            color=color.rgba(255, 40, 40, PLAYER_DAMAGE_RING_ALPHA),
+            scale=PLAYER_DAMAGE_RING_START_SCALE,
+            position=position + Vec3(0, 0.08, 0),
+            rotation_x=90,
+        )
+        self.lifetime = PLAYER_DAMAGE_RING_DURATION
+        self.max_lifetime = PLAYER_DAMAGE_RING_DURATION
+
+    def update_ring(self, dt):
+        """Expand and fade the damage ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand from start scale to max scale with ease-out
+        ease = 1.0 - (1.0 - progress) ** 2
+        self.scale = PLAYER_DAMAGE_RING_START_SCALE + (PLAYER_DAMAGE_RING_MAX_SCALE - PLAYER_DAMAGE_RING_START_SCALE) * ease
+        # Fade alpha out smoothly
+        alpha = max(0, int(PLAYER_DAMAGE_RING_ALPHA * (1.0 - progress)))
+        self.color = color.rgba(255, 40, 40, alpha)
         return False
 
 
@@ -5803,6 +5882,7 @@ class Game:
         self.footstep_ripples = []  # Player footstep ground ripples while running
         self.enemy_death_rings = []  # Enemy death expanding ground rings
         self.muzzle_flash_rings = []  # Muzzle flash ground rings on each shot
+        self.player_damage_rings = []  # Player damage ground impact rings
 
         # ── Meteor Shower World Event ── Tracks the countdown to the next
         # meteor crash. When the timer reaches 0, a meteor streaks across the
@@ -6485,6 +6565,12 @@ class Game:
             if mfr and hasattr(mfr, 'enabled') and mfr.enabled:
                 destroy(mfr)
         self.muzzle_flash_rings.clear()
+
+        # Destroy player damage ground impact rings
+        for pdr in self.player_damage_rings:
+            if pdr and hasattr(pdr, 'enabled') and pdr.enabled:
+                destroy(pdr)
+        self.player_damage_rings.clear()
 
         # Destroy meteor shower impact rings
         for mr in self.meteor_rings:
@@ -11296,6 +11382,11 @@ def game_update():
             if mfr.update_ring(time.dt):
                 destroy(mfr)
                 game.muzzle_flash_rings.remove(mfr)
+        # Update player damage rings during freeze (visual only)
+        for pdr in game.player_damage_rings[:]:
+            if pdr.update_ring(time.dt):
+                destroy(pdr)
+                game.player_damage_rings.remove(pdr)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -12751,9 +12842,19 @@ def game_update():
 
     # ── HP Bar Damage Shake Trigger ── When the player takes damage, trigger
     # the HP bar shake timer so _update_hud can apply the jitter effect.
+    # Also spawn a red ground impact ring at Zorp's position — matching the
+    # visual language of all other gameplay events (heal, dash, pickup, kill,
+    # footstep, muzzle flash all have ground rings) so player damage feels
+    # equally grounded and physical.
     if p.damage_taken_flag:
         p.damage_taken_flag = False
         game.hp_bar_shake_timer = HP_BAR_SHAKE_DURATION
+        # ── Player Damage Ground Impact Ring ── Red expanding ring at Zorp's
+        # feet when hit, complementing screen shake, HP bar shake, damage
+        # particles, and danger vignette with a ground-level visual.
+        game.player_damage_rings.append(PlayerDamageRing(
+            position=Vec3(p.x, 0, p.z),
+        ))
 
     # ── Flawless Kill Streak Reset ── When the player takes damage (that
     # actually reduces HP, not absorbed by shield/overheal), the flawless
@@ -13125,7 +13226,61 @@ def game_update():
             if abs(enemy.knockback_vel.x) < 0.1 and abs(enemy.knockback_vel.z) < 0.1:
                 enemy.knockback_vel = Vec3(0, enemy.knockback_vel.y, 0)
 
-        # Skip AI updates for very distant enemies (performance)
+        # ── Process Smooth Attack Lunge ── The enemy slides forward on a
+        # velocity that decays over time, producing a smooth lunge toward
+        # the player instead of an instant teleport. The lunge velocity is
+        # set when the enemy attacks and decays exponentially each frame.
+        # While the lunge is active, a directional stretch is applied to
+        # the enemy model (elongated along the lunge direction, compressed
+        # perpendicular) for a dynamic "forward thrust" visual that makes
+        # the attack feel committed and physical. The stretch is only
+        # applied when no higher-priority scale effect (hit punch, windup)
+        # is active so it composes cleanly with combat feedback.
+        if enemy.lunge_vel.length() > 0.1:
+            lunge_pos = enemy.position + enemy.lunge_vel * time.dt
+            if game._is_walkable(lunge_pos.x, lunge_pos.z):
+                enemy.x = lunge_pos.x
+                enemy.z = lunge_pos.z
+            else:
+                # Wall-slide if blocked
+                if game._is_walkable(enemy.x + enemy.lunge_vel.x * time.dt, enemy.z):
+                    enemy.x += enemy.lunge_vel.x * time.dt
+                if game._is_walkable(enemy.x, enemy.z + enemy.lunge_vel.z * time.dt):
+                    enemy.z += enemy.lunge_vel.z * time.dt
+            # Exponential decay
+            decay_factor = math.exp(-ENEMY_ATTACK_LUNGE_DECAY * time.dt)
+            enemy.lunge_vel = enemy.lunge_vel * decay_factor
+            # ── Directional Lunge Stretch ── Stretch the enemy along the
+            # lunge direction while the velocity is significant. The stretch
+            # intensity scales with remaining velocity (strongest at strike
+            # start, eases back to normal as the lunge settles). Only applies
+            # when no hit punch or windup is active to avoid conflicts.
+            if (enemy.hit_scale_punch <= 0 and not enemy._attack_windup_active
+                    and enemy.lunge_stretch_dir is not None
+                    and dist_to_player < VISUAL_CULL_RANGE):
+                lunge_intensity = min(1.0, enemy.lunge_vel.length() / (ENEMY_ATTACK_LUNGE_DISTANCE / ENEMY_ATTACK_LUNGE_DURATION))
+                stretch_amt = ENEMY_ATTACK_LUNGE_STRETCH * lunge_intensity
+                squish_amt = ENEMY_ATTACK_LUNGE_SQUISH * lunge_intensity
+                # Decompose stretch into X and Z based on lunge direction
+                dx_abs = abs(enemy.lunge_stretch_dir.x)
+                dz_abs = abs(enemy.lunge_stretch_dir.z)
+                # The axis aligned with the lunge gets elongated, the
+                # perpendicular axis gets compressed (proportionally to
+                # how aligned the lunge is with each axis)
+                x_factor = 1.0 + stretch_amt * dx_abs - squish_amt * dz_abs
+                z_factor = 1.0 + stretch_amt * dz_abs - squish_amt * dx_abs
+                enemy.scale = Vec3(
+                    enemy.original_scale * x_factor,
+                    enemy.original_scale,
+                    enemy.original_scale * z_factor,
+                )
+        else:
+            enemy.lunge_vel = Vec3(0, 0, 0)
+            # Restore normal scale when lunge ends (if we were stretching)
+            if enemy.lunge_stretch_dir is not None:
+                enemy.lunge_stretch_dir = None
+                if enemy.hit_scale_punch <= 0 and not enemy._attack_windup_active:
+                    enemy.scale = enemy.original_scale
         # Grace period: newly spawned enemies don't detect the player for ENEMY_SPAWN_GRACE_PERIOD seconds
         # BUG FIX: spawn_age was computed a second time here (first computation
         # is at line ~7937 for the spawn fade-in). Reusing the same variable
@@ -13944,12 +14099,16 @@ def game_update():
                 if died:
                     game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
-            # ── Attack Forward Lunge ── On attack, the enemy physically lunges
-            # forward toward the player a short distance instead of staying in
-            # place. This makes melee combat feel more dynamic — enemies commit
-            # to a direction when they strike, making attacks readable and
-            # dodgeable. The lunge distance scales inversely with enemy size so
-            # small fast enemies lunge further while large enemies barely move.
+            # ── Attack Forward Lunge (Smooth Slide) ── On attack, the enemy
+            # gets a forward lunge velocity that decays over time, producing
+            # a smooth slide toward the player instead of an instant teleport.
+            # This makes melee combat feel more dynamic — enemies commit to a
+            # direction when they strike, making attacks readable and dodgeable.
+            # The lunge distance scales inversely with enemy size so small fast
+            # enemies lunge further while large enemies barely move. The lunge
+            # velocity is processed each frame in the lunge handling block above
+            # (near knockback processing), which also applies the directional
+            # stretch visual.
             lunge_dir = (p.position - enemy.position).normalized()
             lunge_dir.y = 0
             if lunge_dir.length() > 0.01:
@@ -13958,18 +14117,14 @@ def game_update():
                 size_ratio = ENEMY_ATTACK_LUNGE_SIZE_BASE / max(0.3, enemy.original_scale)
                 lunge_mult = max(ENEMY_ATTACK_LUNGE_SIZE_MULT_MIN, min(1.5, size_ratio))
                 lunge_dist = ENEMY_ATTACK_LUNGE_DISTANCE * lunge_mult
-                lunge_step = lunge_dir * lunge_dist
-                # Try full lunge, wall-slide if blocked
-                lunge_pos = enemy.position + lunge_step
-                if game._is_walkable(lunge_pos.x, lunge_pos.z):
-                    enemy.x = lunge_pos.x
-                    enemy.z = lunge_pos.z
-                else:
-                    # Try sliding along each axis
-                    if game._is_walkable(enemy.x + lunge_step.x, enemy.z):
-                        enemy.x += lunge_step.x
-                    if game._is_walkable(enemy.x, enemy.z + lunge_step.z):
-                        enemy.z += lunge_step.z
+                # Set lunge velocity — covers lunge_dist over the lunge duration
+                # with exponential decay. Initial velocity = dist / (duration *
+                # integral of exp(-decay*t) over [0,duration]) ≈ dist * decay
+                # for short durations. We use a simpler approximation: initial
+                # velocity high enough that the integrated slide ≈ lunge_dist.
+                lunge_speed = lunge_dist / ENEMY_ATTACK_LUNGE_DURATION * 2.5
+                enemy.lunge_vel = lunge_dir * lunge_speed
+                enemy.lunge_stretch_dir = Vec3(lunge_dir.x, 0, lunge_dir.z)
             # ── Attack Lunge ── On attack, the enemy briefly stretches upward
             # (un-squashes from the windup) as it lunges forward, then the
             # normal bob/breath/scale-punch logic will settle it back. This
@@ -15243,6 +15398,15 @@ def game_update():
         if mfr.update_ring(time.dt):
             destroy(mfr)
             game.muzzle_flash_rings.remove(mfr)
+
+    # ── Update Player Damage Ground Impact Rings ── Expanding red rings from
+    # player damage events are updated and removed when expired, providing a
+    # ground-level impact visual that complements screen shake, HP bar shake,
+    # damage particles, and the danger vignette.
+    for pdr in game.player_damage_rings[:]:
+        if pdr.update_ring(time.dt):
+            destroy(pdr)
+            game.player_damage_rings.remove(pdr)
 
     # ── Pulse Wave Ring Update ── BUG FIX: ring update_ring() was only called
     # during hit-stop freeze (a 0.08s window after kills), so in normal gameplay
