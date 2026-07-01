@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.42.0"
+VERSION = "2.42.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -994,6 +994,18 @@ COMBO_XP_BONUS_PER_TIER = 0.15  # +15% XP per combo tier (up from 12% — reward
 COMBO_SCORE_BONUS_PER_TIER = 0.08  # +8% score per combo tier (up from 6%)
 COMBO_DISPLAY_LIFETIME = 2.5
 COMBO_MAX_TIER = 20  # Combo XP/score multipliers scale up to tier 20 (was 10) — rewards high-skill sustained chains
+# ── High-Combo Timeout Scaling ── As the combo grows, the timeout window gently
+# extends — making it slightly easier to maintain long kill streaks. At low
+# combos the base 5s timeout applies (unchanged). Starting at combo x5, each
+# tier adds COMBO_TIMEOUT_BONUS_PER_TIER seconds (capped at
+# COMBO_TIMEOUT_BONUS_MAX). This rewards high-skill sustained chains: the
+# higher your combo, the more breathing room you have to find the next kill —
+# which matters most when most nearby enemies are already dead. The scaling is
+# gentle (max +2.5s at x12+) so it doesn't make combos trivial to maintain,
+# just less punishing for the highest streaks where kills are hardest to chain.
+COMBO_TIMEOUT_SCALING_START = 5      # Combo count where timeout scaling begins
+COMBO_TIMEOUT_BONUS_PER_TIER = 0.3   # Extra seconds per tier above the start
+COMBO_TIMEOUT_BONUS_MAX = 2.5        # Maximum extra seconds (cap at +2.5s)
 COMBO_BAR_REFRESH_FLASH_DURATION = 0.25  # How long the combo timer bar flashes green on each kill that extends the combo
 # ── Combo Break Shatter ── When a combo of x3+ expires (timer runs out without
 # a kill to refresh it), a red "COMBO BROKEN!" text pops and shatter particles
@@ -2129,6 +2141,14 @@ CROSSHAIR_RECOIL_EXPAND = 2.2           # Scale multiplier on shoot
 CROSSHAIR_RECOIL_RECOVERY = 10.0        # How fast crosshair returns to normal
 CROSSHAIR_IDLE_SCALE_X = 0.003          # Normal crosshair horizontal scale
 CROSSHAIR_IDLE_SCALE_Y = 0.04           # Normal crosshair vertical scale
+# ── Crosshair Pickup Pulse ── When the player picks up a collectible, the
+# crosshair briefly contracts (shrinks inward) in the item's color — a subtle
+# "got it!" tactile HUD feedback that complements the shooting recoil expansion.
+# Where shooting expands the crosshair (recoil), picking up contracts it
+# (rewarding squeeze), creating a push-pull feel between combat and collection.
+CROSSHAIR_PICKUP_PULSE_DURATION = 0.25  # How long the pickup pulse lasts
+CROSSHAIR_PICKUP_PULSE_CONTRACT = 0.5   # Scale multiplier at pulse peak (0.5 = half size)
+CROSSHAIR_PICKUP_PULSE_RECOVERY = 8.0   # How fast the pulse recovers to normal
 
 # ─── Score Roll-Up Animation ─────────────────────────────────────────────────
 # The score counter smoothly counts up to the new value instead of snapping
@@ -2754,6 +2774,22 @@ def _c255_color(col):
     color.rgb()/color.rgba() (0-255 range) or is a named color (0-1 range).
     """
     return (_c255(col[0]), _c255(col[1]), _c255(col[2]))
+
+
+def _effective_combo_timeout(combo_count):
+    """Return the effective combo timeout for the given combo count.
+
+    At low combos (below COMBO_TIMEOUT_SCALING_START), the base COMBO_TIMEOUT
+    applies unchanged. Starting at COMBO_TIMEOUT_SCALING_START (x5), each tier
+    adds COMBO_TIMEOUT_BONUS_PER_TIER seconds, capped at COMBO_TIMEOUT_BONUS_MAX.
+    This makes high combos slightly more forgiving to maintain — the higher
+    your streak, the more breathing room to find the next kill.
+    """
+    if combo_count < COMBO_TIMEOUT_SCALING_START:
+        return COMBO_TIMEOUT
+    tiers_above = combo_count - COMBO_TIMEOUT_SCALING_START
+    bonus = min(COMBO_TIMEOUT_BONUS_MAX, tiers_above * COMBO_TIMEOUT_BONUS_PER_TIER)
+    return COMBO_TIMEOUT + bonus
 
 
 def _set_biome_tinted_glow(player, game):
@@ -6545,6 +6581,11 @@ class Game:
         # enemy, giving instant hit-confirmation feedback. Gold for crits.
         self.crosshair_hit_flash_timer = 0.0
         self.crosshair_hit_flash_color = CROSSHAIR_HIT_FLASH_COLOR
+        # ── Crosshair Pickup Pulse ── When a collectible is picked up, the
+        # crosshair briefly contracts inward and tints to the item's color —
+        # a "got it!" squeeze that complements the shooting recoil expansion.
+        self.crosshair_pickup_pulse = 0.0  # 1.0 = just picked up, decays to 0
+        self.crosshair_pickup_pulse_color = (255, 255, 255)  # 0-255 tuple
 
         # Score roll-up — displayed score smoothly lerps toward the real score
         self.displayed_score = 0
@@ -9639,7 +9680,7 @@ class Game:
         # Combo Timer Ground Ring (line ~10990) already correctly uses combo_timer, so
         # this fix brings the HUD bar in line with the ground ring.
         if self.combo_count >= 2 and self.combo_timer > 0:
-            ratio = max(0, self.combo_timer / COMBO_TIMEOUT)
+            ratio = max(0, self.combo_timer / _effective_combo_timeout(self.combo_count))
             bar_width = 0.22 * ratio
             # Offset so bar shrinks from right to left (centered origin=0)
             self.combo_bar.scale_x = max(0.001, bar_width)
@@ -10316,10 +10357,22 @@ class Game:
             if self.crosshair_recoil < 0:
                 self.crosshair_recoil = 0
         recoil_mult = 1.0 + (CROSSHAIR_RECOIL_EXPAND - 1.0) * self.crosshair_recoil
-        self.crosshair.scale = (CROSSHAIR_IDLE_SCALE_X * recoil_mult,
-                                CROSSHAIR_IDLE_SCALE_Y * recoil_mult)
-        self.crosshair2.scale = (CROSSHAIR_IDLE_SCALE_Y * recoil_mult,
-                                 CROSSHAIR_IDLE_SCALE_X * recoil_mult)
+        # ── Crosshair Pickup Pulse ── When a collectible is picked up, the
+        # crosshair contracts inward (squeezes smaller) in the item's color —
+        # a "got it!" tactile HUD feedback. Where shooting expands the
+        # crosshair, picking up contracts it, creating a push-pull feel between
+        # combat and collection. The pulse decays quickly and composes
+        # multiplicatively with the recoil expansion (they rarely overlap).
+        if self.crosshair_pickup_pulse > 0:
+            self.crosshair_pickup_pulse -= time.dt * CROSSHAIR_PICKUP_PULSE_RECOVERY
+            if self.crosshair_pickup_pulse < 0:
+                self.crosshair_pickup_pulse = 0
+        pickup_mult = 1.0 - (1.0 - CROSSHAIR_PICKUP_PULSE_CONTRACT) * self.crosshair_pickup_pulse
+        combined_mult = recoil_mult * pickup_mult
+        self.crosshair.scale = (CROSSHAIR_IDLE_SCALE_X * combined_mult,
+                                CROSSHAIR_IDLE_SCALE_Y * combined_mult)
+        self.crosshair2.scale = (CROSSHAIR_IDLE_SCALE_Y * combined_mult,
+                                 CROSSHAIR_IDLE_SCALE_X * combined_mult)
 
         # ── Crosshair Hit-Confirmation Flash ── When a projectile hits an enemy,
         # the crosshair briefly tints to confirm the hit — gold for crits, warm
@@ -10343,6 +10396,21 @@ class Game:
                 self.crosshair.color = color.rgba(r, g, b, a)
                 self.crosshair2.color = color.rgba(r, g, b, a)
 
+        # ── Crosshair Pickup Pulse Tint ── When a collectible is picked up,
+        # the crosshair briefly tints toward the item's color (e.g., green for
+        # Space Gloop, red for Health Potion) — complementing the contraction
+        # scale effect with a color flash so pickups are felt on the HUD.
+        # Skipped while the hit-flash is active so hit confirmation takes priority.
+        elif self.crosshair_pickup_pulse > 0:
+            pulse_ratio = self.crosshair_pickup_pulse
+            pr, pg, pb = self.crosshair_pickup_pulse_color
+            r = int(pr + (255 - pr) * (1 - pulse_ratio))
+            g = int(pg + (255 - pg) * (1 - pulse_ratio))
+            b = int(pb + (255 - pb) * (1 - pulse_ratio))
+            a = int(128 + 127 * pulse_ratio)  # Brighter during pulse
+            self.crosshair.color = color.rgba(r, g, b, a)
+            self.crosshair2.color = color.rgba(r, g, b, a)
+
         # ── Crosshair Enemy-Proximity Tint ── When the mouse cursor's world
         # position is near an enemy, the crosshair subtly tints toward a warm
         # red-orange — giving target-acquisition feedback BEFORE you fire.
@@ -10352,9 +10420,9 @@ class Game:
         # is to the nearest enemy within CROSSHAIR_PROXIMITY_RADIUS. Only
         # checks nearby enemies (within CROSSHAIR_PROXIMITY_CHECK_RADIUS of
         # the player) to avoid iterating the entire enemy list every frame.
-        # Skipped while the hit-flash is active so hit confirmation takes
-        # priority over the proximity hint.
-        if self.crosshair_hit_flash_timer <= 0:
+        # Skipped while the hit-flash or pickup pulse is active so hit
+        # confirmation and pickup feedback take priority over the proximity hint.
+        if self.crosshair_hit_flash_timer <= 0 and self.crosshair_pickup_pulse <= 0:
             mouse_pt = mouse.world_point
             if mouse_pt is not None:
                 mx, mz = mouse_pt.x, mouse_pt.z
@@ -10969,7 +11037,7 @@ class Game:
                 self._register_kill(enemy.name)
                 self.combo_count += 1
                 self.max_combo = max(self.max_combo, self.combo_count)
-                self.combo_timer = COMBO_TIMEOUT
+                self.combo_timer = _effective_combo_timeout(self.combo_count)
                 self.combo_display_timer = COMBO_DISPLAY_LIFETIME
                 self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
                 # BUG FIX: Chain lightning recursive kills were missing combo
@@ -11124,7 +11192,7 @@ class Game:
                 self._register_kill(enemy.name)
                 self.combo_count += 1
                 self.max_combo = max(self.max_combo, self.combo_count)
-                self.combo_timer = COMBO_TIMEOUT
+                self.combo_timer = _effective_combo_timeout(self.combo_count)
                 self.combo_display_timer = COMBO_DISPLAY_LIFETIME
                 self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
                 # BUG FIX: Surge kills were missing combo milestone fireworks,
@@ -12033,7 +12101,7 @@ def game_update():
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
-                    game.combo_timer = COMBO_TIMEOUT
+                    game.combo_timer = _effective_combo_timeout(game.combo_count)
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
                     # ── Chain Lightning ── High combos can arc lightning to
@@ -12680,7 +12748,7 @@ def game_update():
                                       color.rgb(255, 215, 50), count=12)
                 game.add_message("⚡ COMBO SHIELD ABSORBED!")
                 # Refresh combo timer so the streak continues
-                game.combo_timer = COMBO_TIMEOUT
+                game.combo_timer = _effective_combo_timeout(game.combo_count)
             else:
                 # ── Combo Break Shatter ── When a combo of x3+ expires without
                 # being refreshed, trigger a dramatic "COMBO BROKEN!" announcement
@@ -12730,7 +12798,7 @@ def game_update():
         game.combo_timer_ring.visible = True
         game.combo_timer_ring.position = (p.x, 0.035, p.z)
         # Progress: 1.0 = full timer, 0.0 = nearly expired
-        timer_progress = max(0, game.combo_timer / COMBO_TIMEOUT)
+        timer_progress = max(0, game.combo_timer / _effective_combo_timeout(game.combo_count))
         # Radius shrinks from max to min as timer depletes
         ring_r = COMBO_TIMER_RING_MIN_RADIUS + (COMBO_TIMER_RING_MAX_RADIUS - COMBO_TIMER_RING_MIN_RADIUS) * timer_progress
         # Low-time urgency: shift color toward red and dim alpha when < threshold
@@ -13494,12 +13562,20 @@ def game_update():
                 enemy.scale = enemy.original_scale * bounce_mult
             # Tint toward white then settle to original color
             if fade_t < 0.5:
-                # Flash bright white/cyan at spawn, then settle
+                # Flash a brightened version of the enemy's OWN color at spawn
+                # (85% toward white), then settle to the original color. This
+                # produces a cohesive, target-tinted materialization — a Lava
+                # Crawler spawns with a bright orange flash, a Crystal Guardian
+                # with bright cyan — making each enemy type's spawn feel
+                # tailored to its identity instead of a generic white pop.
                 flash_t = fade_t / 0.5
                 cr, cg, cb = _c255_color(enemy.original_color)
-                r = min(255, int(cr + (255 - cr) * (1 - flash_t)))
-                g = min(255, int(cg + (255 - cg) * (1 - flash_t)))
-                b = min(255, int(cb + (255 - cb) * (1 - flash_t)))
+                # Start at 85% toward white (retains a hint of the enemy's hue),
+                # then lerp to the original color as flash_t goes 0→1
+                spawn_brightness = 0.85 * (1 - flash_t)
+                r = min(255, int(cr + (255 - cr) * spawn_brightness))
+                g = min(255, int(cg + (255 - cg) * spawn_brightness))
+                b = min(255, int(cb + (255 - cb) * spawn_brightness))
                 a = max(80, int(255 * fade_t))
                 enemy.color = color.rgba(r, g, b, a)
             # ── Grace Shield Visual ── Show the translucent cyan dome during
@@ -13981,7 +14057,7 @@ def game_update():
                                     game._register_kill(other_enemy.name)
                                     game.combo_count += 1
                                     game.max_combo = max(game.max_combo, game.combo_count)
-                                    game.combo_timer = COMBO_TIMEOUT
+                                    game.combo_timer = _effective_combo_timeout(game.combo_count)
                                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                                     # BUG FIX: Void Bomber friendly-fire kills were missing
@@ -14984,7 +15060,7 @@ def game_update():
                                 game._register_kill(nearby_enemy.name)
                                 game.combo_count += 1
                                 game.max_combo = max(game.max_combo, game.combo_count)
-                                game.combo_timer = COMBO_TIMEOUT
+                                game.combo_timer = _effective_combo_timeout(game.combo_count)
                                 game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                                 game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                                 # BUG FIX: AOE kills were missing _chain_lightning() —
@@ -15116,7 +15192,7 @@ def game_update():
                         game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                         game.combo_count += 1
                         game.max_combo = max(game.max_combo, game.combo_count)
-                        game.combo_timer = COMBO_TIMEOUT
+                        game.combo_timer = _effective_combo_timeout(game.combo_count)
                         game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                         game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
                         # BUG FIX: First piercing crit kill was missing _chain_lightning()
@@ -15216,7 +15292,7 @@ def game_update():
                             game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                             game.combo_count += 1
                             game.max_combo = max(game.max_combo, game.combo_count)
-                            game.combo_timer = COMBO_TIMEOUT
+                            game.combo_timer = _effective_combo_timeout(game.combo_count)
                             game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                             game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
                             # BUG FIX: Subsequent piercing kills were missing
@@ -15328,7 +15404,7 @@ def game_update():
                     # Combo system: increment combo and apply bonus
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
-                    game.combo_timer = COMBO_TIMEOUT
+                    game.combo_timer = _effective_combo_timeout(game.combo_count)
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                     # ── Chain Lightning ── High combos can arc lightning to
@@ -15822,7 +15898,7 @@ def game_update():
                     game._register_kill(enemy.name)
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
-                    game.combo_timer = COMBO_TIMEOUT
+                    game.combo_timer = _effective_combo_timeout(game.combo_count)
                     game.combo_display_timer = COMBO_DISPLAY_LIFETIME
                     game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION  # Flash the combo bar green
                     # BUG FIX: Pulse Wave kills were missing _chain_lightning(),
@@ -16399,6 +16475,11 @@ def game_update():
             # pulse at Zorp's position, making pickups feel tactile.
             p.glow_pulse_timer = PLAYER_GLOW_PICKUP_PULSE_DURATION
             p.glow_pulse_color = _c255_color(col.item_color)
+            # ── Crosshair Pickup Pulse ── The crosshair briefly contracts inward
+            # and tints to the item's color — a "got it!" squeeze on the HUD that
+            # complements the shooting recoil expansion with a rewarding contraction.
+            self.crosshair_pickup_pulse = 1.0
+            self.crosshair_pickup_pulse_color = _c255_color(col.item_color)
             # ── Pickup Scale Punch ── Trigger a brief character-model pop so
             # pickups feel tactile on Zorp himself, not just via particles and
             # ground rings. The punch composes cleanly with other scale

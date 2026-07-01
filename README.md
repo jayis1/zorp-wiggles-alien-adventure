@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.42.0 — 3D!)
+## Features (v2.42.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -453,6 +453,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.42.1 — High-Combo Timeout Scaling, Crosshair Pickup Pulse & Enemy Spawn Color-Tinted Flash
+
+- **High-combo timeout scaling**: As your kill combo grows, the timeout window to maintain it now gently extends — starting at combo x5, each tier adds 0.3 seconds (capped at +2.5s at x12+). At low combos the base 5-second timeout is unchanged. This makes high-skill sustained kill streaks more forgiving to maintain: the higher your combo, the more breathing room you have to find the next kill, which matters most when most nearby enemies are already dead. The scaling is gentle enough that it doesn't make combos trivial — just less punishing for the highest streaks where chaining kills is hardest. The combo timer bar and ground ring both reflect the scaled timeout so the visual countdown stays accurate
+- **Crosshair pickup pulse**: When you pick up a collectible, the crosshair now briefly contracts inward (squeezes to half size) and tints to the item's color — a "got it!" tactile HUD feedback that complements the shooting recoil expansion. Where shooting expands the crosshair (recoil), picking up contracts it (rewarding squeeze), creating a satisfying push-pull feel between combat and collection. The pulse decays over 0.25 seconds and composes multiplicatively with the recoil expansion (they rarely overlap). The color tint matches the item's color — green for Space Gloop, red for Health Potion, gold for rare items — so you feel what you collected through the HUD
+- **Enemy spawn color-tinted flash**: When enemies materialize from spawn portals, the initial flash now uses a brightened version of the enemy's OWN color (85% toward white) instead of pure white — a Lava Crawler spawns with a bright orange flash, a Crystal Guardian with bright cyan, a Slime Blob with bright green. This produces a more cohesive, polished materialization effect where each enemy type's spawn feels tailored to its identity instead of a generic white pop. The flash still lerps to the enemy's original color as the fade-in completes, retaining a hint of the enemy's hue throughout the spawn animation
 
 ### v2.42.0 — Ground Aim Reticle, Health Fragment Drops & Facing Direction Arrow
 
