@@ -10728,6 +10728,44 @@ class Game:
                 self.combo_timer = COMBO_TIMEOUT
                 self.combo_display_timer = COMBO_DISPLAY_LIFETIME
                 self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                # BUG FIX: Surge kills were missing combo milestone fireworks,
+                # combo shield, overkill/execution announcements, hit-stop, FOV
+                # punch, kill flash, boss slow-mo, and the kill damage number —
+                # all present in _chain_lightning's kill handling. Without these,
+                # surge kills felt flat (no screen shake punch, no combo feedback)
+                # and the combo shield never activated from surge kills. NOTE:
+                # _overkill_surge() is intentionally NOT called here to prevent
+                # infinite recursion (same pattern as _chain_lightning).
+                if self.combo_count > 1 and self.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                    milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                       color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                    for _ in range(COMBO_MILESTONE_PARTICLES):
+                        burst_color = random.choice(milestone_colors)
+                        burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                        self._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                    self.screen_shake = max(self.screen_shake, 0.4)
+                    self.add_message(f"COMBO x{self.combo_count} MILESTONE!")
+                    # Combo Damage Tier Aura — fiery orange aura when buff activates/renews
+                    if self.combo_count >= COMBO_DAMAGE_TIER:
+                        aura_ent = Entity(
+                            model='sphere',
+                            color=COMBO_DAMAGE_AURA_COLOR,
+                            scale=COMBO_DAMAGE_AURA_SCALE,
+                            position=p.position,
+                        )
+                        destroy(aura_ent, delay=COMBO_DAMAGE_AURA_DURATION)
+                        self._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 120, 30), count=10)
+                        if self.combo_count == COMBO_DAMAGE_TIER:
+                            self.add_message("⚡ DAMAGE BUFF ACTIVE! +25% damage!")
+                    milestone_tier = self.combo_count // COMBO_MILESTONE_INTERVAL
+                    milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                    monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                    p.gain_xp(milestone_xp)
+                if self.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                    p.combo_shield_active = True
+                    self.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                    self._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                 combo_xp_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                 combo_score_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                 monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
@@ -10737,13 +10775,34 @@ class Game:
                 if is_ok:
                     ok_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
                     xp_gain += ok_xp
+                    self.add_message(f"OVERKILL! +{ok_xp} bonus XP!")
                     self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
                 if getattr(enemy, 'enraged', False):
                     exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                     xp_gain += exec_xp
+                    self.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
                     self._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, EXECUTION_SCREEN_SHAKE)
+                    self.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                 p.gain_xp(xp_gain)
                 p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                # Hit-stop, FOV punch, kill flash, combo-scaled shake — same as
+                # _chain_lightning and primary kill paths.
+                self.hit_stop_timer = HIT_STOP_KILL_DURATION
+                self.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                camera.fov = CAMERA_KILL_ZOOM_FOV
+                self.kill_flash_timer = KILL_FLASH_DURATION
+                self.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                self.screen_shake = self._combo_scaled_kill_shake()
+                if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                    self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                    self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                    self.add_message("BOSS DOWN! SLOW-MO!")
+                if is_ok:
+                    self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True, is_overkill=True))
+                else:
+                    self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True))
                 self._drop_loot(enemy.position, enemy.name)
                 self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                 self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
@@ -15545,9 +15604,11 @@ def game_update():
             # in a wide area rushes to Zorp, preventing the most frustrating
             # deaths where a potion was just slightly out of reach. The
             # critical homing stacks with the emergency magnet.
-            if (col.name == 'Health Potion' and col.spawn_timer <= 0 and not col.popping
-                    and p.hp < p.max_hp * CRITICAL_HP_THRESHOLD
-                    and dist < CRITICAL_POTION_HOMING_RADIUS and dist > 0.1):
+            critical_beacon_active = (
+                col.name == 'Health Potion' and col.spawn_timer <= 0 and not col.popping
+                and p.hp < p.max_hp * CRITICAL_HP_THRESHOLD
+                and dist < CRITICAL_POTION_HOMING_RADIUS and dist > 0.1)
+            if critical_beacon_active:
                 pull_radius = max(pull_radius, CRITICAL_POTION_HOMING_RADIUS)
                 pull_speed = max(pull_speed, CRITICAL_POTION_HOMING_SPEED)
                 # ── Pulsing Green Beacon ── While the critical homing is active,
@@ -15558,6 +15619,19 @@ def game_update():
                 beacon_alpha = int(CRITICAL_POTION_BEACON_ALPHA * (0.5 + 0.5 * beacon_pulse))
                 col.glow.color = color.rgba(80, 255, 120, beacon_alpha)
                 col.glow.scale = 3.5 + beacon_pulse * 1.5
+                col.critical_beacon_was_active = True
+            elif getattr(col, 'critical_beacon_was_active', False):
+                # BUG FIX: The critical beacon overwrites glow.color to green.
+                # Once the player heals above 15% HP, the beacon block stops
+                # running, but the glow color was never restored — leaving the
+                # potion's glow ring stuck green permanently (until the
+                # collectible's own 4-8s beacon pulse happened to override it).
+                # Now we restore the item's normal glow color when the beacon
+                # deactivates so the potion looks correct again immediately.
+                col.critical_beacon_was_active = False
+                glow_cfg_reset = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
+                ir, ig, ib = _c255_color(col.item_color)
+                col.glow.color = color.rgba(ir, ig, ib, glow_cfg_reset['glow_alpha'])
             if dist < pull_radius and dist > 0.1:
                 pull_dir = (p_pos - col.position).normalized()
                 # Acceleration curve: pull gets dramatically stronger as item approaches
