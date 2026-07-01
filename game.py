@@ -2492,6 +2492,70 @@ BIOME_COLORS = {
 
 WALKABLE = {'grass', 'desert', 'forest', 'crystal', 'snow', 'swamp', 'mushroom', 'floating_islands', 'toxic_bog'}
 
+# ─── Meteor Shower World Event ────────────────────────────────────────────────
+# Periodically, a meteor streaks across the sky and crashes near the player,
+# creating an impact explosion and spawning bonus collectibles at the crash site.
+# This adds excitement and rewards map awareness — you see a pillar of fire from
+# the sky and rush to the crash site for loot. The meteor targets a walkable
+# location within METEOR_CRASH_RADIUS of the player (but not too close), spawns
+# 3-6 collectibles biased toward rarer items, and creates a dramatic visual:
+# a streaking sky trail, an impact flash, an expanding ground ring, and a burst
+# of fiery particles. A HUD message announces the event so the player knows to
+# investigate. The interval is randomized so it feels organic, not rhythmic.
+METEOR_SHOWER_INTERVAL_MIN = 45.0     # Minimum seconds between meteor events
+METEOR_SHOWER_INTERVAL_MAX = 90.0     # Maximum seconds between meteor events
+METEOR_CRASH_RADIUS = 50.0           # Max distance from player for crash site
+METEOR_CRASH_RADIUS_MIN = 20.0       # Min distance so it doesn't land on top of player
+METEOR_DROP_COUNT_MIN = 3            # Min collectibles spawned at crash site
+METEOR_DROP_COUNT_MAX = 6            # Max collectibles spawned at crash site
+METEOR_TRAIL_DURATION = 0.8          # How long the sky streak trail is visible
+METEOR_TRAIL_HEIGHT = 80.0            # Starting height of the sky trail
+METEOR_IMPACT_FLASH_DURATION = 0.3   # How long the impact flash sphere is visible
+METEOR_IMPACT_FLASH_SCALE = 4.0      # Scale of the impact flash sphere
+METEOR_GROUND_RING_DURATION = 0.6    # How long the crash ground ring expands
+METEOR_GROUND_RING_MAX_SCALE = 8.0   # Max scale the crash ring reaches
+METEOR_PARTICLE_COUNT = 20           # Fiery particles at impact
+METEOR_SCREEN_SHAKE = 0.3            # Screen shake on impact
+METEOR_SKY_BEAM_DURATION = 1.0       # How long the vertical crash beam is visible
+METEOR_SKY_BEAM_HEIGHT = 80.0        # Height of the crash beam
+# Rare-biased drop weights for meteor loot (heavier on uncommon+ items)
+METEOR_DROP_WEIGHTS = {
+    'Space Gloop': 8, 'Meteor Shard': 15, 'Quantum Fuzz': 15, 'Nebula Dust': 12,
+    'Cosmic Jelly': 8, 'Plasma Core': 4, 'Health Potion': 6, 'Speed Boost': 5,
+    'Shield Crystal': 5, 'Weapon Upgrade': 6, 'Magnet Core': 5, 'Time Warp': 5,
+    'Star Fruit': 4, 'XP Orb': 8, 'Fireball Scroll': 5, 'Regen Crystal': 5,
+    'Lucky Clover': 4, 'Mirror Shard': 4, 'Photon Boots': 3,
+}
+
+# ─── Enemy Slayer Bonus ──────────────────────────────────────────────────────
+# Killing 3+ of the SAME enemy type in rapid succession (within SLAYER_WINDOW
+# seconds) awards bonus XP with a "☠ SLAYER!" announcement. This rewards target
+# selection — focusing on one enemy type at a time rather than spreading damage
+# randomly. The bonus scales with the streak count, and a unique colored
+# announcement with particles makes the streak feel like a hunting achievement.
+SLAYER_THRESHOLD = 3              # Kills of same type needed to trigger
+SLAYER_WINDOW = 8.0               # Seconds between same-type kills to maintain streak
+SLAYER_XP_BASE = 40               # Base bonus XP for first slayer bonus
+SLAYER_XP_PER_TIER = 20           # Extra XP per additional same-type kill beyond threshold
+SLAYER_ANNOUNCE_DURATION = 2.5    # How long the slayer announcement stays visible
+SLAYER_PARTICLE_COUNT = 15       # Fiery orange particles on slayer trigger
+SLAYER_SCREEN_SHAKE = 0.2         # Screen shake on slayer trigger
+SLAYER_COLOR = color.rgb(255, 120, 40)  # Fiery orange for the announcement
+
+# ─── Collection Rush Speed Boost ──────────────────────────────────────────────
+# When the player rapidly collects 5+ items in quick succession (within the
+# existing pickup streak window), a brief "COLLECTION RUSH!" speed boost
+# activates — granting +25% movement speed for 4 seconds. This rewards
+# sustained item gathering with enhanced mobility, creating a satisfying
+# gameplay loop: collect fast → move faster → collect even faster. The boost
+# composes multiplicatively with other speed buffs (Speed Boost, Adrenaline,
+# Berserk, etc.) and has a visual aura on the player plus a HUD indicator.
+COLLECTION_RUSH_THRESHOLD = 5     # Pickup streak needed to trigger
+COLLECTION_RUSH_SPEED_MULT = 1.25 # Speed multiplier during collection rush
+COLLECTION_RUSH_DURATION = 4.0    # How long the speed boost lasts
+COLLECTION_RUSH_AURA_COLOR = color.rgba(100, 255, 200, 50)  # Mint-cyan aura
+COLLECTION_RUSH_AURA_SCALE = 1.6  # Scale of the rush aura sphere
+
 # ─── Color Helper ──────────────────────────────────────────────────────────────
 # BUG FIX: Ursina's color.rgb()/color.rgba() store component values in 0-255
 # range, but named colors (color.lime, color.yellow, etc.) store them in 0-1
@@ -2755,6 +2819,13 @@ class Player(Entity):
         # so the adrenaline state is visible from all camera angles.
         self.adrenaline_visual = Entity(model='sphere', color=ADRENALINE_AURA_COLOR,
                                         scale=ADRENALINE_AURA_SCALE, parent=self, visible=False)
+
+        # ── Collection Rush Aura ── A mint-cyan energy sphere on the player
+        # model, visible while the Collection Rush speed boost is active.
+        # Complements the HUD text and speed boost with a 3D body-level visual
+        # so the rush state is visible from all camera angles.
+        self.collection_rush_visual = Entity(model='sphere', color=COLLECTION_RUSH_AURA_COLOR,
+                                            scale=COLLECTION_RUSH_AURA_SCALE, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
         self.ground_shadow = Entity(
@@ -5639,6 +5710,51 @@ class Game:
         self.enemy_death_rings = []  # Enemy death expanding ground rings
         self.muzzle_flash_rings = []  # Muzzle flash ground rings on each shot
 
+        # ── Meteor Shower World Event ── Tracks the countdown to the next
+        # meteor crash. When the timer reaches 0, a meteor streaks across the
+        # sky and crashes near the player, spawning bonus collectibles. The
+        # timer is initialized to a random value in the interval range so the
+        # first event doesn't happen immediately but at an organic time.
+        self.meteor_timer = random.uniform(METEOR_SHOWER_INTERVAL_MIN, METEOR_SHOWER_INTERVAL_MAX)
+        # List of active meteor ground ring entities (expanding impact rings)
+        self.meteor_rings = []
+
+        # ── Enemy Slayer Tracking ── Tracks consecutive kills of the same
+        # enemy type within a time window. When SLAYER_THRESHOLD same-type
+        # kills happen within SLAYER_WINDOW seconds, a "SLAYER!" bonus is
+        # awarded. slayer_current_type stores the last killed enemy's type,
+        # slayer_count tracks the streak, and slayer_timer counts down the
+        # window. slayer_announce_timer controls the HUD announcement display.
+        self.slayer_current_type = None
+        self.slayer_count = 0
+        self.slayer_timer = 0.0
+        self.slayer_announce_timer = 0.0
+        self.slayer_announce_text = ''
+        self.slayer_announce_scale = 1.0
+
+        # ── Collection Rush Speed Boost ── When the player rapidly collects
+        # COLLECTION_RUSH_THRESHOLD items (tracked via the existing pickup
+        # streak), a temporary speed boost activates. rush_timer counts down
+        # while the boost is active; when it reaches 0, the boost ends.
+        self.collection_rush_timer = 0.0
+
+        # ── Collection Rush HUD Text ── Displays "COLLECTION RUSH!" when the
+        # speed boost is active, positioned below the pickup streak text.
+        self.collection_rush_text = Text(
+            text='', position=(0.35, 0.04), scale=1.4,
+            color=color.rgba(100, 255, 200, 0),
+            visible=False, origin=(0, 0),
+        )
+
+        # ── Slayer Announcement Text ── Displays "☠ SLAYER!" with the enemy
+        # type name when the slayer bonus triggers. Large, dramatic, fiery
+        # orange text that pops and fades.
+        self.slayer_text = Text(
+            text='', position=(0, -0.04), scale=2.5,
+            color=color.rgba(255, 120, 40, 0),
+            origin=(0, 0), visible=False,
+        )
+
         # ── Ability Ready Flash Tracking ── When the Pulse Wave or Vacuum
         # Pulse cooldown ends, a brief colored pulse flashes behind their HUD
         # text so the player notices the ability is available again — matching
@@ -6276,6 +6392,12 @@ class Game:
                 destroy(mfr)
         self.muzzle_flash_rings.clear()
 
+        # Destroy meteor shower impact rings
+        for mr in self.meteor_rings:
+            if mr and hasattr(mr, 'enabled') and mr.enabled:
+                destroy(mr)
+        self.meteor_rings.clear()
+
         # Destroy spawn healing zone ring
         if hasattr(self, 'spawn_heal_ring') and self.spawn_heal_ring:
             destroy(self.spawn_heal_ring)
@@ -6409,6 +6531,7 @@ class Game:
                       'pickup_streak_text', 'pickup_streak_bar_bg', 'pickup_streak_bar',
                       'crit_chain_text', 'flawless_text',
                       'swarm_escape_text',
+                      'collection_rush_text', 'slayer_text',
                       'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
@@ -7145,6 +7268,137 @@ class Game:
         self.messages.append((self.t, msg))
         if len(self.messages) > 50:
             self.messages = self.messages[-50:]
+
+    def _trigger_meteor_shower(self):
+        """Trigger a meteor crash world event near the player.
+
+        A meteor streaks across the sky and crashes at a walkable location
+        within METEOR_CRASH_RADIUS of the player (but not too close). It
+        spawns 3-6 bonus collectibles biased toward rarer items, plus a
+        dramatic visual: a sky trail, impact flash, expanding ground ring,
+        fiery particle burst, and screen shake. A HUD message announces
+        the event so the player knows to investigate.
+
+        BUG FIX: The meteor_timer was initialized in __init__ but never
+        decremented or checked, so this world event never fired. All the
+        meteor constants (METEOR_SHOWER_INTERVAL_MIN/MAX, METEOR_CRASH_RADIUS,
+        METEOR_DROP_WEIGHTS, etc.) were dead code. Now the timer is
+        decremented in game_update() and this method is called when it
+        reaches zero.
+        """
+        p = self.player
+        # Pick a crash site within the radius range from the player
+        for _ in range(10):  # Try up to 10 times to find a walkable spot
+            angle = random.uniform(0, math.pi * 2)
+            dist = random.uniform(METEOR_CRASH_RADIUS_MIN, METEOR_CRASH_RADIUS)
+            cx = p.x + math.cos(angle) * dist
+            cz = p.z + math.sin(angle) * dist
+            cx = max(5, min(cx, (WORLD_SIZE - 5) * TILE_SCALE))
+            cz = max(5, min(cz, (WORLD_SIZE - 5) * TILE_SCALE))
+            if self._is_walkable(cx, cz):
+                break
+        else:
+            return  # Couldn't find a walkable crash site — skip this event
+
+        crash_pos = Vec3(cx, 1, cz)
+
+        # ── Sky Trail ── A brief streaking line from high above to the crash point
+        sky_trail = Entity(
+            model='cube',
+            color=color.rgb(255, 180, 60),
+            scale=(0.3, METEOR_TRAIL_HEIGHT, 0.3),
+            position=Vec3(cx, METEOR_TRAIL_HEIGHT / 2, cz),
+        )
+        tr_r, tr_g, tr_b = _c255_color(color.rgb(255, 180, 60))
+        sky_trail.animate_color(
+            color.rgba(tr_r, tr_g, tr_b, 0),
+            duration=METEOR_TRAIL_DURATION,
+            curve=curve.linear,
+        )
+        destroy(sky_trail, delay=METEOR_TRAIL_DURATION + 0.01)
+
+        # ── Impact Flash ── Bright expanding sphere at the crash point
+        flash = Entity(
+            model='sphere',
+            color=color.rgb(255, 200, 80),
+            scale=0.01,
+            position=crash_pos,
+        )
+        flash.animate_scale(
+            METEOR_IMPACT_FLASH_SCALE,
+            duration=METEOR_IMPACT_FLASH_DURATION,
+            curve=curve.out_expo,
+        )
+        fl_r, fl_g, fl_b = _c255_color(color.rgb(255, 200, 80))
+        flash.animate_color(
+            color.rgba(fl_r, fl_g, fl_b, 0),
+            duration=METEOR_IMPACT_FLASH_DURATION,
+            curve=curve.linear,
+        )
+        destroy(flash, delay=METEOR_IMPACT_FLASH_DURATION + 0.01)
+
+        # ── Sky Beam ── Vertical beam of light at the crash site
+        sky_beam = Entity(
+            model='cube',
+            color=color.rgb(255, 150, 40),
+            scale=(0.8, METEOR_SKY_BEAM_HEIGHT, 0.8),
+            position=Vec3(cx, METEOR_SKY_BEAM_HEIGHT / 2, cz),
+        )
+        sb_r, sb_g, sb_b = _c255_color(color.rgb(255, 150, 40))
+        sky_beam.animate_color(
+            color.rgba(sb_r, sb_g, sb_b, 0),
+            duration=METEOR_SKY_BEAM_DURATION,
+            curve=curve.linear,
+        )
+        destroy(sky_beam, delay=METEOR_SKY_BEAM_DURATION + 0.01)
+
+        # ── Ground Ring ── Expanding impact ring on the ground
+        ring = Entity(
+            model='quad',
+            color=color.rgb(255, 120, 30),
+            scale=0.01,
+            position=Vec3(cx, 0.1, cz),
+            rotation_x=90,
+        )
+        ring.animate_scale(
+            METEOR_GROUND_RING_MAX_SCALE,
+            duration=METEOR_GROUND_RING_DURATION,
+            curve=curve.out_expo,
+        )
+        gr_r, gr_g, gr_b = _c255_color(color.rgb(255, 120, 30))
+        ring.animate_color(
+            color.rgba(gr_r, gr_g, gr_b, 0),
+            duration=METEOR_GROUND_RING_DURATION,
+            curve=curve.linear,
+        )
+        destroy(ring, delay=METEOR_GROUND_RING_DURATION + 0.01)
+        self.meteor_rings.append(ring)
+
+        # ── Fiery Impact Particles ──
+        self._spawn_particles(crash_pos, color.rgb(255, 150, 40), count=METEOR_PARTICLE_COUNT)
+
+        # ── Screen Shake ──
+        self.screen_shake = max(self.screen_shake, METEOR_SCREEN_SHAKE)
+
+        # ── Spawn Bonus Collectibles ── Weighted toward rarer items
+        drop_count = random.randint(METEOR_DROP_COUNT_MIN, METEOR_DROP_COUNT_MAX)
+        meteor_names = list(METEOR_DROP_WEIGHTS.keys())
+        meteor_weights = list(METEOR_DROP_WEIGHTS.values())
+        for _ in range(drop_count):
+            item_type = random.choices(meteor_names, weights=meteor_weights, k=1)[0]
+            # Scatter items around the crash site
+            offset_angle = random.uniform(0, math.pi * 2)
+            offset_dist = random.uniform(1, 4)
+            ix = cx + math.cos(offset_angle) * offset_dist
+            iz = cz + math.sin(offset_angle) * offset_dist
+            ix = max(2, min(ix, (WORLD_SIZE - 2) * TILE_SCALE))
+            iz = max(2, min(iz, (WORLD_SIZE - 2) * TILE_SCALE))
+            if self._is_walkable(ix, iz):
+                c = Collectible(position=Vec3(ix, 1, iz), item_type=item_type)
+                self.collectibles.append(c)
+
+        # ── HUD Announcement ──
+        self.add_message("☄ METEOR CRASH! Bonus loot nearby!")
 
     def _spawn_shrines(self):
         """Spawn Healing Crystal Shrines in mushroom and swamp biomes.
@@ -9931,7 +10185,7 @@ class Game:
         bonus = min(tier * COMBO_SHAKE_PER_TIER, COMBO_SHAKE_MAX_BONUS)
         return SCREEN_SHAKE_KILL * (1.0 + bonus)
 
-    def _register_kill(self):
+    def _register_kill(self, enemy_type=None):
         """Track a kill for the Multi-Kill announcement system.
 
         Called from every kill site (projectile, fireball AOE, pulse wave).
@@ -10043,6 +10297,42 @@ class Game:
                 DamageNumber(p.position, milestone_xp, is_flawless=True)
             )
             self.screen_shake = max(self.screen_shake, KILL_STREAK_SCREEN_SHAKE)
+
+        # ── Enemy Slayer Bonus ── Track consecutive kills of the SAME enemy
+        # type within a time window. When SLAYER_THRESHOLD same-type kills
+        # happen within SLAYER_WINDOW seconds, award bonus XP with a dramatic
+        # "☠ SLAYER!" announcement. This rewards target selection — focusing
+        # on one enemy type at a time rather than spreading damage randomly.
+        # The bonus scales with the streak count beyond the threshold.
+        if enemy_type is not None:
+            if self.slayer_timer > 0 and self.slayer_current_type == enemy_type:
+                # Same type within the window — increment the streak
+                self.slayer_count += 1
+                self.slayer_timer = SLAYER_WINDOW
+                if self.slayer_count >= SLAYER_THRESHOLD:
+                    # Award slayer bonus XP
+                    tier = self.slayer_count - SLAYER_THRESHOLD + 1
+                    slayer_xp = SLAYER_XP_BASE + (tier - 1) * SLAYER_XP_PER_TIER
+                    p = self.player
+                    monolith_xp_mult_sl = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    slayer_xp = int(slayer_xp * monolith_xp_mult_sl)
+                    p.gain_xp(slayer_xp)
+                    self.slayer_announce_text = f"☠ SLAYER! {enemy_type} x{self.slayer_count}! +{slayer_xp} XP!"
+                    self.slayer_announce_timer = SLAYER_ANNOUNCE_DURATION
+                    self.slayer_announce_scale = 2.5 + min(tier, 5) * 0.15
+                    self._spawn_particles(p.position + Vec3(0, 1, 0), SLAYER_COLOR, count=SLAYER_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, SLAYER_SCREEN_SHAKE)
+                    self.add_message(self.slayer_announce_text)
+            else:
+                # Different type or window expired — start new streak
+                self.slayer_current_type = enemy_type
+                self.slayer_count = 1
+                self.slayer_timer = SLAYER_WINDOW
+        else:
+            # No enemy type info — reset streak (can't track)
+            self.slayer_current_type = None
+            self.slayer_count = 0
+            self.slayer_timer = 0.0
 
         # Track flawless kill streak (resets on taking damage)
         self._register_flawless_kill()
@@ -10184,7 +10474,7 @@ class Game:
                 p = self.player
                 p.add_kill(enemy.name)
                 self.total_kills += 1
-                self._register_kill()
+                self._register_kill(enemy.name)
                 self.combo_count += 1
                 self.max_combo = max(self.max_combo, self.combo_count)
                 self.combo_timer = COMBO_TIMEOUT
@@ -10486,14 +10776,16 @@ def game_update():
             # Total animation duration for reference
             total_dur = (3 * DEATH_SCREEN_FADE_STAGGER) + DEATH_SCREEN_FADE_DURATION
             elapsed = total_dur - game.death_fade_timer
-            # Helper: compute fade alpha (0-1) for a given stagger index
+            # Compute fade alpha (0-1) for each element.
+            # NOTE: This nested function is created per-frame during the ~1.25s
+            # death fade-in, but the game is over at this point so performance
+            # is not critical. Kept as a closure for readability.
             def _death_fade_alpha(stagger_idx):
                 t = elapsed - (stagger_idx * DEATH_SCREEN_FADE_STAGGER)
                 if t <= 0:
                     return 0.0
                 if t >= DEATH_SCREEN_FADE_DURATION:
                     return 1.0
-                # Ease-out cubic for a smooth, decelerating fade
                 t_norm = t / DEATH_SCREEN_FADE_DURATION
                 return 1.0 - (1.0 - t_norm) ** 3
 
@@ -10858,6 +11150,13 @@ def game_update():
     if game.swarm_escape_active:
         effective_speed *= SWARM_ESCAPE_SPEED_MULT
 
+    # ── Collection Rush Speed Boost ── When the collection rush speed boost
+    # is active (triggered by rapid consecutive item pickups), the player
+    # moves faster. The boost composes multiplicatively with other speed
+    # buffs (Speed Boost, Adrenaline, Berserk, Swarm Escape, Monolith).
+    if game.collection_rush_timer > 0:
+        effective_speed *= COLLECTION_RUSH_SPEED_MULT
+
     # ── Threat Proximity Pulse Ring Update ── A red ground ring at Zorp's
     # feet that intensifies (alpha, radius, pulse speed) based on how many
     # enemies are within SWARM_ESCAPE_RADIUS. At 0 enemies it's invisible;
@@ -11061,7 +11360,7 @@ def game_update():
                     is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                     p.add_kill(enemy.name)
                     game.total_kills += 1
-                    game._register_kill()
+                    game._register_kill(enemy.name)
                     game.kill_flash_timer = KILL_FLASH_DURATION
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                     game.combo_count += 1
@@ -11813,6 +12112,25 @@ def game_update():
             game.crit_chain = 0
     if game.crit_chain_display_timer > 0:
         game.crit_chain_display_timer -= time.dt
+
+    # ── Enemy Slayer Timer ── Count down the window between same-type kills.
+    # If it expires, the streak resets. The announce timer fades independently.
+    if game.slayer_timer > 0:
+        game.slayer_timer -= time.dt
+        if game.slayer_timer <= 0:
+            game.slayer_count = 0
+            game.slayer_current_type = None
+    if game.slayer_announce_timer > 0:
+        game.slayer_announce_timer -= time.dt
+
+    # ── Collection Rush Timer ── Count down the speed boost duration. When it
+    # expires, hide the aura and HUD text.
+    if game.collection_rush_timer > 0:
+        game.collection_rush_timer -= time.dt
+        if game.collection_rush_timer <= 0:
+            game.collection_rush_timer = 0
+            if hasattr(p, 'collection_rush_visual'):
+                p.collection_rush_visual.visible = False
 
     # ── Spawn Direction Indicators ── Fade out and remove expired spawn arrows.
     # Reuses the same arrow entities as damage indicators but tracked separately
@@ -12880,7 +13198,7 @@ def game_update():
                                     # as the effective combo after this kill. Incrementing
                                     # combo_count first makes effective_combo off by one,
                                     # causing the Combo Sustain Heal to trigger too early.
-                                    game._register_kill()
+                                    game._register_kill(other_enemy.name)
                                     game.combo_count += 1
                                     game.max_combo = max(game.max_combo, game.combo_count)
                                     game.combo_timer = COMBO_TIMEOUT
@@ -13882,7 +14200,7 @@ def game_update():
                                 # AOE kill site had the order reversed, causing the
                                 # Combo Sustain Heal threshold/counter to be off
                                 # by one for fireball splash kills.
-                                game._register_kill()
+                                game._register_kill(nearby_enemy.name)
                                 game.combo_count += 1
                                 game.max_combo = max(game.max_combo, game.combo_count)
                                 game.combo_timer = COMBO_TIMEOUT
@@ -14011,7 +14329,7 @@ def game_update():
                         is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                         p.add_kill(enemy.name)
                         game.total_kills += 1
-                        game._register_kill()
+                        game._register_kill(enemy.name)
                         game.kill_flash_timer = KILL_FLASH_DURATION
                         game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                         game.combo_count += 1
@@ -14110,7 +14428,7 @@ def game_update():
                             is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                             p.add_kill(enemy.name)
                             game.total_kills += 1
-                            game._register_kill()
+                            game._register_kill(enemy.name)
                             game.kill_flash_timer = KILL_FLASH_DURATION
                             game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                             game.combo_count += 1
@@ -14219,7 +14537,7 @@ def game_update():
                     is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                     p.add_kill(enemy.name)
                     game.total_kills += 1
-                    game._register_kill()
+                    game._register_kill(enemy.name)
                     # Kill flash — brief white screen flash for satisfying feedback
                     game.kill_flash_timer = KILL_FLASH_DURATION
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
@@ -14677,7 +14995,7 @@ def game_update():
                     # combo_count += 1 (see explanation at other kill sites).
                     # This pulse-wave kill site had the order reversed, causing
                     # the Combo Sustain Heal to use an off-by-one effective combo.
-                    game._register_kill()
+                    game._register_kill(enemy.name)
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = COMBO_TIMEOUT
@@ -15413,6 +15731,17 @@ def game_update():
             ff.visible = True
         else:
             ff.visible = False
+
+    # ── Meteor Shower World Event Timer ── BUG FIX: The meteor_timer was
+    # initialized in __init__ but never decremented or checked anywhere in
+    # game_update(), so the meteor shower world event (sky trail, impact
+    # flash, bonus collectibles) never fired. All the METEOR_* constants
+    # and the meteor_rings list were dead code. Now the timer counts down
+    # and triggers _trigger_meteor_shower() when it reaches zero.
+    game.meteor_timer -= time.dt
+    if game.meteor_timer <= 0:
+        game.meteor_timer = random.uniform(METEOR_SHOWER_INTERVAL_MIN, METEOR_SHOWER_INTERVAL_MAX)
+        game._trigger_meteor_shower()
 
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
