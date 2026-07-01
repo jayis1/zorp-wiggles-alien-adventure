@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.40.2 — 3D!)
+## Features (v2.41.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -169,7 +169,9 @@ python game.py
 - **Rare collectible pickup flash** — when you pick up a rare-or-better item (rare, very rare, legendary, mythic), the screen edges briefly flash with that item's color, making valuable finds feel special and rewarding instead of identical to common junk
 - **Dynamic heartbeat acceleration** — the low-HP danger vignette heartbeat now speeds up as your health drops from 30% to critical, with the pulse rate accelerating from 8 to 14 beats/sec — escalating tension as you near death instead of a flat constant rhythm
 - **Enemy idle breathing** — enemies that haven't detected the player gently breathe in and out with a subtle scale oscillation, making the world feel alive instead of populated with frozen statues waiting to aggro
-- **Overkill system** — when a kill deals 25+ more damage than the enemy's remaining HP, you get an OVERKILL! Bonus XP, red-orange "OVERKILL" damage number, extra particles, and screen shake reward excessive damage with satisfying feedback
+- **Overkill system** — when a kill deals 25+ more damage than the enemy's remaining HP, you get an OVERKILL! Bonus XP, red-orange "OVERKILL" damage number, extra particles, and screen shake reward excessive damage with satisfying feedback. **Overkill Surge**: when the overkill exceeds 50+ excess damage, a guaranteed chain lightning surge arcs from the corpse to up to 6 nearby enemies — the excess energy literally leaps between targets!
+- **Critical HP Potion Homing** — when your HP drops below 15% (critical), ALL Health Potions within a massive 30-unit radius are magnetically homed in on you at accelerated speed, with a pulsing green beacon on each potion so you can see help is coming. Prevents unfair deaths where a potion was just out of reach
+- **Combo Damage Tier Aura** — when the combo damage buff activates at x10 (and renews at x15, x20, etc.), a brief fiery orange aura pulses around Zorp, making the +25% damage buff visible and rewarding
 - **HP bar damage shake** — the HP bar on the HUD jitters briefly when you take damage, providing visceral feedback that makes hits feel impactful even when you're not looking at the action
 - **Spawn density throttle** — when 8+ enemies are already within 25 units of you, enemy spawning slows down by 50%, preventing overwhelming crowds and keeping combat fair instead of swarming
 - **Rare collectible sparkle trail** — rare+ collectibles emit occasional sparkle particles that drift upward in the item's color, making valuable items more visually enticing and easier to spot from a distance
@@ -445,6 +447,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.41.0 — Overkill Surge, Critical HP Potion Homing & Combo Damage Aura
+
+- **Overkill Surge**: When a kill deals 50+ more damage than the enemy's remaining HP (a massive overkill), the excess energy erupts as a guaranteed chain lightning surge — bypassing the normal combo requirement and chance roll! Orange-white lightning arcs from the killed enemy to up to 6 nearby enemies within a 12-unit range (wider and more targets than normal chain lightning), dealing damage that scales with the overkill magnitude (up to +50% more damage at 100+ excess). A special "⚡ OVERKILL SURGE!" announcement with orange particles and screen shake celebrates the cascade. This makes high-damage crits, combo-buffed shots, and high-level kills against weak enemies feel truly explosive — the excess damage literally leaps from the corpse to nearby enemies
+- **Critical HP Potion Homing**: When the player's HP drops below 15% (critical, below the 25% Emergency Health Potion Magnet threshold), ALL Health Potions within a massive 30-unit radius are magnetically homed in on the player at an accelerated speed (28 units/sec — faster than the emergency magnet). Each potion within the radius gets a pulsing bright green beacon ring so the player can see that help is incoming — a visual "the potion is coming to save you!" cue during clutch moments. This prevents the most frustrating deaths where a potion was just slightly out of reach during a desperate situation. The critical homing stacks with the emergency magnet
+- **Combo Damage Tier Aura**: When the combo damage buff activates (at x10) and renews at each subsequent milestone (x15, x20, etc.), a brief fiery orange aura now pulses around Zorp for 0.5 seconds — making the otherwise invisible +25% damage buff visible and rewarding. The aura is a translucent orange-red sphere that scales up and fades, matching the visual language of the berserk and adrenaline auras but in a distinct warm color. A "⚡ DAMAGE BUFF ACTIVE! +25% damage!" message accompanies the first activation at x10. This gives players clear visual feedback that their kill streak is now making their shots hit harder
 
 ### v2.40.2 — Chase Predictive Lead, Dash Eye Squint & Floating Score Popups
 - **Enemy chase predictive lead**: Enemies now intelligently predict the player's movement and aim at a future position instead of blindly chasing the current position. This produces a pursuit curve that intercepts the player rather than naively tailing them, making kiting more engaging and enemies feel smarter and more predatory. The lead is proportional to the player's velocity (no lead when standing still), capped at 6 world units so fast players can still escape, and scaled by enemy speed — slow enemies get more lead (they need to anticipate more), fast enemies get less. Stationary enemies like the Starburst Sentinel skip the lead entirely. Previously, enemies always headed toward where the player IS, producing a naive "tail chase" when the player moved sideways — enemies trailed behind in a straight line, making kiting too easy and enemies look dim-witted

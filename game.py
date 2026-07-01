@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.40.2"
+VERSION = "2.41.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -356,6 +356,23 @@ FLAWLESS_MAX_TIER = 20            # Cap on streak for display/XP scaling
 EMERGENCY_HP_THRESHOLD = 0.25      # HP fraction below which emergency magnet activates
 EMERGENCY_POTION_PULL_RADIUS = 18.0  # How far the emergency pull reaches (much larger than normal)
 EMERGENCY_POTION_PULL_SPEED = 22.0  # Faster pull speed for emergency potions
+
+# ─── Critical HP Potion Homing ──────────────────────────────────────────────────
+# When the player's HP drops below CRITICAL_HP_THRESHOLD (15%), ALL Health
+# Potions within CRITICAL_POTION_HOMING_RADIUS are magnetically pulled toward
+# the player at an accelerated speed — an even more desperate version of the
+# existing Emergency Health Potion Magnet (which activates at 25% HP with an
+# 18-unit radius). At 15% HP the radius extends to 30 units and the pull speed
+# increases further, essentially making every Health Potion in a wide area
+# rush to Zorp. This prevents the most frustrating deaths where a potion was
+# *just* out of reach during a clutch moment. Additionally, each potion within
+# the radius gets a pulsing green beacon ring so the player can see that help
+# is on the way. The critical homing stacks with the emergency magnet.
+CRITICAL_HP_THRESHOLD = 0.15         # HP fraction below which critical homing activates
+CRITICAL_POTION_HOMING_RADIUS = 30.0 # How far the critical homing reaches
+CRITICAL_POTION_HOMING_SPEED = 28.0  # Pull speed for critical homing (faster than emergency)
+CRITICAL_POTION_BEACON_ALPHA = 100    # Alpha of the green beacon ring on each potion
+CRITICAL_POTION_BEACON_PULSE_SPEED = 10.0  # How fast the beacon pulses (urgent)
 
 # ─── Pickup Streak Score Multiplier ────────────────────────────────────────────
 # When the player is on a pickup streak of PICKUP_STREAK_SCORE_TIER1 (10+), each
@@ -1263,6 +1280,17 @@ RADAR_REFRESH_INTERVAL = 0.1     # How often to refresh radar dot positions
 # ─── Combo Damage Buff ────────────────────────────────────────────────────────
 COMBO_DAMAGE_TIER = 10         # Combo count needed to activate damage buff
 COMBO_DAMAGE_MULT = 1.25       # +25% projectile damage at combo x10+
+# ── Combo Damage Tier Aura ── When the combo damage buff activates (at x10)
+# and renews at each subsequent milestone (x15, x20, etc.), a brief fiery orange
+# aura pulses around Zorp for 0.5 seconds — making the otherwise invisible
+# +25% damage buff visible and rewarding. The aura is a translucent orange-red
+# sphere that scales up and fades, matching the visual language of the berserk
+# and adrenaline auras but in a distinct warm color. Only fires when the combo
+# count crosses a COMBO_MILESTONE_INTERVAL boundary at or above the damage tier,
+# so it doesn't fire every kill — just when the buff activates or renews.
+COMBO_DAMAGE_AURA_DURATION = 0.5   # How long the aura lasts (seconds)
+COMBO_DAMAGE_AURA_SCALE = 1.8      # Peak scale of the aura sphere
+COMBO_DAMAGE_AURA_COLOR = color.rgba(255, 120, 30, 80)  # Fiery orange-red
 
 # ─── Performance: Visual Culling ──────────────────────────────────────────────
 VISUAL_CULL_RANGE = 48  # Skip bob/shadow/HP bar updates for enemies beyond this distance
@@ -1352,6 +1380,21 @@ OVERKILL_DAMAGE_THRESHOLD = 25  # Minimum excess damage to trigger Overkill
 OVERKILL_XP_BONUS = 20            # Bonus XP for overkill
 OVERKILL_SCREEN_SHAKE = 0.3      # Screen shake on overkill
 OVERKILL_PARTICLE_COUNT = 15     # Particle burst on overkill
+# ── Overkill Surge ── When the overkill damage exceeds OVERKILL_SURGE_THRESHOLD
+# (50+ excess damage), a guaranteed chain lightning arcs from the killed enemy
+# to nearby enemies — bypassing the normal combo requirement and chance roll.
+# This makes massive overkill hits (high-level crits, combo-buffed shots, etc.)
+# feel truly explosive: the excess energy literally leaps from the corpse to
+# nearby enemies. A special "OVERKILL SURGE!" announcement and extra orange
+# particles celebrate the cascade. The surge uses a wider range and more
+# targets than normal chain lightning so it feels distinctly more powerful.
+OVERKILL_SURGE_THRESHOLD = 50       # Excess damage needed to trigger the surge
+OVERKILL_SURGE_RANGE = 12.0         # How far the surge lightning reaches (wider than normal)
+OVERKILL_SURGE_MAX_TARGETS = 6      # More targets than normal chain lightning
+OVERKILL_SURGE_DAMAGE_MULT = 1.5   # Damage multiplier vs normal chain lightning
+OVERKILL_SURGE_PARTICLE_COUNT = 20  # Extra orange particles on surge
+OVERKILL_SURGE_SCREEN_SHAKE = 0.4  # Screen shake on surge
+OVERKILL_SURGE_ANNOUNCE_DURATION = 1.5  # How long the announcement stays
 
 # ─── First Blood Bonus ───────────────────────────────────────────────────────
 # The very first enemy kill of each run grants bonus XP and a dramatic
@@ -10609,6 +10652,116 @@ class Game:
         if struck > 0:
             self.add_message(f"⚡ CHAIN LIGHTNING! Struck {struck} enemies!")
 
+    def _overkill_surge(self, source_pos, overkill_amount):
+        """Trigger a guaranteed chain lightning surge from a massive overkill.
+
+        When the player kills an enemy with 50+ excess damage (a massive
+        overkill), the excess energy erupts as a guaranteed chain lightning
+        surge — bypassing the normal combo requirement and chance roll. The
+        surge uses a wider range, more targets, and higher damage than normal
+        chain lightning, making high-damage hits feel truly explosive. A
+        special "OVERKILL SURGE!" announcement and extra orange particles
+        celebrate the cascade.
+
+        Args:
+            source_pos: Vec3 position of the killed enemy (surge origin).
+            overkill_amount: The excess damage dealt (determines surge intensity).
+        """
+        # Base damage scales with the overkill amount — bigger overkill = stronger surge
+        combo_excess = max(0, self.combo_count - CHAIN_LIGHTNING_MIN_COMBO)
+        base_dmg = CHAIN_LIGHTNING_DAMAGE_BASE + combo_excess * CHAIN_LIGHTNING_DAMAGE_PER_COMBO
+        # Scale damage by overkill magnitude (capped so it doesn't one-shot everything)
+        overkill_scale = 1.0 + min(1.0, overkill_amount / 100.0) * 0.5  # Up to +50% damage
+        dmg = int(base_dmg * OVERKILL_SURGE_DAMAGE_MULT * overkill_scale)
+        # Apply monolith damage buff if active
+        if self.player.monolith_damage_timer > 0:
+            dmg = int(dmg * MONOLITH_DAMAGE_MULT)
+        # Find nearby enemies — wider range than normal chain lightning
+        targets = []
+        for enemy in self.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            edist = (enemy.position - source_pos).length()
+            if edist < OVERKILL_SURGE_RANGE:
+                targets.append((edist, enemy))
+        if not targets:
+            # Still show the announcement and particles even if no targets
+            self.add_message(f"⚡ OVERKILL SURGE! ({int(overkill_amount)} excess damage!)")
+            self._spawn_particles(source_pos + Vec3(0, 1, 0), color.rgb(255, 120, 20), count=OVERKILL_SURGE_PARTICLE_COUNT)
+            self.screen_shake = max(self.screen_shake, OVERKILL_SURGE_SCREEN_SHAKE)
+            return
+        targets.sort(key=lambda t: t[0])
+        struck = 0
+        p = self.player
+        for dist, enemy in targets:
+            if struck >= OVERKILL_SURGE_MAX_TARGETS:
+                break
+            struck += 1
+            # Visual: brief orange-white line from source to target (wider than normal)
+            mid_pos = (source_pos + enemy.position) / 2
+            direction = enemy.position - source_pos
+            line_length = direction.length()
+            if line_length < 0.1:
+                continue
+            line_ent = Entity(
+                model='cube',
+                color=color.rgba(255, 140, 30, 220),
+                scale=(0.12, 0.12, line_length),
+                position=mid_pos,
+            )
+            angle_y = math.degrees(math.atan2(direction.x, direction.z))
+            line_ent.rotation_y = angle_y
+            destroy(line_ent, delay=0.15)
+            # Damage the enemy
+            killed = enemy.take_damage(dmg)
+            # Brief orange flash on the struck enemy
+            enemy.color = color.rgb(255, 180, 100)
+            invoke(setattr, enemy, 'color', enemy.original_color, delay=0.12)
+            self._spawn_particles(enemy.position + Vec3(0, 1, 0), color.rgb(255, 140, 30), count=6)
+            self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=False))
+            if killed:
+                p.add_kill(enemy.name)
+                self.total_kills += 1
+                self._register_kill(enemy.name)
+                self.combo_count += 1
+                self.max_combo = max(self.max_combo, self.combo_count)
+                self.combo_timer = COMBO_TIMEOUT
+                self.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                combo_xp_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                combo_score_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                overkill_amt = abs(enemy.hp) if enemy.hp < 0 else 0
+                is_ok = overkill_amt >= OVERKILL_DAMAGE_THRESHOLD
+                xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                if is_ok:
+                    ok_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                    xp_gain += ok_xp
+                    self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                if getattr(enemy, 'enraged', False):
+                    exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                    xp_gain += exec_xp
+                    self._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                p.gain_xp(xp_gain)
+                p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                self._drop_loot(enemy.position, enemy.name)
+                self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
+                self.enemy_death_rings.append(EnemyDeathRing(
+                    position=Vec3(enemy.x, 0, enemy.z),
+                    col=enemy.original_color,
+                    enemy_scale=enemy.original_scale,
+                ))
+                self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
+                enemy.alive = False
+                enemy.dying = True
+                enemy.death_timer = DEATH_ANIM_DURATION
+                if enemy.is_plasma_serpent:
+                    self._handle_plasma_serpent_split(enemy)
+        self.add_message(f"⚡ OVERKILL SURGE! ({int(overkill_amount)} excess!) Struck {struck} enemies!")
+        self._spawn_particles(source_pos + Vec3(0, 1, 0), color.rgb(255, 120, 20), count=OVERKILL_SURGE_PARTICLE_COUNT)
+        self.screen_shake = max(self.screen_shake, OVERKILL_SURGE_SCREEN_SHAKE)
+
     def _register_flawless_kill(self):
         """Track a flawless kill (kill without taking damage) for the Flawless
         Kill Streak system. At every FLAWLESS_MILESTONE (5) kills, award bonus
@@ -11431,6 +11584,18 @@ def game_update():
                             game._spawn_particles(p.position + burst_offset, burst_color, count=1)
                         game.screen_shake = max(game.screen_shake, 0.4)
                         game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                        # ── Combo Damage Tier Aura ── Fiery orange aura when damage buff activates/renews
+                        if game.combo_count >= COMBO_DAMAGE_TIER:
+                            aura_ent = Entity(
+                                model='sphere',
+                                color=COMBO_DAMAGE_AURA_COLOR,
+                                scale=COMBO_DAMAGE_AURA_SCALE,
+                                position=p.position,
+                            )
+                            destroy(aura_ent, delay=COMBO_DAMAGE_AURA_DURATION)
+                            game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 120, 30), count=10)
+                            if game.combo_count == COMBO_DAMAGE_TIER:
+                                game.add_message("⚡ DAMAGE BUFF ACTIVE! +25% damage!")
                         milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
                         milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
                         monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
@@ -11439,7 +11604,8 @@ def game_update():
                     if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
                         p.combo_shield_active = True
                         game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
-                        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
+                        game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                              color.rgb(255, 215, 50), count=15)
                     combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
                     combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                     monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
@@ -11450,6 +11616,9 @@ def game_update():
                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                         game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        # ── Overkill Surge ── Massive overkill triggers guaranteed chain lightning
+                        if overkill_amount >= OVERKILL_SURGE_THRESHOLD:
+                            game._overkill_surge(enemy.position, overkill_amount)
                     if getattr(enemy, 'enraged', False):
                         exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                         xp_gain += exec_xp
@@ -14638,6 +14807,23 @@ def game_update():
                             game._spawn_particles(p.position + burst_offset, burst_color, count=1)
                         game.screen_shake = max(game.screen_shake, 0.4)
                         game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                        # ── Combo Damage Tier Aura ── When the combo reaches the
+                        # damage buff tier (x10) or any subsequent milestone at or
+                        # above that tier (x15, x20, etc.), a brief fiery orange
+                        # aura pulses around Zorp — making the otherwise invisible
+                        # +25% damage buff visible and rewarding. The aura is a
+                        # translucent orange-red sphere that scales up and fades.
+                        if game.combo_count >= COMBO_DAMAGE_TIER:
+                            aura_ent = Entity(
+                                model='sphere',
+                                color=COMBO_DAMAGE_AURA_COLOR,
+                                scale=COMBO_DAMAGE_AURA_SCALE,
+                                position=p.position,
+                            )
+                            destroy(aura_ent, delay=COMBO_DAMAGE_AURA_DURATION)
+                            game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 120, 30), count=10)
+                            if game.combo_count == COMBO_DAMAGE_TIER:
+                                game.add_message("⚡ DAMAGE BUFF ACTIVE! +25% damage!")
                         # ── Combo Milestone XP Reward ── Each combo milestone
                         # (x5, x10, x15...) awards bonus XP that scales with the
                         # milestone tier, making kill streak milestones more
@@ -14672,6 +14858,13 @@ def game_update():
                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                         game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        # ── Overkill Surge ── If the overkill damage exceeds the
+                        # surge threshold (50+), trigger a guaranteed chain
+                        # lightning surge from the killed enemy to nearby enemies.
+                        # This makes massive overkill hits feel truly explosive —
+                        # the excess energy literally leaps from the corpse.
+                        if overkill_amount >= OVERKILL_SURGE_THRESHOLD:
+                            game._overkill_surge(enemy.position, overkill_amount)
                     # ── Execution Bonus ── If the enemy was in its enraged state
                     # (below 25% HP) when killed, award bonus XP for finishing off
                     # a cornered, more dangerous enemy. The bonus scales with the
@@ -15344,6 +15537,27 @@ def game_update():
                     and dist < EMERGENCY_POTION_PULL_RADIUS and dist > 0.1):
                 pull_radius = max(pull_radius, EMERGENCY_POTION_PULL_RADIUS)
                 pull_speed = max(pull_speed, EMERGENCY_POTION_PULL_SPEED)
+            # ── Critical HP Potion Homing ── When the player's HP drops below
+            # CRITICAL_HP_THRESHOLD (15%), ALL Health Potions within a very
+            # large radius (30 units) are homed in on the player at an even
+            # faster speed than the emergency magnet. This is the most
+            # desperate tier of potion magnetism — at 15% HP, every potion
+            # in a wide area rushes to Zorp, preventing the most frustrating
+            # deaths where a potion was just slightly out of reach. The
+            # critical homing stacks with the emergency magnet.
+            if (col.name == 'Health Potion' and col.spawn_timer <= 0 and not col.popping
+                    and p.hp < p.max_hp * CRITICAL_HP_THRESHOLD
+                    and dist < CRITICAL_POTION_HOMING_RADIUS and dist > 0.1):
+                pull_radius = max(pull_radius, CRITICAL_POTION_HOMING_RADIUS)
+                pull_speed = max(pull_speed, CRITICAL_POTION_HOMING_SPEED)
+                # ── Pulsing Green Beacon ── While the critical homing is active,
+                # the potion's glow ring pulses bright green so the player can
+                # see that help is incoming — a visual "the potion is coming
+                # to save you!" cue during clutch moments.
+                beacon_pulse = 0.5 + 0.5 * math.sin(game.t * CRITICAL_POTION_BEACON_PULSE_SPEED)
+                beacon_alpha = int(CRITICAL_POTION_BEACON_ALPHA * (0.5 + 0.5 * beacon_pulse))
+                col.glow.color = color.rgba(80, 255, 120, beacon_alpha)
+                col.glow.scale = 3.5 + beacon_pulse * 1.5
             if dist < pull_radius and dist > 0.1:
                 pull_dir = (p_pos - col.position).normalized()
                 # Acceleration curve: pull gets dramatically stronger as item approaches
