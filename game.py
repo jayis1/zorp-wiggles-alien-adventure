@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.40.1"
+VERSION = "2.40.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -700,6 +700,23 @@ MOVEMENT_DUST_COUNT = 2              # Number of dust particles per puff
 
 # ─── Enemy Smooth Rotation ──────────────────────────────────────────────────
 ENEMY_TURN_SPEED = 8.0               # How fast enemies rotate to face the player (higher = snappier)
+
+# ─── Enemy Chase Predictive Lead ──────────────────────────────────────────────
+# When chasing the player, enemies aim at a predicted future position instead
+# of the player's current position — a simple pursuit curve that makes enemies
+# feel smarter and more predatory. Without this, enemies always head toward
+# where the player IS, which produces a naive "tail chase" when the player
+# moves sideways: enemies trail behind in a straight line, making kiting too
+# easy and enemies look dim-witted. With predictive lead, enemies cut the
+# corner and intercept, so the player must actively change direction to shake
+# them — making kiting more engaging and enemies feel like they're anticipating
+# your movement rather than blindly following. The lead is proportional to the
+# player's velocity, capped so fast-moving players aren't impossible to escape.
+# The prediction factor scales down for fast enemies (they already reach the
+# player quickly) and up for slow enemies (they need the lead to stay relevant).
+ENEMY_CHASE_PREDICT_LEAD = 0.35     # Seconds ahead to predict player position
+ENEMY_CHASE_PREDICT_MAX = 6.0      # Max lead distance (world units) to prevent absurd interception
+ENEMY_CHASE_PREDICT_SPEED_THRESHOLD = 3.0  # Player speed below which no lead is applied (standing still = no prediction)
 
 # ─── Enemy Wander Direction Smoothing ────────────────────────────────────────
 # When wandering, enemies lerp toward their new wander direction instead of
@@ -1610,6 +1627,15 @@ PLAYER_PICKUP_PUNCH_RECOVERY = 12.0  # How fast the punch recovers to normal
 PLAYER_BLINK_INTERVAL_MIN = 3.0   # Minimum seconds between blinks
 PLAYER_BLINK_INTERVAL_MAX = 6.0   # Maximum seconds between blinks
 PLAYER_BLINK_DURATION = 0.15      # How long the blink lasts (seconds)
+
+# ── Player Dash Eye Squint ── While dashing, Zorp's eyes squint to ~40% Y
+# scale — a determined "speed face" that gives the dash character and makes
+# Zorp feel like he's exerting himself during the burst of speed. The squint
+# composes cleanly with the blink animation (whichever is more squished wins)
+# and recovers instantly when the dash ends. This adds personality to the
+# dash beyond just the movement and afterimage effects — you see Zorp's
+# expression change as he surges forward.
+PLAYER_DASH_SQUINT_Y = 0.40     # Eye Y scale during dash (0.40 = 40% of normal)
 
 # ─── Enemy Materialization Burst ──────────────────────────────────────────────
 # When an enemy materializes from a spawn warning, a vertical burst of particles
@@ -3080,6 +3106,16 @@ class Player(Entity):
             # Not blinking — ensure eyes are at full Y scale
             self.eye_l.scale_y = self._eye_base_scale_y
             self.eye_r.scale_y = self._eye_base_scale_y
+
+        # ── Dash Eye Squint ── While dashing, squint the eyes to a determined
+        # "speed face" — taking the minimum of the current Y scale and the
+        # squint value so it composes cleanly with the blink (whichever is
+        # more squished wins). This gives Zorp a visible expression change
+        # during the dash burst, adding character personality to the ability.
+        if self.dash_timer > 0:
+            squint_y = self._eye_base_scale_y * PLAYER_DASH_SQUINT_Y
+            self.eye_l.scale_y = min(self.eye_l.scale_y, squint_y)
+            self.eye_r.scale_y = min(self.eye_r.scale_y, squint_y)
 
         # Map facing direction to a small pupil offset (max 0.12 units)
         fx, fz = self.facing.x, self.facing.z
@@ -5285,7 +5321,7 @@ class DamageNumber:
     feel punchier and more satisfying instead of numbers appearing flat.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False):
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None):
         # Color: gold for flawless, green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
         if is_flawless:
             col = color.rgb(255, 215, 0)
@@ -5295,6 +5331,18 @@ class DamageNumber:
             col = color.rgb(80, 255, 120)
             text_str = f"+{amount}"
             scale_factor = 1.1
+        elif is_pickup:
+            # ── Pickup Score Popup ── A small floating "+N pts" number in the
+            # item's color appears at the pickup location, making the score
+            # gain feel tangible and immediate instead of just silently rolling
+            # up in the HUD. Uses the item's own color for visual cohesion.
+            if pickup_color is not None:
+                cr, cg, cb = _c255_color(pickup_color)
+                col = color.rgb(cr, cg, cb)
+            else:
+                col = color.rgb(200, 255, 200)
+            text_str = f"+{amount}"
+            scale_factor = 0.85
         elif is_overkill:
             col = color.rgb(255, 80, 0)
             text_str = f"OVERKILL {amount}!"
@@ -5332,9 +5380,9 @@ class DamageNumber:
         # between 0 and DMG_NUMBER_MAGNITUDE_MAX_BOOST, applied multiplicatively
         # on top of the category-based scale_factor. This makes a 80-damage crit
         # noticeably bigger than a 20-damage hit, enhancing the visual hierarchy
-        # of hit feedback. Skipped for heals and XP/execution/flawless numbers
+        # Skipped for heals, pickups, and XP/execution/flawless numbers
         # (those use fixed scales and aren't raw damage).
-        if not is_heal and not is_flawless and not is_execution and amount > 0:
+        if not is_heal and not is_pickup and not is_flawless and not is_execution and amount > 0:
             if amount > DMG_NUMBER_MAGNITUDE_BASE:
                 # Log curve: 0 boost at BASE, approaching MAX_BOOST at high damage
                 log_ratio = math.log(amount / DMG_NUMBER_MAGNITUDE_BASE) / DMG_NUMBER_MAGNITUDE_CURVE
@@ -5377,6 +5425,7 @@ class DamageNumber:
         self.is_overkill = is_overkill
         self.is_heal = is_heal
         self.is_flawless = is_flawless
+        self.is_pickup = is_pickup
         self.alive = True
         # ── Pop-In Animation ── The number scales in from small to an
         # overshoot peak then settles to normal, making damage feedback
@@ -5447,6 +5496,8 @@ class DamageNumber:
         # the color is always overridden below with hardcoded values.
         if self.is_flawless:
             self.text_ent.color = color.rgba(255, 215, 0, int(255 * alpha))
+        elif self.is_pickup:
+            self.text_ent.color = color.rgba(self._bg_r, self._bg_g, self._bg_b, int(255 * alpha))
         elif self.is_heal:
             self.text_ent.color = color.rgba(80, 255, 120, int(255 * alpha))
         elif self.is_overkill:
@@ -12997,7 +13048,31 @@ def game_update():
                         effective_count = int(ENRAGE_PARTICLE_COUNT * (1.0 + (ENRAGE_DESPERATION_COUNT_MULT - 1.0) * desperation_t))
                         game._spawn_particles(enemy.position + Vec3(0, 0.5, 0),
                                               color.rgb(255, 30, 30), count=effective_count)
-            direction = (p.position - enemy.position).normalized()
+            # ── Chase Predictive Lead ── Instead of always heading toward the
+            # player's current position, enemies aim at a predicted future
+            # position based on the player's velocity. This produces a pursuit
+            # curve that intercepts the player rather than naively tailing them,
+            # making kiting more engaging and enemies feel smarter. The lead is
+            # proportional to the player's movement speed (no lead when standing
+            # still), capped to a max distance so fast players can still escape,
+            # and scaled down for fast enemies (who close distance quickly and
+            # need less prediction). Stationary enemies (Starburst Sentinel,
+            # speed 0) skip the lead entirely since they don't chase.
+            chase_target = p.position
+            if enemy.speed > 0.1:
+                player_speed = p.velocity.length()
+                if player_speed > ENEMY_CHASE_PREDICT_SPEED_THRESHOLD:
+                    # Scale lead by enemy speed: slow enemies get more lead
+                    # (they need to anticipate more), fast enemies get less
+                    speed_ratio = min(1.0, enemy.speed / 6.0)
+                    lead_factor = ENEMY_CHASE_PREDICT_LEAD * (1.5 - speed_ratio * 0.5)
+                    lead_offset = p.velocity * lead_factor
+                    # Cap the lead distance so it doesn't overshoot absurdly
+                    lead_len = lead_offset.length()
+                    if lead_len > ENEMY_CHASE_PREDICT_MAX:
+                        lead_offset = lead_offset * (ENEMY_CHASE_PREDICT_MAX / lead_len)
+                    chase_target = p.position + lead_offset
+            direction = (chase_target - enemy.position).normalized()
             direction.y = 0
             new_pos = enemy.position + direction * enemy.speed * speed_mult * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
@@ -13013,8 +13088,9 @@ def game_update():
                 # Try Z axis only
                 if game._is_walkable(enemy.x, enemy.z + move_step.z):
                     enemy.z += move_step.z
-            # Smooth rotation toward player instead of snap-rotate
-            game._smooth_rotate_toward(enemy, p.position, ENEMY_TURN_SPEED, time.dt)
+            # Smooth rotation toward chase target (predicted player position)
+            # so the enemy faces its movement direction, not just the player
+            game._smooth_rotate_toward(enemy, chase_target, ENEMY_TURN_SPEED, time.dt)
 
             # ── Enemy Separation ── Push apart from nearby enemies to prevent
             # clumping. When multiple enemies chase the player they tend to
@@ -15502,6 +15578,25 @@ def game_update():
                     p_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
                 p.score += int(col.value * p_score_mult)
                 p.gain_xp(max(1, col.value // 10 + int(p.level * COLLECT_XP_LEVEL_BONUS_PER_LEVEL)))
+            # ── Floating Score Popup ── A small "+N" number in the item's
+            # color floats up from the pickup location, making the score gain
+            # feel tangible and immediate instead of just silently rolling up
+            # in the HUD. Skipped for Health Potions (the heal flash and +HP
+            # number already provide pickup feedback there) to avoid clutter.
+            # The popup uses the DamageNumber system with the is_pickup flag,
+            # giving it a shorter lifetime and smaller scale than damage numbers.
+            if col.name != 'Health Potion':
+                # Compute the score that was awarded (mirrors the logic above)
+                is_powerup = col.name in ('Speed Boost', 'Shield Crystal', 'Weapon Upgrade', 'Magnet Core', 'Time Warp', 'Star Fruit', 'XP Orb', 'Fireball Scroll', 'Regen Crystal', 'Lucky Clover', 'Mirror Shard', 'Photon Boots')
+                if is_powerup:
+                    score_mult = p_score_mult
+                else:
+                    score_mult = pickup_score_mult
+                pickup_score_display = int(col.value * score_mult)
+                if pickup_score_display > 0:
+                    game.damage_numbers.append(DamageNumber(
+                        col.position, pickup_score_display,
+                        is_pickup=True, pickup_color=col.item_color))
             # Start pop animation instead of immediate destroy
             col.popping = True
             col.pop_timer = COLLECT_POP_DURATION

@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.40.1 — 3D!)
+## Features (v2.40.2 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -54,6 +54,9 @@ python game.py
 - **Emergency Health Potion Magnet** — when your HP drops below 25%, all Health Potions within 18 units are magnetically pulled toward you at accelerated speed — a survival instinct that prevents frustrating deaths where a potion was just out of reach!
 - **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs!
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
+- **Enemy Chase Predictive Lead** — enemies intelligently predict the player's movement and aim at where you're going, not just where you are! This pursuit-curve interception makes kiting more engaging and enemies feel smarter — you must actively change direction to shake them instead of simply walking in a straight line
+- **Dash Eye Squint** — Zorp's eyes squint to a determined "speed face" during a dash, giving the dash ability character personality and making Zorp feel like he's exerting himself during the burst of speed
+- **Floating Score Popups** — a small "+N" number in the item's color floats up from each collectible pickup location, making score gains feel tangible and immediate instead of just silently rolling up in the HUD
 - Tentacle laser shooting with particle effects
 - **Spread Shot weapon upgrade** — pick up a Weapon Upgrade to fire 3 lasers in a fan pattern for 8 seconds!
 - **Shield power-up** — blocks all damage for 5 seconds
@@ -442,6 +445,11 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.40.2 — Chase Predictive Lead, Dash Eye Squint & Floating Score Popups
+- **Enemy chase predictive lead**: Enemies now intelligently predict the player's movement and aim at a future position instead of blindly chasing the current position. This produces a pursuit curve that intercepts the player rather than naively tailing them, making kiting more engaging and enemies feel smarter and more predatory. The lead is proportional to the player's velocity (no lead when standing still), capped at 6 world units so fast players can still escape, and scaled by enemy speed — slow enemies get more lead (they need to anticipate more), fast enemies get less. Stationary enemies like the Starburst Sentinel skip the lead entirely. Previously, enemies always headed toward where the player IS, producing a naive "tail chase" when the player moved sideways — enemies trailed behind in a straight line, making kiting too easy and enemies look dim-witted
+- **Dash eye squint**: Zorp's eyes now squint to ~40% Y scale during a dash, giving him a determined "speed face" that adds character personality to the dash ability. The squint composes cleanly with the existing blink animation (whichever is more squished wins) and recovers instantly when the dash ends. This makes the dash feel more expressive on the character model — you see Zorp's expression change as he surges forward, complementing the existing afterimage, FOV zoom, and dust effects
+- **Floating score popups on pickup**: A small "+N" number in the collectible's own color now floats up from the pickup location, making score gains feel tangible and immediate instead of just silently rolling up in the HUD. The popup uses the existing DamageNumber system with a new `is_pickup` flag (shorter scale, item-tinted color) and is skipped for Health Potions (which already have heal flash and +HP feedback). Previously, regular item pickups showed no in-world score feedback — only the HUD score counter changed, making the reward feel disconnected from the pickup action
 
 ### v2.40.1 — Death Screen Cinematic Fade-In, Crosshair Target Tint & Score Roll-Up
 - **Death screen staggered fade-in**: The game over screen now cascades in with a staggered fade-in animation instead of all elements snapping visible at once. The "GAME OVER" title fades in first (ease-out cubic over 0.5s), then the score subtitle, then the detailed stats block, then the "Press R to Restart" prompt — each delayed by 0.25s after the previous. This makes death feel cinematic and weighty: the title hits first like a punch, then the details materialize in sequence, giving the player a moment to process each piece of information rather than being overwhelmed by a full-screen dump. The restart prompt also gently pulses once fully visible to draw the eye and indicate interaction is possible. Previously, the entire death screen appeared instantly the moment HP hit zero — a jarring, abrupt transition from gameplay to a wall of text
