@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.41.1"
+VERSION = "2.42.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -826,6 +826,67 @@ CROSSHAIR_PROXIMITY_RADIUS = 3.5       # How close cursor must be to an enemy to
 CROSSHAIR_PROXIMITY_CHECK_RADIUS = 40  # Only check enemies within this distance of the player
 CROSSHAIR_PROXIMITY_TINT_COLOR = color.rgb(255, 100, 60)  # Warm red-orange target hint
 CROSSHAIR_PROXIMITY_TINT_ALPHA = 200   # Max alpha boost when directly over an enemy
+
+# ─── Ground Aim Reticle ───────────────────────────────────────────────────────
+# A visible 3D ring on the ground at the mouse world_point position, showing
+# exactly where the player's tentacle laser shots are aimed in the 3D world.
+# The reticle is a thin cyan ring that sits flat on the ground, pulses gently
+# to feel alive, and brightens when near an enemy (matching the crosshair
+# proximity tint). This gives the player a clear, glanceable ground-level aim
+# indicator — especially useful in a 3D third-person game where the screen
+# crosshair doesn't map 1:1 to the ground target. Makes precision aiming at
+# distant enemies far more readable.
+GROUND_RETICLE_RADIUS = 0.6            # Base ring radius (world units)
+GROUND_RETICLE_ALPHA = 140             # Base ring alpha
+GROUND_RETICLE_COLOR = (0, 220, 255)   # Cyan — matches the laser/energy aesthetic
+GROUND_RETICLE_PULSE_SPEED = 6.0       # How fast the reticle pulses (Hz)
+GROUND_RETICLE_PULSE_AMOUNT = 0.15    # Scale pulse amount (0.15 = ±15%)
+GROUND_RETICLE_ENEMY_ALPHA = 230      # Brighter alpha when near an enemy
+GROUND_RETICLE_ENEMY_SCALE = 1.3      # Scale multiplier when near an enemy
+GROUND_RETICLE_Y = 0.06               # Y position (just above ground to avoid z-fighting)
+
+# ─── Enemy Health Fragment Drops ──────────────────────────────────────────────
+# When an enemy dies, there's a chance it drops a small green "health fragment"
+# orb that heals the player when collected. This adds a combat-sustain loop —
+# aggressive players who chain kills can recover HP from the battlefield itself,
+# rewarding proactive combat instead of forcing retreats to find Health Potions.
+# The fragments are small green orbs that bob and glow, use the existing
+# collectible pickup system, and scale their heal amount with enemy max HP
+# (tougher enemies drop more potent fragments). A subtle green particle burst
+# marks the spawn so the player notices them.
+HEALTH_FRAGMENT_DROP_CHANCE = 0.18    # 18% chance per enemy death
+HEALTH_FRAGMENT_DROP_CHANCE_ELITE = 0.30  # 30% for high-HP enemies
+HEALTH_FRAGMENT_ELITE_HP_THRESHOLD = 100  # HP above which the elite drop chance applies
+HEALTH_FRAGMENT_HEAL_BASE = 5         # Base heal amount
+HEALTH_FRAGMENT_HEAL_PER_MAX_HP = 0.1 # Heal scales with enemy max HP (0.1 HP per max HP)
+HEALTH_FRAGMENT_HEAL_MAX = 15          # Cap so high-HP bosses don't drop full-heal orbs
+HEALTH_FRAGMENT_RADIUS = 0.35         # Visual orb radius (world units)
+HEALTH_FRAGMENT_COLOR = (80, 255, 100)  # Bright green
+HEALTH_FRAGMENT_GLOW_ALPHA = 80       # Glow ring alpha
+HEALTH_FRAGMENT_GLOW_RADIUS = 1.2     # Glow ring radius around the fragment
+HEALTH_FRAGMENT_PICKUP_RADIUS = 2.0   # How close the player must be to collect it
+HEALTH_FRAGMENT_LIFETIME = 20.0       # Seconds before the fragment despawns
+HEALTH_FRAGMENT_DESPAWN_FADE = 3.0   # Seconds of fade-out before despawn
+HEALTH_FRAGMENT_BOB_HEIGHT = 0.3     # How high the orb bobs above ground
+HEALTH_FRAGMENT_BOB_SPEED = 3.0       # Bob oscillation speed
+HEALTH_FRAGMENT_SPIN_SPEED = 120.0    # Rotation speed (degrees/sec)
+HEALTH_FRAGMENT_PARTICLE_COUNT = 6   # Particles on spawn
+
+# ─── Player Facing Direction Ground Arrow ─────────────────────────────────────
+# A small ground arrow beneath Zorp that points in the player's current facing
+# direction. In a third-person 3D game with an orbit camera, it can be hard to
+# read which way Zorp is pointing at a glance — especially after rapid camera
+# rotations. The arrow sits flat on the ground, is slightly translucent so it
+# doesn't obscure terrain, and smoothly rotates to match the facing direction.
+# It brightens during dash to reinforce the dash direction.
+FACING_ARROW_LENGTH = 1.5            # Arrow length (world units)
+FACING_ARROW_WIDTH = 0.6             # Arrow width at the base (world units)
+FACING_ARROW_ALPHA = 100             # Base alpha (translucent)
+FACING_ARROW_COLOR = (255, 255, 255) # White — neutral so it reads on any biome
+FACING_ARROW_DASH_ALPHA = 200        # Brighter during dash
+FACING_ARROW_DASH_COLOR = (0, 220, 255)  # Cyan during dash — matches dash VFX
+FACING_ARROW_Y = 0.05                # Y position (just above ground)
+FACING_ARROW_ROT_LERP = 12.0         # How fast the arrow rotates to face direction
 
 # ─── Stars ────────────────────────────────────────────────────────────────────
 STAR_COUNT = 80
@@ -4099,6 +4160,92 @@ class Collectible(Entity):
             self.glow.color = color.rgba(ir, ig, ib, beacon_alpha)
 
 
+# ─── Health Fragment ─────────────────────────────────────────────────────
+class HealthFragment(Entity):
+    """A small green orb dropped by enemies on death that heals the player on pickup.
+
+    Bobs and spins above the ground with a subtle glow ring. Heals the player
+    for a scaled amount based on the enemy's max HP. Despawns after a lifetime
+    with a fade-out. Uses the existing collectible pickup radius check, so it
+    integrates with the magnetic pull and vacuum pulse systems naturally.
+    """
+
+    def __init__(self, position, heal_amount):
+        super().__init__(
+            model='sphere',
+            color=color.rgb(*HEALTH_FRAGMENT_COLOR),
+            scale=HEALTH_FRAGMENT_RADIUS,
+            position=position + Vec3(0, HEALTH_FRAGMENT_BOB_HEIGHT, 0),
+        )
+        self.heal_amount = heal_amount
+        self.lifetime = HEALTH_FRAGMENT_LIFETIME
+        self.spawn_time = 0.0
+        self._base_y = position.y + HEALTH_FRAGMENT_BOB_HEIGHT
+        self._glow_ring = Entity(
+            model='quad',
+            color=color.rgba(*HEALTH_FRAGMENT_COLOR, HEALTH_FRAGMENT_GLOW_ALPHA),
+            scale=HEALTH_FRAGMENT_GLOW_RADIUS,
+            position=Vec3(position.x, 0.04, position.z),
+            rotation_x=90,
+        )
+        self._collected = False
+
+    def update(self):
+        self.spawn_time += time.dt
+        self.lifetime -= time.dt
+
+        # Bob up and down
+        self.y = self._base_y + math.sin(self.spawn_time * HEALTH_FRAGMENT_BOB_SPEED) * 0.15
+        # Spin
+        self.rotation_y += HEALTH_FRAGMENT_SPIN_SPEED * time.dt
+
+        # Glow ring pulse
+        glow_pulse = 0.5 + 0.5 * math.sin(self.spawn_time * 4.0)
+        glow_scale = HEALTH_FRAGMENT_GLOW_RADIUS * (0.85 + 0.15 * glow_pulse)
+        if self._glow_ring is not None and self._glow_ring.enabled:
+            self._glow_ring.scale = (glow_scale, 1, glow_scale)
+            # Fade glow as lifetime runs out
+            remaining_ratio = max(0, self.lifetime / HEALTH_FRAGMENT_DESPAWN_FADE) if self.lifetime < HEALTH_FRAGMENT_DESPAWN_FADE else 1.0
+            self._glow_ring.color = color.rgba(
+                HEALTH_FRAGMENT_COLOR[0], HEALTH_FRAGMENT_COLOR[1],
+                HEALTH_FRAGMENT_COLOR[2], int(HEALTH_FRAGMENT_GLOW_ALPHA * remaining_ratio)
+            )
+
+        # Despawn with fade
+        if self.lifetime < HEALTH_FRAGMENT_DESPAWN_FADE:
+            fade_ratio = max(0, self.lifetime / HEALTH_FRAGMENT_DESPAWN_FADE)
+            r, g, b = HEALTH_FRAGMENT_COLOR
+            self.color = color.rgba(r, g, b, int(255 * fade_ratio))
+            if self._glow_ring is not None and self._glow_ring.enabled:
+                self._glow_ring.color = color.rgba(r, g, b, int(HEALTH_FRAGMENT_GLOW_ALPHA * fade_ratio))
+
+        if self.lifetime <= 0:
+            if self._glow_ring is not None:
+                destroy(self._glow_ring)
+            destroy(self)
+            return
+
+        # Player pickup check — integrate with the game's player reference
+        p = game.player
+        if p is not None and not self._collected:
+            dx = p.x - self.x
+            dz = p.z - self.z
+            if dx * dx + dz * dz < HEALTH_FRAGMENT_PICKUP_RADIUS * HEALTH_FRAGMENT_PICKUP_RADIUS:
+                # Only collect if the player actually needs healing
+                if p.hp < p.max_hp:
+                    self._collected = True
+                    actual_heal = self.heal_amount
+                    p.hp = min(p.max_hp, p.hp + actual_heal)
+                    game.add_message(f"+{actual_heal} HP (Fragment)")
+                    game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                          color.rgb(*HEALTH_FRAGMENT_COLOR), count=4)
+                    # Heal pulse ring
+                    game.heal_pulse_rings.append(HealPulseRing(position=Vec3(p.x, 0, p.z)))
+                    if self._glow_ring is not None:
+                        destroy(self._glow_ring)
+                    destroy(self)
+
+
 # ─── Pulse Wave Ring ─────────────────────────────────────────────────────
 class PulseWaveRing(Entity):
     """An expanding teal shockwave ring emitted by the player's Pulse Wave ability.
@@ -5697,6 +5844,7 @@ class Game:
         self.crystal_entities = []
         self.enemies = []
         self.collectibles = []
+        self.health_fragments = []  # Enemy death health fragment orbs
         self.projectiles = []
         self.projectile_trails = []
         self.enemy_projectiles = []
@@ -6261,6 +6409,34 @@ class Game:
         self.crosshair2 = Entity(parent=camera.ui, model='quad', color=color.rgba(255, 255, 255, 128),
                                  scale=(0.04, 0.003), position=(0, 0))
 
+        # ── Ground Aim Reticle ── A 3D ring on the ground at the mouse
+        # world_point position, showing exactly where shots are aimed in the
+        # world. Lazily positioned each frame in _update_hud. Uses a quad
+        # model scaled to a ring-like appearance (thin cross shape).
+        self.ground_reticle = Entity(
+            model='quad',
+            color=color.rgba(GROUND_RETICLE_COLOR[0], GROUND_RETICLE_COLOR[1],
+                             GROUND_RETICLE_COLOR[2], GROUND_RETICLE_ALPHA),
+            scale=(GROUND_RETICLE_RADIUS * 2, GROUND_RETICLE_RADIUS * 2),
+            position=(0, GROUND_RETICLE_Y, 0),
+            rotation_x=90,
+            visible=False,
+        )
+        self._ground_reticle_enemy_near = False  # Tracks proximity state for scaling
+
+        # ── Player Facing Direction Ground Arrow ── A small translucent
+        # arrow on the ground beneath Zorp pointing in the facing direction.
+        # Sits flat on the ground and smoothly rotates to match facing.
+        self.facing_arrow = Entity(
+            model='cube',
+            color=color.rgba(FACING_ARROW_COLOR[0], FACING_ARROW_COLOR[1],
+                              FACING_ARROW_COLOR[2], FACING_ARROW_ALPHA),
+            scale=(FACING_ARROW_WIDTH, 0.02, FACING_ARROW_LENGTH),
+            position=(0, FACING_ARROW_Y, 0),
+            visible=False,
+        )
+        self._facing_arrow_current_yaw = 0.0  # Smoothed yaw for rotation lerp
+
         # Low-HP danger vignette — full-screen red overlay that pulses when health is critical
         self.danger_vignette = Entity(
             parent=camera.ui,
@@ -6462,6 +6638,14 @@ class Game:
                 destroy(c.glow)
                 destroy(c)
         self.collectibles.clear()
+
+        # Destroy health fragments
+        for hf in self.health_fragments:
+            if hf and hf.enabled:
+                if getattr(hf, '_glow_ring', None) is not None:
+                    destroy(hf._glow_ring)
+                destroy(hf)
+        self.health_fragments.clear()
 
         # Destroy projectiles
         for p in self.projectiles:
@@ -6712,6 +6896,7 @@ class Game:
                       'crit_chain_text', 'flawless_text',
                       'swarm_escape_text',
                       'collection_rush_text', 'slayer_text',
+                      'ground_reticle', 'facing_arrow',
                       'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
@@ -8788,6 +8973,25 @@ class Game:
                 ring.max_lifetime = LOOT_DROP_RING_DURATION
                 self.pulse_wave_rings.append(ring)
 
+    def _maybe_drop_health_fragment(self, enemy_pos, enemy_max_hp):
+        """Chance to drop a health fragment orb on enemy death.
+
+        The fragment heals the player when collected, with heal amount scaling
+        by the enemy's max HP. Elite enemies (high HP) have a higher drop chance.
+        """
+        chance = HEALTH_FRAGMENT_DROP_CHANCE_ELITE if enemy_max_hp >= HEALTH_FRAGMENT_ELITE_HP_THRESHOLD else HEALTH_FRAGMENT_DROP_CHANCE
+        if random.random() > chance:
+            return
+        heal = int(min(HEALTH_FRAGMENT_HEAL_MAX,
+                        HEALTH_FRAGMENT_HEAL_BASE + enemy_max_hp * HEALTH_FRAGMENT_HEAL_PER_MAX_HP))
+        # Slight random offset so fragments don't stack at the exact death point
+        offset = Vec3(random.uniform(-0.5, 0.5), 0, random.uniform(-0.5, 0.5))
+        frag = HealthFragment(position=enemy_pos + offset, heal_amount=heal)
+        self.health_fragments.append(frag)
+        self._spawn_particles(enemy_pos + Vec3(0, 0.5, 0),
+                              color.rgb(*HEALTH_FRAGMENT_COLOR),
+                              count=HEALTH_FRAGMENT_PARTICLE_COUNT)
+
     def _handle_plasma_serpent_split(self, enemy):
         """Handle the Plasma Serpent death split into mini-enemies.
 
@@ -9880,6 +10084,69 @@ class Game:
                 (t, a) for t, a in self.achievement_popups
                 if self.t - t < ACHIEVEMENT_POPUP_DURATION
             ]
+        # ── Ground Aim Reticle ── A visible ring on the ground at the mouse
+        # world_point position, showing exactly where the player's shots are
+        # aimed in the 3D world. The reticle pulses gently and brightens when
+        # near an enemy. This makes aiming far more readable in a third-person
+        # 3D game where the screen crosshair doesn't map 1:1 to the ground.
+        mouse_pt = mouse.world_point
+        if mouse_pt is not None and not self.game_over:
+            self.ground_reticle.visible = True
+            self.ground_reticle.position = (mouse_pt.x, GROUND_RETICLE_Y, mouse_pt.z)
+            # Gentle pulse for a "living" feel
+            pulse = 0.5 + 0.5 * math.sin(self.t * GROUND_RETICLE_PULSE_SPEED)
+            pulse_scale = 1.0 + GROUND_RETICLE_PULSE_AMOUNT * (pulse - 0.5) * 2
+            # Check if near an enemy — reuse the crosshair proximity state
+            enemy_near = False
+            mx, mz = mouse_pt.x, mouse_pt.z
+            for e in self.enemies:
+                if not e.alive or e.dying:
+                    continue
+                dx = e.x - mx
+                dz = e.z - mz
+                if dx * dx + dz * dz < CROSSHAIR_PROXIMITY_RADIUS * CROSSHAIR_PROXIMITY_RADIUS:
+                    enemy_near = True
+                    break
+            if enemy_near:
+                scale_mult = GROUND_RETICLE_ENEMY_SCALE * pulse_scale
+                alpha = GROUND_RETICLE_ENEMY_ALPHA
+            else:
+                scale_mult = pulse_scale
+                alpha = GROUND_RETICLE_ALPHA
+            base_radius = GROUND_RETICLE_RADIUS * 2 * scale_mult
+            self.ground_reticle.scale = (base_radius, base_radius)
+            self.ground_reticle.color = color.rgba(
+                GROUND_RETICLE_COLOR[0], GROUND_RETICLE_COLOR[1],
+                GROUND_RETICLE_COLOR[2], alpha
+            )
+        else:
+            self.ground_reticle.visible = False
+
+        # ── Player Facing Direction Ground Arrow ── A small translucent arrow
+        # on the ground beneath Zorp pointing in the facing direction. Smoothly
+        # rotates to match facing and brightens during dash.
+        if p is not None and not self.game_over:
+            self.facing_arrow.visible = True
+            self.facing_arrow.position = (p.x, FACING_ARROW_Y, p.z)
+            # Target yaw from facing direction
+            target_yaw = math.degrees(math.atan2(p.facing.x, p.facing.z))
+            # Smooth lerp
+            self._facing_arrow_current_yaw = lerp(
+                self._facing_arrow_current_yaw, target_yaw,
+                min(1.0, FACING_ARROW_ROT_LERP * time.dt)
+            )
+            self.facing_arrow.rotation_y = self._facing_arrow_current_yaw
+            # Color/alpha: brighter cyan during dash, white normally
+            if p.dash_timer > 0:
+                r, g, b = FACING_ARROW_DASH_COLOR
+                a = FACING_ARROW_DASH_ALPHA
+            else:
+                r, g, b = FACING_ARROW_COLOR
+                a = FACING_ARROW_ALPHA
+            self.facing_arrow.color = color.rgba(r, g, b, a)
+        else:
+            self.facing_arrow.visible = False
+
         if self.achievement_popups:
             unlock_time, ach = self.achievement_popups[-1]
             age = self.t - unlock_time
@@ -10730,6 +10997,7 @@ class Game:
                     enemy_scale=enemy.original_scale,
                 ))
                 self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
+                self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 enemy.alive = False
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
@@ -10898,6 +11166,7 @@ class Game:
                     enemy_scale=enemy.original_scale,
                 ))
                 self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
+                self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 enemy.alive = False
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
@@ -11797,6 +12066,8 @@ def game_update():
                     game.add_message(f"Dash Strike! Defeated {enemy.name}!")
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
+                    # ── Health fragment drop ──
+                    game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                     # ── Plasma Serpent: Split into mini-enemies on death (dash strike) ──
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
@@ -13729,6 +14000,7 @@ def game_update():
                                         enemy_scale=other_enemy.original_scale,
                                     ))
                                     game.kill_feed.append((game.t, f"💥 {other_enemy.name}"))
+                                    game._maybe_drop_health_fragment(other_enemy.position, other_enemy.max_hp)
                                     # BUG FIX: Friendly-fire kills were missing hit-stop,
                                     # FOV punch, and kill flash — every other kill path
                                     # (projectile, dash, AOE, Pulse Wave) includes these
@@ -14743,6 +15015,7 @@ def game_update():
                                 game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 game._drop_loot(nearby_enemy.position, nearby_enemy.name)
+                                game._maybe_drop_health_fragment(nearby_enemy.position, nearby_enemy.max_hp)
                                 # BUG FIX: Boss slow-mo was missing for AOE kills —
                                 # every other kill path triggers it for boss-tier enemies.
                                 if nearby_enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
@@ -14846,6 +15119,7 @@ def game_update():
                         else:
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                         game._drop_loot(enemy.position, enemy.name)
+                        game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                         game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                         game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                         game.enemy_death_rings.append(EnemyDeathRing(
@@ -14952,6 +15226,7 @@ def game_update():
                             else:
                                 game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                             game._drop_loot(enemy.position, enemy.name)
+                            game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                             game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                             game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                             game.enemy_death_rings.append(EnemyDeathRing(
@@ -15111,6 +15386,7 @@ def game_update():
                     # spawn in unreachable water/lava tiles.
                     # Drop loot — count scales with enemy toughness
                     game._drop_loot(enemy.position, enemy.name)
+                    game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     # Kill burst: radial ring of particles for satisfying, explosive kill feedback
                     # Scaled with enemy max HP — tougher enemies produce bigger death explosions
@@ -15382,6 +15658,12 @@ def game_update():
             destroy(hpr)
             game.heal_pulse_rings.remove(hpr)
 
+    # ── Cleanup Health Fragments ── Remove destroyed/collected health fragment
+    # orbs from the list. The HealthFragment.update() method handles its own
+    # lifetime, pickup, and self-destruction — here we just prune dead refs.
+    game.health_fragments = [hf for hf in game.health_fragments
+                             if hf is not None and getattr(hf, 'enabled', False)]
+
     # ── Update Enemy Death Ground Rings ── Expanding ground rings from enemy
     # kills are updated and removed when expired. These spawn in the enemy's
     # own color and scale with enemy size for proportional impact feedback.
@@ -15558,6 +15840,7 @@ def game_update():
                         game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=True))
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
+                    game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                     # ── Enemy Death Ground Ring ── (Pulse Wave kill variant)

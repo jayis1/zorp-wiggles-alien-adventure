@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.41.1 — 3D!)
+## Features (v2.42.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -79,6 +79,9 @@ python game.py
 - XP and leveling system (get stronger over time — +12 HP, +0.4 speed, and a heal per level!)
 - Distance-based difficulty scaling (harder enemies farther from spawn)
 - **Per-enemy loot drops** — tougher enemies drop more items! Plasma Drake drops 4–6 items, Slime Blobs drop 1–2
+- **Enemy Health Fragment drops** — enemies have a chance to drop a small green health orb on death that heals the player when collected! Heal scales with enemy toughness; elite enemies drop more often
+- **Ground Aim Reticle** — a 3D cyan ring on the ground showing exactly where your shots are aimed, making precision targeting far more readable in the 3D world
+- **Player Facing Direction Arrow** — a translucent ground arrow beneath Zorp pointing in his facing direction, brightening to cyan during dash
 - Minimap with player tracking and enemy dots
 - **Enemy Proximity Radar** — facing-relative radar overlay showing nearby off-screen threats as colored dots (red=close, orange=mid, yellow=far)
 - Enemy HP bars with green→yellow→red color gradient
@@ -450,6 +453,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.42.0 — Ground Aim Reticle, Health Fragment Drops & Facing Direction Arrow
+
+- **Ground Aim Reticle**: A visible 3D cyan ring now appears on the ground at the exact point where your tentacle laser shots are aimed — the mouse world_point. In a third-person 3D game with an orbit camera, the screen crosshair doesn't map 1:1 to the ground, making it hard to know exactly where your shots will land at a glance. The ground reticle solves this: you can now see your aim point on the terrain itself, making precision targeting at distant enemies far more readable. The reticle pulses gently to feel alive and brightens (larger scale, higher alpha) when near an enemy, matching the existing crosshair enemy-proximity tint. This is especially useful when aiming at enemies far from the player where the perspective makes the screen crosshair's ground position ambiguous
+- **Enemy Health Fragment Drops**: When an enemy dies, there's now a chance it drops a small green "health fragment" orb that heals the player when collected! This adds a combat-sustain loop — aggressive players who chain kills can recover HP directly from the battlefield, rewarding proactive combat instead of forcing retreats to find Health Potions. The heal amount scales with the enemy's max HP (tougher enemies drop more potent fragments, capped at 15 HP), and elite enemies (100+ HP) have a higher drop chance (30% vs 18%). The fragments bob, spin, and glow with a green ring, despawning after 20 seconds with a fade-out. A small green particle burst marks each spawn. Health fragments are dropped from ALL kill paths — projectile kills, dash strikes, chain lightning, overkill surges, pulse wave kills, AOE explosions, and Void Bomber friendly fire — ensuring consistent rewards regardless of how enemies are defeated
+- **Player Facing Direction Ground Arrow**: A small translucent arrow now sits on the ground beneath Zorp, pointing in his current facing direction. In a third-person 3D game with an orbit camera that rotates freely, it can be hard to read which way Zorp is pointing at a glance — especially after rapid camera rotations during combat. The arrow smoothly lerps to match the facing direction and brightens to vivid cyan during dash, reinforcing the dash direction. This makes navigation and aiming direction more readable without needing to study the character model's orientation
 
 ### v2.41.1 — Smooth Enemy Lunge Slide, Lunge Directional Stretch & Player Damage Ground Ring
 
