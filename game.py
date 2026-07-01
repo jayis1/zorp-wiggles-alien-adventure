@@ -3155,6 +3155,15 @@ class Player(Entity):
             # the player can see the barrier is working — without this, the
             # overheal just silently depletes with no visual feedback.
             self.overheal_absorbed_flag = True
+            # BUG FIX: If overheal fully absorbed the damage, return early
+            # without setting damage-taken flags. Previously, even when amount
+            # reached 0, the code fell through and set flawless_reset_flag
+            # (resetting the flawless kill streak), damage_taken_flag (shaking
+            # the HP bar), invuln_timer, and damage_scale_punch — even though
+            # the player took zero real HP damage. This is inconsistent with
+            # the Combo Shield handling above, which returns early.
+            if amount <= 0:
+                return False
         self.hp -= amount
         self.invuln_timer = PLAYER_INVULN_DURATION
         self.damage_taken_flag = True  # Flag for HP bar shake trigger
@@ -4158,6 +4167,14 @@ class Collectible(Entity):
             beacon_alpha = min(255, int(base_alpha * (1.0 + (COLLECT_BEACON_ALPHA_MULT - 1.0) * beacon_intensity)))
             ir, ig, ib = _c255_color(self.item_color)
             self.glow.color = color.rgba(ir, ig, ib, beacon_alpha)
+        else:
+            # BUG FIX: Restore glow color to its base alpha when the beacon is
+            # not active. Without this, the glow stays stuck at the beacon's
+            # boosted alpha after the beacon expires, making items glow far
+            # brighter than intended between beacon pulses.
+            glow_cfg_base = RARITY_GLOW_CONFIG.get(self.rarity, RARITY_GLOW_CONFIG['common'])
+            ir, ig, ib = _c255_color(self.item_color)
+            self.glow.color = color.rgba(ir, ig, ib, glow_cfg_base['glow_alpha'])
 
 
 # ─── Health Fragment ─────────────────────────────────────────────────────
@@ -7972,7 +7989,11 @@ class Game:
                                      position=(0, BOSS_HP_BAR_Y), origin=(0, 0), visible=False)
         self.boss_hp_bar = Entity(parent=camera.ui, model='quad', color=color.red,
                                   scale=(BOSS_HP_BAR_WIDTH, BOSS_HP_BAR_HEIGHT),
-                                  position=(0, BOSS_HP_BAR_Y), origin=(0, 0), visible=False)
+                                  position=(0, BOSS_HP_BAR_Y), origin=(-0.5, 0), visible=False)
+        # BUG FIX: Changed origin from (0,0) to (-0.5,0) so the bar depletes
+        # from right to left (like the player HP bar) instead of shrinking
+        # symmetrically toward the center. The fill's x position is set to
+        # the bg's left edge in _update_hud so it aligns properly.
         self.boss_name_text = Text(text='', position=(0, BOSS_HP_BAR_Y + 0.03), scale=1.0,
                                    color=color.yellow, origin=(0, 0), visible=False)
 
@@ -8193,7 +8214,7 @@ class Game:
         # 50%, and 75% positions on the HP bar, giving the player a quick
         # visual gauge for reading health at a glance. Positioned relative
         # to the HP bar (which spans from x=-0.75 to x=-0.35, width 0.4).
-        # The HP bar origin is at the left edge (-0.55 with origin=(-0.5,0)),
+        # The HP bar fill is left-anchored at x=-0.75 with origin=(-0.5,0),
         # so the bar spans from -0.75 to -0.35.
         hp_bar_left = -0.75   # Left edge of HP bar
         hp_bar_width = 0.4    # Total HP bar width
@@ -8459,7 +8480,12 @@ class Game:
                     wp.x += math.sin(self.t * 2 + wp.drift_phase) * wp.drift * dt
                     wp.z += wp.drift * 0.5 * dt
                     # Fade and respawn after rising too high
+                    # BUG FIX: Reset wp.y to trigger respawn on the next frame.
+                    # Without this, wp.y stays at its high value and the
+                    # respawn check (wp.y < 0) never fires again — embers
+                    # permanently disappear after the first cycle.
                     if wp.y > player_pos.y + 20:
+                        wp.y = -1  # Trigger respawn next frame
                         wp.visible = False
                 elif wp.weather_type == 'spore':
                     # Toxic spores: slow drifting green particles that float lazily
@@ -9212,7 +9238,13 @@ class Game:
         # but this one was missing the check.
         hp_ratio = max(0, p.hp / p.max_hp) if p.max_hp > 0 else 0
         self.hp_bar.scale_x = 0.4 * hp_ratio
-        self.hp_bar.x = -0.55 - 0.2 * (1 - hp_ratio)
+        # BUG FIX: Keep the left edge fixed at the bg's left edge (-0.75).
+        # The old formula x = -0.55 - 0.2*(1-ratio) was a center-origin slide
+        # formula, but the bar uses origin=(-0.5,0) (left-anchored) — so it
+        # shifted the fill 0.2 to the right of the bg at full health and
+        # overflowed past the right edge. With left-anchored origin, position.x
+        # is the left edge, which should stay fixed at the bg left edge.
+        self.hp_bar.x = -0.75
         # HP bar color gradient: green → yellow → red, with urgent pulse below 25%
         if hp_ratio > 0.5:
             t = (hp_ratio - 0.5) * 2
@@ -9329,7 +9361,10 @@ class Game:
         # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
         self.xp_bar.scale_x = 0.4 * xp_ratio
-        self.xp_bar.x = -0.55 - 0.2 * (1 - xp_ratio)
+        # BUG FIX: Keep the left edge fixed at the bg's left edge (-0.75).
+        # Same issue as the HP bar — the old formula used a center-origin
+        # slide with a left-anchored origin, causing misalignment.
+        self.xp_bar.x = -0.75
 
         # ── XP Bar Gain Flash ── When XP is gained, the XP bar flashes brighter
         # and pulses in scale for a satisfying progression feedback effect.
@@ -9922,13 +9957,21 @@ class Game:
             self.boss_name_text.visible = True
             self.boss_name_text.text = f'☠ {boss.name}'
             self.boss_hp_bar.scale_x = BOSS_HP_BAR_WIDTH * boss_ratio
-            # Boss bar color: red → orange → yellow as health drops
+            # BUG FIX: Set x to the bg's left edge so the fill depletes from
+            # right to left. With origin=(-0.5,0), position.x is the left edge.
+            self.boss_hp_bar.x = -BOSS_HP_BAR_WIDTH / 2
+            # Boss bar color: green → yellow → red as health drops (matches player HP bar)
+            # BUG FIX: The original color formula was inverted — it produced red
+            # at full health and red at empty, with orange in the middle. The
+            # >0.5 branch used rgb(255, int(200*(1-bt)), 0) which gives red at
+            # full (bt=1→green=0) instead of green at full. Now matches the
+            # player HP bar: green at full → yellow at half → red at empty.
             if boss_ratio > 0.5:
                 bt = (boss_ratio - 0.5) * 2
-                self.boss_hp_bar.color = color.rgb(255, int(200 * (1 - bt)), 0)
+                self.boss_hp_bar.color = color.rgb(int(255 * (1 - bt)), 255, 0)
             else:
                 bt = boss_ratio * 2
-                self.boss_hp_bar.color = color.rgb(255, int(100 * bt), 0)
+                self.boss_hp_bar.color = color.rgb(255, int(255 * bt), 0)
             # ── Boss Proximity Tension Vignette ── A subtle red screen-edge tint
             # pulses while a boss is nearby, building atmospheric tension. The
             # pulse intensifies as the boss's HP drops, making low-HP bosses
@@ -10371,8 +10414,10 @@ class Game:
             overheal_ratio = min(1.0, p.overheal / OVERHEAL_MAX)
             bar_w = 0.4 * overheal_ratio  # Max width matches the HP bar
             # Position: starts at the right edge of the HP bar and extends right.
-            # HP bar right edge = -0.55 + 0.4 * hp_ratio (left-anchored at -0.55).
-            hp_right_edge = -0.55 + 0.4 * hp_ratio
+            # BUG FIX: Updated to match the corrected HP bar left edge (-0.75).
+            # The HP bar is now left-anchored at x=-0.75 with width 0.4*hp_ratio,
+            # so its right edge is -0.75 + 0.4*hp_ratio.
+            hp_right_edge = -0.75 + 0.4 * hp_ratio
             self.overheal_bar.scale_x = max(0.001, bar_w)
             self.overheal_bar.x = hp_right_edge
             self.overheal_bar.visible = True
@@ -12793,6 +12838,11 @@ def game_update():
             fade_ratio = remaining / SPAWN_INDICATOR_DURATION
             alpha = int(SPAWN_INDICATOR_MAX_ALPHA * fade_ratio)
             arrow_ent.color = color.rgba(255, 160, 40, alpha)
+            # BUG FIX: Write the decremented remaining value back into the
+            # tuple. Tuples are immutable, so without this reassignment the
+            # list always holds the original full duration and the indicator
+            # never expires — arrows accumulate permanently on the HUD.
+            game.spawn_indicators[i] = (arrow_ent, direction, remaining)
             i += 1
 
     # Track whether player is actually moving (for squish/stretch animation)
