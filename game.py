@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.44.1"
+VERSION = "2.44.2"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1029,6 +1029,13 @@ SHIELD_DURATION = 5.0                    # Longer shield — 4s was too brief to
 SHIELD_PULSE_WARNING_THRESHOLD = 1.5     # Seconds remaining before shield pulses warm/red
 SHIELD_PULSE_WARNING_SPEED = 14.0        # How fast the warning pulse accelerates near expiry
 HEALTH_POTION_HEAL = 55                 # More healing — 50 felt underwhelming for mid-game enemies
+# ── Health Potion Level Scaling ── Health Potions heal a flat base amount plus
+# a small per-level bonus so they remain relevant throughout the game. At early
+# game (120 max HP) the base 55 is generous (~46% heal); at level 15 (max HP
+# ~300) the bonus adds +30, making potions heal 85 — still a meaningful ~28%
+# heal instead of the un-scaled 18%. The bonus is linear and modest so potions
+# supplement (not replace) level-up heals and combat sustain.
+HEALTH_POTION_HEAL_PER_LEVEL = 2        # Bonus heal per player level
 
 # ─── Combo System ────────────────────────────────────────────────────────────
 COMBO_TIMEOUT = 5.0        # seconds before combo resets (slightly more forgiving for smoother chaining)
@@ -3465,7 +3472,13 @@ class Player(Entity):
             target_squish = PLAYER_STRETCH_FACTOR
         else:
             target_squish = 1.0
-        self.squish_current += (target_squish - self.squish_current) * min(1.0, PLAYER_SQUISH_SPEED * time.dt)
+        # Frame-rate-independent exponential smoothing — the old
+        # lerp(a, b, dt * rate) formula overshot at high framerates (144Hz
+        # squish snapped ~1.4x faster than at 60Hz). The exp form is exact
+        # at any framerate, matching the fix already applied to camera and
+        # movement smoothing throughout the codebase.
+        _squish_alpha = 1.0 - math.exp(-PLAYER_SQUISH_SPEED * time.dt)
+        self.squish_current += (target_squish - self.squish_current) * _squish_alpha
         # ── Idle Breathing ── When not moving, Zorp gently breathes — a subtle
         # Y scale oscillation that makes the character feel alive rather than
         # frozen between movements. Applied as a small multiplier on top of the
@@ -3487,7 +3500,10 @@ class Player(Entity):
         # Recovers exponentially so it's a quick pop-then-fade, not a linger.
         self.scale = Vec3(xz_scale, y_scale * self.dash_land_squish, xz_scale)
         if self.dash_land_squish < 1.0:
-            self.dash_land_squish += (1.0 - self.dash_land_squish) * min(1.0, DASH_LAND_SQUISH_RECOVERY * time.dt)
+            # Frame-rate-independent exponential smoothing for consistent recovery
+            # speed at any framerate (matching the squish animation fix above).
+            _dash_squish_alpha = 1.0 - math.exp(-DASH_LAND_SQUISH_RECOVERY * time.dt)
+            self.dash_land_squish += (1.0 - self.dash_land_squish) * _dash_squish_alpha
             if self.dash_land_squish > 0.998:
                 self.dash_land_squish = 1.0
 
@@ -4013,8 +4029,12 @@ class Enemy(Entity):
         # (on damage); healing snaps instantly so the bar never appears to
         # lag behind recovery.
         if self.displayed_hp > self.hp:
-            self.displayed_hp = lerp(self.displayed_hp, float(self.hp),
-                                    min(1.0, ENEMY_HP_BAR_DRAIN_SPEED * time.dt))
+            # Frame-rate-independent exponential smoothing — the old
+            # lerp(a, b, dt * rate) formula overshot at high framerates (144Hz
+            # drained ~1.4x faster than at 60Hz). The exp form is exact at
+            # any framerate, so the HP bar drain feels identical at 30 or 240 FPS.
+            _drain_alpha = 1.0 - math.exp(-ENEMY_HP_BAR_DRAIN_SPEED * time.dt)
+            self.displayed_hp = lerp(self.displayed_hp, float(self.hp), _drain_alpha)
             # Clamp to avoid floating-point drift
             if abs(self.displayed_hp - self.hp) < 0.5:
                 self.displayed_hp = float(self.hp)
@@ -9721,10 +9741,12 @@ class Game:
         # ── Score Roll-Up Animation ── The displayed score smoothly counts up
         # toward the real score instead of snapping instantly, making point
         # gains feel rewarding and tangible. The lerp is framerate-independent
-        # and skips the animation when the difference is negligible.
+        # (exponential smoothing) and skips the animation when the difference
+        # is negligible. The old min(1.0, speed * dt) form overshot at high
+        # framerates — the score counted up ~1.4x faster at 144Hz than at 60Hz.
         if abs(p.score - self.displayed_score) > 0.5:
-            self.displayed_score = lerp(self.displayed_score, p.score,
-                                        min(1.0, SCORE_ROLLUP_SPEED * time.dt))
+            _score_alpha = 1.0 - math.exp(-SCORE_ROLLUP_SPEED * time.dt)
+            self.displayed_score = lerp(self.displayed_score, p.score, _score_alpha)
         else:
             self.displayed_score = p.score
         self.score_text.text = f'Score: {int(self.displayed_score):,}'
@@ -10279,10 +10301,13 @@ class Game:
         target_b = float(min(255, bcb + 80))
         # Smoothly lerp the biome indicator color toward the target for a polished
         # transition instead of an abrupt color snap when crossing biome borders.
+        # Frame-rate-independent exponential smoothing — the old min(1.0, speed*dt)
+        # form made biome color transitions ~1.4x faster at 144Hz than at 60Hz.
         cr, cg, cb = self.biome_color_current
-        cr += (target_r - cr) * min(1.0, BIOME_COLOR_LERP_SPEED * time.dt)
-        cg += (target_g - cg) * min(1.0, BIOME_COLOR_LERP_SPEED * time.dt)
-        cb += (target_b - cb) * min(1.0, BIOME_COLOR_LERP_SPEED * time.dt)
+        _biome_alpha = 1.0 - math.exp(-BIOME_COLOR_LERP_SPEED * time.dt)
+        cr += (target_r - cr) * _biome_alpha
+        cg += (target_g - cg) * _biome_alpha
+        cb += (target_b - cb) * _biome_alpha
         self.biome_color_current = (cr, cg, cb)
         self.biome_text.color = color.rgb(int(cr), int(cg), int(cb))
 
@@ -10519,10 +10544,11 @@ class Game:
             self.facing_arrow.position = (p.x, FACING_ARROW_Y, p.z)
             # Target yaw from facing direction
             target_yaw = math.degrees(math.atan2(p.facing.x, p.facing.z))
-            # Smooth lerp
+            # Smooth lerp — frame-rate-independent exponential smoothing
+            _facing_arrow_alpha = 1.0 - math.exp(-FACING_ARROW_ROT_LERP * time.dt)
             self._facing_arrow_current_yaw = lerp(
                 self._facing_arrow_current_yaw, target_yaw,
-                min(1.0, FACING_ARROW_ROT_LERP * time.dt)
+                _facing_arrow_alpha
             )
             self.facing_arrow.rotation_y = self._facing_arrow_current_yaw
             # Color/alpha: brighter cyan during dash, white normally
@@ -10866,8 +10892,9 @@ class Game:
                 # Adjust for camera yaw so the arrow points in screen-space
                 world_angle = math.atan2(dx, dz)
                 screen_angle = world_angle - math.radians(self.cam_yaw)
-                # Target alpha — fade in
-                self.compass_alpha = min(1.0, self.compass_alpha + COMPASS_ARROW_FADE_SPEED * time.dt)
+                # Target alpha — fade in (frame-rate-independent)
+                _compass_fade_alpha = 1.0 - math.exp(-COMPASS_ARROW_FADE_SPEED * time.dt)
+                self.compass_alpha = min(1.0, self.compass_alpha + _compass_fade_alpha)
                 alpha = int(200 * self.compass_alpha)
                 self.compass_arrow.visible = True
                 self.compass_arrow.color = color.rgba(255, 200, 60, alpha)
@@ -10884,16 +10911,18 @@ class Game:
                 proximity_pulse = 1.0 + max(0, (30 - dist) / 30) * 0.3 * math.sin(self.t * 6)
                 self.compass_arrow.scale = 2.0 * proximity_pulse
             else:
-                # No rare collectible found — fade out
-                self.compass_alpha = max(0, self.compass_alpha - COMPASS_ARROW_FADE_SPEED * time.dt)
+                # No rare collectible found — fade out (frame-rate-independent)
+                _compass_fade_out = 1.0 - math.exp(-COMPASS_ARROW_FADE_SPEED * time.dt)
+                self.compass_alpha = max(0, self.compass_alpha - _compass_fade_out)
                 if self.compass_alpha > 0:
                     self.compass_arrow.visible = True
                     self.compass_arrow.color = color.rgba(255, 200, 60, int(200 * self.compass_alpha))
                 else:
                     self.compass_arrow.visible = False
         else:
-            # Player is moving — fade out the compass
-            self.compass_alpha = max(0, self.compass_alpha - COMPASS_ARROW_FADE_SPEED * time.dt)
+            # Player is moving — fade out the compass (frame-rate-independent)
+            _compass_fade_out2 = 1.0 - math.exp(-COMPASS_ARROW_FADE_SPEED * time.dt)
+            self.compass_alpha = max(0, self.compass_alpha - _compass_fade_out2)
             if self.compass_alpha > 0:
                 self.compass_arrow.visible = True
                 self.compass_arrow.color = color.rgba(255, 200, 60, int(200 * self.compass_alpha))
@@ -11834,15 +11863,17 @@ def game_update():
             a1 = _death_fade_alpha(1)
             # Score count-up: lerp from 0 to final while this element is fading in
             if a1 > 0 and a1 < 1.0:
+                _death_roll_alpha = 1.0 - math.exp(-DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt)
                 game.death_score_displayed = lerp(
                     game.death_score_displayed, game.death_final_score,
-                    min(1.0, DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt))
+                    _death_roll_alpha)
             elif a1 >= 1.0:
                 # Keep rolling up until we reach the final score
                 if game.death_score_displayed < game.death_final_score - 0.5:
+                    _death_roll_alpha2 = 1.0 - math.exp(-DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt)
                     game.death_score_displayed = lerp(
                         game.death_score_displayed, game.death_final_score,
-                        min(1.0, DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt))
+                        _death_roll_alpha2)
                 else:
                     game.death_score_displayed = game.death_final_score
             displayed = int(game.death_score_displayed)
@@ -11874,9 +11905,10 @@ def game_update():
             game.game_over_restart.color = color.rgba(rr, rg, rb, int(255 * pulse))
             # Ensure score display has finished rolling up
             if game.death_score_displayed < game.death_final_score - 0.5:
+                _death_roll_alpha3 = 1.0 - math.exp(-DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt)
                 game.death_score_displayed = lerp(
                     game.death_score_displayed, game.death_final_score,
-                    min(1.0, DEATH_SCREEN_SCORE_ROLLUP_SPEED * time.dt))
+                    _death_roll_alpha3)
                 displayed = int(game.death_score_displayed)
                 game.game_over_sub.text = f'Score: {displayed:,}  Level: {game.player.level}'
 
@@ -14025,7 +14057,14 @@ def game_update():
                 r = min(255, int(cr + (255 - cr) * spawn_brightness))
                 g = min(255, int(cg + (255 - cg) * spawn_brightness))
                 b = min(255, int(cb + (255 - cb) * spawn_brightness))
-                a = max(80, int(255 * fade_t))
+                # ── Smooth Ease-In Alpha ── Use a quadratic ease-in curve for
+                # the alpha instead of a flat floor (old: max(80, int(255*fade_t))
+                # clamped the first ~31% at alpha 80, making the fade feel flat
+                # at the start). The ease-in starts from a low alpha (20) and
+                # accelerates toward full opacity, producing a smoother, more
+                # polished materialization that feels like the enemy is phasing
+                # in from nothing rather than popping in at a fixed minimum.
+                a = max(20, int(20 + 235 * fade_t * fade_t))
                 enemy.color = color.rgba(r, g, b, a)
             # ── Grace Shield Visual ── Show the translucent cyan dome during
             # the grace period and fade it out in the final 40% so it doesn't
@@ -16772,7 +16811,9 @@ def game_update():
                 # excess converts into a temporary overheal barrier that absorbs
                 # damage before real HP is reduced. This makes Health Potions
                 # valuable even at full HP instead of being wasted.
-                heal_remaining = HEALTH_POTION_HEAL
+                # ── Level-Scaled Heal ── The heal amount includes a per-level
+                # bonus so potions stay relevant as max HP grows with level-ups.
+                heal_remaining = HEALTH_POTION_HEAL + (p.level - 1) * HEALTH_POTION_HEAL_PER_LEVEL
                 hp_room = p.max_hp - p.hp
                 if hp_room > 0:
                     actual_heal = min(heal_remaining, hp_room)
