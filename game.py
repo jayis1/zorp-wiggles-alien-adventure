@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.43.1"
+VERSION = "2.44.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -2789,6 +2789,49 @@ COLLECTION_RUSH_DURATION = 4.0    # How long the speed boost lasts
 COLLECTION_RUSH_AURA_COLOR = color.rgba(100, 255, 200, 50)  # Mint-cyan aura
 COLLECTION_RUSH_AURA_SCALE = 1.6  # Scale of the rush aura sphere
 
+# ─── Last Stand ────────────────────────────────────────────────────────────────
+# When a lethal hit would kill the player while at a high combo (x10+), the hit
+# is absorbed and the player is left at 1 HP with brief invulnerability — a
+# one-time "cheat death" that rewards sustained combat streaks. A dramatic
+# golden announcement and particle burst celebrate the save. This only triggers
+# once per run (last_stand_used flag), so it's a precious safety net that makes
+# high combos feel like they're literally keeping you alive.
+LAST_STAND_COMBO_MIN = 10         # Minimum combo to trigger Last Stand
+LAST_STAND_HP_AFTER = 1            # HP left after Last Stand saves you
+LAST_STAND_INVULN_DURATION = 2.0   # Extra invulnerability after the save
+LAST_STAND_ANNOUNCE_DURATION = 3.0 # How long the announcement stays visible
+LAST_STAND_PARTICLE_COUNT = 30     # Golden particle burst
+LAST_STAND_SCREEN_SHAKE = 0.6     # Strong screen shake on the save
+LAST_STAND_COLOR = color.rgb(255, 215, 0)  # Gold — precious and dramatic
+
+# ─── Cornered Beast ────────────────────────────────────────────────────────────
+# When the player's HP drops below CORNERED_BEAST_HP_THRESHOLD (30%), their
+# projectile damage increases — a "fight or flight" damage boost that
+# synergizes with the existing Adrenaline Rush (which grants speed + fire rate).
+# This makes low-HP moments a calculated risk: you're fragile but deal more
+# damage, rewarding aggressive counterplay instead of running away. The damage
+# scales smoothly from 1.0x at the threshold to CORNERED_BEAST_MAX_MULT at
+# near-0 HP, so the closer to death you are, the harder you hit.
+CORNERED_BEAST_HP_THRESHOLD = 0.30  # HP fraction below which damage buff activates
+CORNERED_BEAST_MAX_MULT = 1.5       # Max damage multiplier at near-0 HP (50% bonus)
+CORNERED_BEAST_MIN_MULT = 1.1       # Minimum damage multiplier at the threshold
+
+# ─── Bounty Mark ──────────────────────────────────────────────────────────────
+# Periodically, a random alive enemy is "marked" as a bounty target — a golden
+# ring appears around it and killing it grants bonus XP + score. This adds a
+# light "priority target" objective to the open-world gameplay: the player has
+# a reason to seek out and hunt a specific enemy rather than just fighting
+# whatever's nearest. The bounty cycles on a timer, and if the marked enemy
+# dies (from any cause) or despawns, a new one is chosen on the next cycle.
+# The mark is visible from any distance via a golden billboard ring above the
+# enemy and a golden tint on its HP bar.
+BOUNTY_MARK_INTERVAL = 25.0         # Seconds between bounty assignments
+BOUNTY_XP_BONUS = 80                # Bonus XP for killing the bounty target
+BOUNTY_SCORE_BONUS = 200            # Bonus score for killing the bounty target
+BOUNTY_PARTICLE_COUNT = 20          # Golden particle burst on bounty kill
+BOUNTY_RING_COLOR = color.rgb(255, 215, 0)  # Gold ring
+BOUNTY_ANNOUNCE_DURATION = 3.0      # How long the bounty announcement stays
+
 # ─── Color Helper ──────────────────────────────────────────────────────────────
 # BUG FIX: Ursina's color.rgb()/color.rgba() store component values in 0-255
 # range, but named colors (color.lime, color.yellow, etc.) store them in 0-1
@@ -3185,6 +3228,14 @@ class Player(Entity):
         # empowering "surge of energy" feel. Decays over LEVEL_UP_SPEED_BURST_DURATION.
         self.level_up_speed_burst_timer = 0.0
 
+        # ── Last Stand ── One-time per run "cheat death" that triggers when a
+        # lethal hit would kill the player while at a high combo (x10+). The
+        # hit is absorbed and the player is left at 1 HP with brief
+        # invulnerability. A flag signals game_update to trigger the VFX and
+        # announcement. last_stand_used prevents re-triggering.
+        self.last_stand_used = False        # True once Last Stand has fired this run
+        self.last_stand_trigger_flag = False  # Set by take_damage, checked by game_update
+
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag."""
         self.xp += amount
@@ -3281,6 +3332,27 @@ class Player(Entity):
         self.color = color.rgb(255, 100, 100)
         invoke(setattr, self, 'color', C_ALIEN, delay=0.15)
         if self.hp <= 0:
+            # ── Last Stand ── If this lethal hit would kill the player while
+            # they have a high combo (x10+), absorb the hit and leave them at
+            # 1 HP with extended invulnerability. This is a one-time per run
+            # safety net that rewards sustained combat streaks — your combo
+            # literally keeps you alive. The flag signals game_update to spawn
+            # the golden VFX and announcement.
+            if (not self.last_stand_used
+                    and self.last_stand_trigger_flag is False):
+                # We need the game's combo_count — Player doesn't hold a Game
+                # reference, so we access the module-level global 'game' which
+                # is set at the bottom of this file (game = Game()). This is
+                # safe because take_damage is only ever called after Game()
+                # initialization, during gameplay.
+                _g = globals().get('game', None)
+                _combo = getattr(_g, 'combo_count', 0) if _g is not None else 0
+                if _combo >= LAST_STAND_COMBO_MIN:
+                    self.last_stand_used = True
+                    self.last_stand_trigger_flag = True
+                    self.hp = LAST_STAND_HP_AFTER
+                    self.invuln_timer = LAST_STAND_INVULN_DURATION
+                    return False  # survived
             self.hp = 0
             return True  # dead
         return False
@@ -6263,6 +6335,43 @@ class Game:
             origin=(0, 0), visible=False,
         )
 
+        # ── Last Stand ── Tracks the announcement display timer for the golden
+        # "LAST STAND!" HUD text that appears when the player cheats death via
+        # the Last Stand perk. The visual entity is a golden aura on the player
+        # model that pulses briefly after the save triggers.
+        self.last_stand_announce_timer = 0.0
+        self.last_stand_text = Text(
+            text='', position=(0, 0.12), scale=2.2,
+            color=color.rgba(255, 215, 0, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # ── Cornered Beast ── Tracks the visual indicator timer for the
+        # damage buff when at low HP. The visual is a subtle red-orange edge
+        # glow that intensifies as HP drops, complementing the existing
+        # danger vignette and adrenaline rush. The HUD text shows the current
+        # damage multiplier.
+        self.cornered_beast_text = Text(
+            text='', position=(-0.45, -0.08), scale=1.1,
+            color=color.rgba(255, 80, 30, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # ── Bounty Mark ── Periodically marks a random alive enemy as a bounty
+        # target. The bounty_marker_entity is a golden billboard ring that
+        # floats above the marked enemy. bounty_enemy holds the reference to
+        # the marked Enemy object (or None). The timer counts down to the next
+        # bounty assignment.
+        self.bounty_timer = BOUNTY_MARK_INTERVAL  # Initial delay before first bounty
+        self.bounty_enemy = None                  # Currently marked Enemy (or None)
+        self.bounty_ring_entity = None            # Golden billboard ring above the enemy
+        self.bounty_announce_timer = 0.0          # How long the bounty announcement stays
+        self.bounty_announce_text = Text(
+            text='', position=(0, 0.06), scale=1.8,
+            color=color.rgba(255, 215, 0, 0),
+            origin=(0, 0), visible=False,
+        )
+
         # ── Threat Proximity Pulse Ring ── A red ground ring at Zorp's feet
         # that intensifies based on nearby enemy count. Lazily created on
         # first need, then made visible/invisible based on threat level. The
@@ -7058,6 +7167,8 @@ class Game:
                       'collection_rush_text', 'slayer_text',
                       'vengeful_surge_text', 'rapid_chain_text',
                       'ground_reticle', 'facing_arrow',
+                      'last_stand_text', 'cornered_beast_text',
+                      'bounty_announce_text',
                       'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
@@ -7078,6 +7189,10 @@ class Game:
         self.dmg_arrow_entities.clear()
         self.damage_indicators.clear()
         self.spawn_indicators.clear()
+        # Destroy bounty ring entity if it exists
+        if self.bounty_ring_entity is not None:
+            destroy(self.bounty_ring_entity)
+            self.bounty_ring_entity = None
         for t in self.msg_texts:
             if t:
                 destroy(t)
@@ -7604,6 +7719,7 @@ class Game:
             f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
             f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
             f'Best Flawless Streak: x{self.max_flawless}   Best Rapid Chain: x{self.max_rapid_chain}',
+            f'Last Stand Used: {"Yes" if p.last_stand_used else "No"}',
             f'Missions Completed: {p.completed_missions}   Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
         ]
@@ -9309,6 +9425,22 @@ class Game:
         # fast-paced combat with raw firepower.
         if self.player.berserk_timer > 0:
             base_damage = int(base_damage * BERSERK_DAMAGE_MULT)
+
+        # ── Cornered Beast Damage Buff ── When the player's HP is below 30%,
+        # their projectile damage increases — a "fight or flight" boost that
+        # makes low-HP moments a calculated risk. The multiplier scales smoothly
+        # from CORNERED_BEAST_MIN_MULT at the 30% threshold to
+        # CORNERED_BEAST_MAX_MULT at near-0 HP, so the closer to death you are,
+        # the harder you hit. This synergizes with Adrenaline Rush (which grants
+        # speed + fire rate at the same threshold) to make low-HP play a viable
+        # aggressive strategy instead of a panic state.
+        if self.player.max_hp > 0:
+            hp_ratio = self.player.hp / self.player.max_hp
+            if hp_ratio < CORNERED_BEAST_HP_THRESHOLD:
+                # Scale from MIN_MULT at threshold to MAX_MULT at 0 HP
+                t = 1.0 - (hp_ratio / CORNERED_BEAST_HP_THRESHOLD)  # 0→1 as HP→0
+                cornered_mult = CORNERED_BEAST_MIN_MULT + (CORNERED_BEAST_MAX_MULT - CORNERED_BEAST_MIN_MULT) * t
+                base_damage = int(base_damage * cornered_mult)
 
         # Muzzle flash: brief bright sphere at firing point
         flash_pos = self.player.position + Vec3(0, 1, 0) + self.player.facing * 1.2
@@ -13493,6 +13625,46 @@ def game_update():
             p.vengeful_surge_timer = 0
             p.vengeful_surge_visual.visible = False
 
+    # ── Last Stand ── When the player cheats death via the Last Stand perk
+    # (triggered inside take_damage when a lethal hit is absorbed at high
+    # combo), spawn the golden VFX and announcement. The flag is set by
+    # Player.take_damage; this code handles the visual celebration.
+    if p.last_stand_trigger_flag:
+        p.last_stand_trigger_flag = False
+        game.last_stand_announce_timer = LAST_STAND_ANNOUNCE_DURATION
+        game.last_stand_text.text = '⚡ LAST STAND!'
+        game.last_stand_text.visible = True
+        game.last_stand_text.color = color.rgba(255, 215, 0, 255)
+        # Golden particle burst around the player
+        game._spawn_particles(p.position + Vec3(0, 1, 0), LAST_STAND_COLOR,
+                              count=LAST_STAND_PARTICLE_COUNT)
+        game._spawn_particles(p.position + Vec3(0, 2, 0),
+                              color.rgb(255, 255, 100), count=15)
+        # Strong screen shake
+        game.screen_shake = max(game.screen_shake, LAST_STAND_SCREEN_SHAKE)
+        # Expanding golden ring on the ground — standalone entity
+        ls_ring = Entity(
+            model='quad',
+            color=color.rgba(255, 215, 0, 120),
+            scale=1.0,
+            position=Vec3(p.x, 0.1, p.z),
+            rotation_x=90,
+        )
+        ls_ring.animate_scale(Vec3(8, 1, 8), duration=0.6, curve=curve.out_expo)
+        ls_ring.animate_color(color.rgba(255, 215, 0, 0), duration=0.6, curve=curve.linear)
+        destroy(ls_ring, delay=0.61)
+        game.add_message(f"⚡ LAST STAND! Combo saved you at {game.combo_count}x!")
+    # Last Stand announcement timer decay
+    if game.last_stand_announce_timer > 0:
+        game.last_stand_announce_timer -= time.dt
+        alpha = min(1.0, game.last_stand_announce_timer / 0.5)
+        # Pulse the text for dramatic effect
+        pulse = 1.0 + 0.1 * math.sin(game.t * 12)
+        game.last_stand_text.scale = 2.2 * pulse
+        game.last_stand_text.color = color.rgba(255, 215, 0, int(255 * alpha))
+        if game.last_stand_announce_timer <= 0:
+            game.last_stand_text.visible = False
+
     # ── Overheal Absorption Burst ── When the Overheal Barrier absorbs a hit,
     # fire a golden particle burst and expanding ring from the player so the
     # barrier's protection is clearly visible. Without this, overheal just
@@ -16985,6 +17157,95 @@ def game_update():
             ff.visible = True
         else:
             ff.visible = False
+
+    # ── Bounty Mark System ── Periodically marks a random alive enemy as a
+    # bounty target. A golden billboard ring floats above the marked enemy,
+    # making it easy to spot from any distance. Killing the bounty target
+    # grants bonus XP and score. If the marked enemy dies (from any cause) or
+    # despawns, a new one is chosen on the next cycle. This adds a light
+    # "priority target" objective to the open-world gameplay.
+    game.bounty_timer -= time.dt
+    if game.bounty_timer <= 0:
+        game.bounty_timer = BOUNTY_MARK_INTERVAL
+        # Clear previous bounty if it exists
+        if game.bounty_ring_entity is not None:
+            destroy(game.bounty_ring_entity)
+            game.bounty_ring_entity = None
+        game.bounty_enemy = None
+        # Pick a random alive, non-dying enemy as the new bounty
+        eligible = [e for e in game.enemies if e.alive and not e.dying]
+        if eligible:
+            game.bounty_enemy = random.choice(eligible)
+            # Create golden billboard ring above the enemy
+            game.bounty_ring_entity = Entity(
+                model='quad',
+                color=color.rgba(255, 215, 0, 200),
+                scale=2.0,
+                position=Vec3(game.bounty_enemy.x, game.bounty_enemy.y + 2.5, game.bounty_enemy.z),
+                billboard=True,
+            )
+            game.bounty_announce_timer = BOUNTY_ANNOUNCE_DURATION
+            game.bounty_announce_text.text = f'🎯 BOUNTY: {game.bounty_enemy.name}!'
+            game.bounty_announce_text.visible = True
+            game.bounty_announce_text.color = color.rgba(255, 215, 0, 255)
+            game.add_message(f"🎯 BOUNTY MARKED: {game.bounty_enemy.name}! Kill for +{BOUNTY_XP_BONUS} XP!")
+    # Update bounty ring position to follow the marked enemy
+    if game.bounty_enemy is not None and game.bounty_ring_entity is not None:
+        if game.bounty_enemy.alive and not game.bounty_enemy.dying:
+            # Pulse the ring for visual attention
+            bounty_pulse = 0.5 + 0.5 * math.sin(game.t * 5)
+            game.bounty_ring_entity.scale = 2.0 + bounty_pulse * 0.3
+            game.bounty_ring_entity.position = Vec3(
+                game.bounty_enemy.x, game.bounty_enemy.y + 2.5, game.bounty_enemy.z
+            )
+            # Rotate the ring for extra visibility
+            game.bounty_ring_entity.rotation_z = game.t * 90
+        else:
+            # Marked enemy died or despawned — award bounty bonus if the player
+            # killed it (enemy.dying = True means it was killed, not despawned).
+            # Then clear the bounty.
+            if game.bounty_enemy.dying:
+                p = game.player
+                monolith_xp_mult_b = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                bounty_xp = int(BOUNTY_XP_BONUS * monolith_xp_mult_b)
+                p.gain_xp(bounty_xp)
+                p.score += BOUNTY_SCORE_BONUS
+                game._spawn_particles(game.bounty_enemy.position,
+                                      BOUNTY_RING_COLOR, count=BOUNTY_PARTICLE_COUNT)
+                game._spawn_particles(game.bounty_enemy.position + Vec3(0, 1, 0),
+                                      color.rgb(255, 255, 100), count=10)
+                game.screen_shake = max(game.screen_shake, 0.3)
+                game.add_message(f"🎯 BOUNTY COMPLETE! +{bounty_xp} XP +{BOUNTY_SCORE_BONUS} score!")
+                game.damage_numbers.append(
+                    DamageNumber(game.bounty_enemy.position, bounty_xp, is_flawless=True)
+                )
+            destroy(game.bounty_ring_entity)
+            game.bounty_ring_entity = None
+            game.bounty_enemy = None
+    # Bounty announcement timer decay
+    if game.bounty_announce_timer > 0:
+        game.bounty_announce_timer -= time.dt
+        alpha = min(1.0, game.bounty_announce_timer / 0.5)
+        game.bounty_announce_text.color = color.rgba(255, 215, 0, int(255 * alpha))
+        if game.bounty_announce_timer <= 0:
+            game.bounty_announce_text.visible = False
+
+    # ── Cornered Beast HUD ── Show the damage buff indicator when HP is below
+    # the threshold. The text displays the current damage multiplier and fades
+    # out when HP recovers above the threshold.
+    if p.max_hp > 0:
+        _hp_ratio = p.hp / p.max_hp
+        if _hp_ratio < CORNERED_BEAST_HP_THRESHOLD:
+            _t_cb = 1.0 - (_hp_ratio / CORNERED_BEAST_HP_THRESHOLD)
+            _mult = CORNERED_BEAST_MIN_MULT + (CORNERED_BEAST_MAX_MULT - CORNERED_BEAST_MIN_MULT) * _t_cb
+            _pct = int((_mult - 1.0) * 100)
+            game.cornered_beast_text.text = f'🔥 CORNERED BEAST +{_pct}% DMG'
+            game.cornered_beast_text.visible = True
+            # Pulse the alpha for urgency
+            _cb_pulse = 0.5 + 0.5 * math.sin(game.t * 6)
+            game.cornered_beast_text.color = color.rgba(255, 80, 30, int(150 + 100 * _cb_pulse))
+        else:
+            game.cornered_beast_text.visible = False
 
     # ── Meteor Shower World Event Timer ── BUG FIX: The meteor_timer was
     # initialized in __init__ but never decremented or checked anywhere in

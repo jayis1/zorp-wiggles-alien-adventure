@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.43.1 — 3D!)
+## Features (v2.44.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -54,6 +54,9 @@ python game.py
 - **Vengeful Surge** — when you take damage while at a high combo (x5+), a brief "⚡ VENGEFUL SURGE!" activates, granting +25% movement speed and +40% fire rate for 3 seconds! Instead of losing your combo and feeling punished, you get a short window of enhanced power to fight back — turning a setback into a counterattack opportunity. The surge has a 12-second cooldown so it doesn't fire repeatedly, and the pink-magenta aura and HUD announcement make it clear when the buff is active. Distinct from Adrenaline Rush (which triggers on low HP) — this is about the combo
 - **Rapid Pickup Chain** — collect items in very rapid succession (within 1.0 seconds of each other) to build a "⚡ RAPID CHAIN" counter! Each chain step awards bonus score that grows with the chain length. The mint-green HUD display shows your current chain count, and the death screen reports your best rapid chain. When a chain of 3+ ends, a brief "⚡ Chain ended xN!" message and mint-green particle puff give closure instead of silently vanishing. Distinct from the broader Pickup Streak (which has a longer window and awards XP at milestones) — this rewards tight, fast collection patterns like vacuuming a cluster of items
 - **Void Wisp Teleport Blink Rings** — when a Void Wisp teleports away after being hit, expanding ring effects now appear at both the departure and arrival points, making the teleport visually readable instead of a sudden position change. The departure ring contracts inward (implosion feel) while the arrival ring expands outward — a clear "left here, arrived there" visual language
+- **Last Stand** — when a lethal hit would kill you while at a high combo (x10+), the hit is absorbed and you're left at 1 HP with extended invulnerability! A dramatic golden "⚡ LAST STAND!" announcement, particle burst, expanding ground ring, and screen shake celebrate the save. This triggers only once per run, making it a precious safety net that rewards sustained combat streaks — your combo literally keeps you alive! The death screen reports whether Last Stand was used
+- **Cornered Beast** — when your HP drops below 30%, your projectile damage increases up to +50% at near-zero HP! A pulsing red-orange "🔥 CORNERED BEAST +N% DMG" HUD indicator shows the current multiplier. This synergizes with Adrenaline Rush (which grants speed + fire rate at low HP) to make low-HP play a calculated aggressive strategy — you're fragile but hit much harder, rewarding bold counterplay over running away
+- **Bounty Mark** — every 25 seconds, a random enemy is marked as a bounty target with a golden pulsing ring above its head! Killing the bounty target grants +80 bonus XP and +200 bonus score with a golden particle burst. A "🎯 BOUNTY MARKED!" announcement names the target so you can hunt it down. If the target dies from any cause or despawns, a new bounty is assigned on the next cycle. This adds a light "priority target" objective to the open-world gameplay, giving you a reason to seek out and hunt specific enemies rather than just fighting whatever's nearest
 - **Emergency Health Potion Magnet** — when your HP drops below 25%, all Health Potions within 18 units are magnetically pulled toward you at accelerated speed — a survival instinct that prevents frustrating deaths where a potion was just out of reach!
 - **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs! When a streak of 5+ ends, a brief "Streak ended xN" message gives gentle closure
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
@@ -456,6 +459,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.44.0 — Last Stand, Cornered Beast & Bounty Mark
+
+- **Last Stand**: When a lethal hit would kill the player while at a high combo (x10+), the hit is absorbed and the player is left at 1 HP with 2 seconds of extended invulnerability — a one-time per run "cheat death" that rewards sustained combat streaks. A dramatic golden "⚡ LAST STAND!" announcement, 30-particle golden burst, expanding ground ring, and strong screen shake celebrate the save. The death screen now reports whether Last Stand was used. This makes high combos feel like they're literally keeping you alive — your streak is your safety net
+- **Cornered Beast**: When the player's HP drops below 30%, their projectile damage increases smoothly from +10% at the threshold to +50% at near-zero HP. A pulsing red-orange "🔥 CORNERED BEAST +N% DMG" HUD indicator shows the current multiplier. This synergizes with Adrenaline Rush (which grants speed + fire rate at the same threshold) to make low-HP play a calculated aggressive strategy — you're fragile but deal significantly more damage, rewarding bold counterplay over running away. The scaling is smooth so the closer to death you are, the harder you hit
+- **Bounty Mark**: Every 25 seconds, a random alive enemy is marked as a bounty target with a golden pulsing billboard ring floating above its head. Killing the bounty target grants +80 bonus XP (scales with Monolith XP multiplier) and +200 bonus score, with a golden particle burst, screen shake, and floating XP number. A "🎯 BOUNTY MARKED!" announcement names the target so the player can hunt it down. If the target dies from any cause or despawns, a new bounty is assigned on the next cycle. This adds a light "priority target" objective to the open-world gameplay, giving the player a reason to seek out and hunt specific enemies rather than just fighting whatever's nearest
 
 ### v2.43.1 — Rapid Chain Break Feedback, Pickup Streak Closure & Enemy Projectile Fizz
 
