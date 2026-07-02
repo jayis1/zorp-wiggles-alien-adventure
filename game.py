@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.44.0"
+VERSION = "2.44.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -11940,7 +11940,8 @@ def game_update():
         if game.level_up_fov_timer > 0:
             game.level_up_fov_timer -= time.dt
             target_fov_hs = SPEED_BOOST_FOV if p.speed_boost_timer > 0 else DASH_FOV_NORMAL
-            camera.fov = lerp(camera.fov, target_fov_hs, time.dt * LEVEL_UP_FOV_LERP_SPEED)
+            _fov_alpha = 1.0 - math.exp(-LEVEL_UP_FOV_LERP_SPEED * time.dt)
+            camera.fov = lerp(camera.fov, target_fov_hs, _fov_alpha)
         target_pos = p.position + Vec3(0, 0, 0)
         shake_offset = Vec3(0, 0, 0)
         if game.screen_shake > 0.01:
@@ -11970,7 +11971,12 @@ def game_update():
                     CAMERA_SHOOT_RECOIL_LIFT * kick,
                     -recoil_dir.z * CAMERA_SHOOT_RECOIL_DISTANCE * kick,
                 )
-        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset + recoil_offset
+        # Frame-rate-independent camera follow — the old lerp(a, b, dt * rate)
+        # formula overshot at high framerates (144Hz camera snapped ~1.4x faster
+        # than at 60Hz). The exp form is exact at any framerate, matching the fix
+        # already applied to camera yaw/pitch smoothing and player movement.
+        cam_follow_alpha = 1.0 - math.exp(-cam_lerp * time.dt)
+        game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, cam_follow_alpha) + shake_offset + recoil_offset
         # Still update particles and damage numbers during freeze
         i = 0
         while i < len(game.particles):
@@ -12483,8 +12489,9 @@ def game_update():
                     enemy.alive = False
                     enemy.dying = True
                     enemy.death_timer = DEATH_ANIM_DURATION
-        # FOV zoom during dash for speed feel
-        camera.fov = lerp(camera.fov, DASH_FOV_ZOOM, time.dt * DASH_FOV_LERP_SPEED)
+        # FOV zoom during dash for speed feel (frame-rate-independent)
+        _dash_fov_alpha = 1.0 - math.exp(-DASH_FOV_LERP_SPEED * time.dt)
+        camera.fov = lerp(camera.fov, DASH_FOV_ZOOM, _dash_fov_alpha)
         # ── Dash Landing Impact ── When the dash ends, trigger a satisfying
         # squish-and-dust landing effect instead of stopping dead with no feedback.
         if p.dash_timer <= 0:
@@ -12550,11 +12557,13 @@ def game_update():
         # springs back to normal with a smooth ease-out over the duration.
         if game.level_up_fov_timer > 0:
             game.level_up_fov_timer -= time.dt
-            camera.fov = lerp(camera.fov, target_fov_normal, time.dt * LEVEL_UP_FOV_LERP_SPEED)
+            _lu_fov_a = 1.0 - math.exp(-LEVEL_UP_FOV_LERP_SPEED * time.dt)
+            camera.fov = lerp(camera.fov, target_fov_normal, _lu_fov_a)
         elif game.kill_fov_timer > 0:
             game.kill_fov_timer -= time.dt
-            # Lerp back to normal FOV after kill zoom punch
-            camera.fov = lerp(camera.fov, target_fov_normal, time.dt * CAMERA_KILL_ZOOM_LERP_SPEED)
+            # Lerp back to normal FOV after kill zoom punch (frame-rate-independent)
+            _kill_fov_a = 1.0 - math.exp(-CAMERA_KILL_ZOOM_LERP_SPEED * time.dt)
+            camera.fov = lerp(camera.fov, target_fov_normal, _kill_fov_a)
         elif abs(camera.fov - target_fov_normal) > 0.5:
             # ── Dash-End FOV Ease-Out ── Two-phase recovery: fast initial snap
             # covers most of the FOV gap quickly (snappy "landing" from the
@@ -12562,13 +12571,17 @@ def game_update():
             # so the FOV gently settles to normal instead of stopping abruptly.
             # This mirrors the feel of decelerating from a sprint — you don't
             # go from full speed to dead stop, you ease into it.
+            # Frame-rate-independent exp smoothing so the ease feels identical
+            # at 30Hz and 240Hz.
             fov_gap = abs(camera.fov - target_fov_normal)
             if fov_gap > DASH_FOV_EASE_SPLIT:
                 # Fast phase — snappy recovery
-                camera.fov = lerp(camera.fov, target_fov_normal, time.dt * DASH_FOV_EASE_FAST_SPEED)
+                _ease_fast_a = 1.0 - math.exp(-DASH_FOV_EASE_FAST_SPEED * time.dt)
+                camera.fov = lerp(camera.fov, target_fov_normal, _ease_fast_a)
             else:
                 # Slow ease-out phase — gentle settle
-                camera.fov = lerp(camera.fov, target_fov_normal, time.dt * DASH_FOV_EASE_SLOW_SPEED)
+                _ease_slow_a = 1.0 - math.exp(-DASH_FOV_EASE_SLOW_SPEED * time.dt)
+                camera.fov = lerp(camera.fov, target_fov_normal, _ease_slow_a)
         else:
             camera.fov = target_fov_normal
 
@@ -13923,7 +13936,12 @@ def game_update():
                 CAMERA_SHOOT_RECOIL_LIFT * kick,
                 -recoil_dir.z * CAMERA_SHOOT_RECOIL_DISTANCE * kick,
             )
-    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, time.dt * cam_lerp) + shake_offset + recoil_offset
+    # Frame-rate-independent camera follow — the old lerp(a, b, dt * rate)
+    # formula overshot at high framerates (144Hz camera snapped ~1.4x faster
+    # than at 60Hz). The exp form is exact at any framerate, matching the fix
+    # already applied to camera yaw/pitch smoothing and player movement.
+    cam_follow_alpha = 1.0 - math.exp(-cam_lerp * time.dt)
+    game.cam_pivot.position = lerp(game.cam_pivot.position, target_pos, cam_follow_alpha) + shake_offset + recoil_offset
 
     # ── Update Enemies ──
     for enemy in game.enemies[:]:
@@ -14695,11 +14713,15 @@ def game_update():
                     enemy.segment_positions.pop(0)
                     enemy.segment_positions.append(Vec3(enemy.x, enemy.y, enemy.z))
                 # Move each segment entity to follow the history
+                # Frame-rate-independent exp smoothing so the slithering
+                # body segments follow at the same visual speed regardless
+                # of monitor refresh rate.
+                _seg_alpha = 1.0 - math.exp(-10.0 * time.dt)
                 for i, seg in enumerate(enemy.segment_entities):
                     if i + 1 < len(enemy.segment_positions):
                         target = enemy.segment_positions[i + 1]
-                        seg.x = lerp(seg.x, target.x, time.dt * 10)
-                        seg.z = lerp(seg.z, target.z, time.dt * 10)
+                        seg.x = lerp(seg.x, target.x, _seg_alpha)
+                        seg.z = lerp(seg.z, target.z, _seg_alpha)
                         seg.y = 1 + math.sin(game.t * 2.5 + i * 0.8) * 0.15
                 # Sinuous movement: add a lateral sway to the serpent's chase.
                 # BUG FIX: sway was computed but never applied — the serpent
@@ -14809,10 +14831,13 @@ def game_update():
             # headings instead of snapping instantly. This makes idle enemies
             # look like they're meandering organically rather than jerking into
             # new directions on a timer tick.
+            # Frame-rate-independent exp smoothing so the turn rate is consistent
+            # across all monitor refresh rates.
+            _wander_turn_alpha = 1.0 - math.exp(-ENEMY_WANDER_TURN_SPEED * time.dt)
             enemy.wander_dir = Vec3(
-                lerp(enemy.wander_dir.x, enemy.wander_target_dir.x, time.dt * ENEMY_WANDER_TURN_SPEED),
+                lerp(enemy.wander_dir.x, enemy.wander_target_dir.x, _wander_turn_alpha),
                 0,
-                lerp(enemy.wander_dir.z, enemy.wander_target_dir.z, time.dt * ENEMY_WANDER_TURN_SPEED),
+                lerp(enemy.wander_dir.z, enemy.wander_target_dir.z, _wander_turn_alpha),
             )
             # Normalize to keep speed consistent even during the lerp
             wd_len = enemy.wander_dir.length()
