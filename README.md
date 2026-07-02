@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.42.1 — 3D!)
+## Features (v2.43.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -51,6 +51,9 @@ python game.py
 - **Combo-Scaled Kill Shake** — each kill's screen shake intensifies with your combo count! At x10 combo, kills shake the screen 50% harder; at x20+ they're 75% stronger. Every consecutive kill in a big streak feels more impactful through the camera, building visceral momentum that makes high combos feel like an escalating physical event
 - **Combo Break Shatter** — when a combo of x3+ expires, a dramatic red "COMBO BROKEN!" announcement pops with shatter particles and screen shake, making losing a streak feel impactful instead of silently vanishing!
 - **Flawless Kill Streak** — track consecutive kills made without taking any damage! At every 5 flawless kills, bonus XP is awarded with a golden "✦ FLAWLESS!" announcement and particle burst. Taking damage resets the streak (with a "Flawless streak broken!" message if you had 3+). The gold HUD counter shows your current streak, and the death screen reports your best flawless streak. Rewards skillful dodging and damage avoidance!
+- **Vengeful Surge** — when you take damage while at a high combo (x5+), a brief "⚡ VENGEFUL SURGE!" activates, granting +25% movement speed and +40% fire rate for 3 seconds! Instead of losing your combo and feeling punished, you get a short window of enhanced power to fight back — turning a setback into a counterattack opportunity. The surge has a 12-second cooldown so it doesn't fire repeatedly, and the pink-magenta aura and HUD announcement make it clear when the buff is active. Distinct from Adrenaline Rush (which triggers on low HP) — this is about the combo
+- **Rapid Pickup Chain** — collect items in very rapid succession (within 1.0 seconds of each other) to build a "⚡ RAPID CHAIN" counter! Each chain step awards bonus score that grows with the chain length. The mint-green HUD display shows your current chain count, and the death screen reports your best rapid chain. Distinct from the broader Pickup Streak (which has a longer window and awards XP at milestones) — this rewards tight, fast collection patterns like vacuuming a cluster of items
+- **Void Wisp Teleport Blink Rings** — when a Void Wisp teleports away after being hit, expanding ring effects now appear at both the departure and arrival points, making the teleport visually readable instead of a sudden position change. The departure ring contracts inward (implosion feel) while the arrival ring expands outward — a clear "left here, arrived there" visual language
 - **Emergency Health Potion Magnet** — when your HP drops below 25%, all Health Potions within 18 units are magnetically pulled toward you at accelerated speed — a survival instinct that prevents frustrating deaths where a potion was just out of reach!
 - **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs!
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
@@ -102,7 +105,7 @@ python game.py
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
 - **Cinematic death screen** with staggered fade-in animation and score roll-up! The title, score, stats, and restart prompt cascade in sequence (ease-out cubic, 0.25s stagger) instead of snapping visible — death feels weighty and cinematic. The final score counts up from 0 to the real value, making the final tally feel earned
-- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak, best flawless streak)
+- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak, best flawless streak, best rapid chain)
 - **Crosshair enemy-proximity tint** — the crosshair subtly tints warm red-orange when hovering near an enemy, giving target-acquisition feedback before you fire! Smoothly interpolates from white to red-orange based on cursor-to-enemy distance, making target prioritization in crowded combat faster and more intuitive
 - Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage
@@ -453,6 +456,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.43.0 — Vengeful Surge, Rapid Pickup Chain & Void Wisp Blink Rings
+
+- **Vengeful Surge**: When you take damage while at a high combo (x5+), a brief "⚡ VENGEFUL SURGE!" activates, granting +25% movement speed and +40% fire rate for 3 seconds! Instead of losing your combo and feeling punished, you get a short window of enhanced power to fight back — turning a setback into a counterattack opportunity. The surge has a 12-second cooldown so it doesn't fire repeatedly during sustained damage, and a pink-magenta pulsing aura on Zorp makes the buff visible from all camera angles. The HUD announcement pops with the same pop-in/hold/fade pattern as the Berserk Mode announcement. This is distinct from Adrenaline Rush (which triggers on low HP) — Vengeful Surge is about the combo, rewarding players who were on a streak and got hit
+- **Rapid Pickup Chain**: Collect items in very rapid succession (within 1.0 seconds of each other — tighter than the existing pickup streak window) to build a "⚡ RAPID CHAIN" counter! Each chain step awards bonus score that grows with chain length (base 5 + 2 per step). The mint-green HUD display shows your current chain count with a growing scale, and the death screen reports your best rapid chain. This rewards tight, fast collection patterns like vacuuming a cluster of items or dashing through a dense item field. Distinct from the broader Pickup Streak (which has a longer window and awards XP at milestones) — the Rapid Chain is about speed and precision, not endurance
+- **Void Wisp Teleport Blink Rings**: When a Void Wisp teleports away after being hit, expanding ring effects now appear at both the departure and arrival points, making the teleport visually readable instead of a sudden position change. The departure ring contracts inward (implosion feel — starts at 1.5x scale and shrinks to 0.2x) while the arrival ring expands outward (starts at 0.2x and grows to 1.5x) — a clear "left here, arrived there" visual language. Both rings use the Void Wisp's mint-cyan color and animate over 0.3 seconds with ease curves, complementing the existing particle poofs with a ground-level visual that's visible from the third-person camera
 
 ### v2.42.1 — High-Combo Timeout Scaling, Crosshair Pickup Pulse & Enemy Spawn Color-Tinted Flash
 

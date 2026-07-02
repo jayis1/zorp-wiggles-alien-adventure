@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.42.1"
+VERSION = "2.43.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -399,6 +399,38 @@ PICKUP_STREAK_SCORE_TIER1 = 10    # Streak needed for 1.5x score multiplier
 PICKUP_STREAK_SCORE_TIER2 = 20    # Streak needed for 2x score multiplier
 PICKUP_STREAK_SCORE_MULT_TIER1 = 1.5
 PICKUP_STREAK_SCORE_MULT_TIER2 = 2.0
+
+# ─── Vengeful Surge ─────────────────────────────────────────────────────────────
+# When the player takes damage while at a high combo (x5+), a "VENGEFUL SURGE!"
+# triggers: a brief speed + fire rate buff that rewards aggressive counterplay.
+# Instead of getting hit and losing everything, the player gets a short window of
+# enhanced power to fight back — turning a setback into an opportunity. The buff
+# only triggers if the combo was high enough to feel like a real loss (x5+), and
+# has a cooldown so it doesn't fire repeatedly during sustained damage. The surge
+# is distinct from Adrenaline Rush (which triggers on low HP) — this is about the
+# combo, not the HP level.
+VENGEFUL_SURGE_COMBO_MIN = 5         # Minimum combo count to trigger the surge
+VENGEFUL_SURGE_DURATION = 3.0        # How long the buff lasts (seconds)
+VENGEFUL_SURGE_SPEED_MULT = 1.25     # +25% movement speed during surge
+VENGEFUL_SURGE_FIRE_RATE_MULT = 1.4  # +40% fire rate during surge (lower cooldown)
+VENGEFUL_SURGE_COOLDOWN = 12.0       # Cooldown before the surge can trigger again
+VENGEFUL_SURGE_ANNOUNCE_DURATION = 2.0  # How long the HUD announcement stays visible
+VENGEFUL_SURGE_COLOR = color.rgb(255, 80, 160)  # Pink-magenta — distinct from adrenaline (orange) and berserk (red)
+
+# ─── Rapid Pickup Chain ─────────────────────────────────────────────────────────
+# When the player collects items in very rapid succession (within
+# RAPID_CHAIN_WINDOW seconds of each other — tighter than the existing pickup
+# streak window), a "RAPID CHAIN" counter increments. Each chain step awards a
+# small bonus score that grows with the chain length. This rewards tight, fast
+# collection patterns (e.g., vacuuming a cluster of items) and is distinct from
+# the broader pickup streak (which has a longer window and awards XP at
+# milestones). The chain has its own HUD display and decays if the player doesn't
+# collect another item within the window.
+RAPID_CHAIN_WINDOW = 1.0             # Seconds between pickups to maintain the chain
+RAPID_CHAIN_SCORE_BONUS_BASE = 5     # Base bonus score per chain step
+RAPID_CHAIN_SCORE_BONUS_PER_STEP = 2  # Additional score per chain length
+RAPID_CHAIN_DISPLAY_LIFETIME = 2.5   # How long the HUD text stays visible
+RAPID_CHAIN_COLOR = color.rgb(100, 255, 180)  # Mint green — distinct from pickup streak (gold)
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -2953,6 +2985,16 @@ class Player(Entity):
         self.adrenaline_timer = 0.0     # >0 while adrenaline is active
         self.adrenaline_cooldown = False  # True after adrenaline ends; resets when HP recovers above threshold
 
+        # ── Vengeful Surge ── When the player takes damage while at a high
+        # combo (x5+), a brief speed + fire rate buff activates, rewarding
+        # aggressive counterplay. The surge_timer counts down while active;
+        # surge_cooldown prevents re-triggering too frequently. The aura
+        # visual entity is created lazily on first surge.
+        self.vengeful_surge_timer = 0.0    # >0 while surge is active
+        self.vengeful_surge_cooldown = 0.0  # Cooldown before surge can trigger again
+        self.vengeful_surge_visual = Entity(model='sphere', color=color.rgba(255, 80, 160, 50),
+                                             scale=1.6, parent=self, visible=False)
+
         # Tentacle entities
         self.tentacles = []
         for i in range(4):
@@ -3207,6 +3249,11 @@ class Player(Entity):
         # flawless kill streak. Using a flag instead of direct game reference
         # because Player doesn't hold a reference to the Game object.
         self.flawless_reset_flag = True
+        # ── Vengeful Surge Trigger Flag ── Set when the player takes real HP
+        # damage. The game_update loop checks this flag along with the current
+        # combo count to decide whether to trigger the Vengeful Surge buff.
+        # Using a flag because Player doesn't hold a Game reference.
+        self.vengeful_surge_trigger_flag = True
         # Damage scale punch — trigger a brief squish reaction so the player
         # model visibly reacts to being hit, not just the HP bar
         self.damage_scale_punch = 1.0
@@ -6163,6 +6210,30 @@ class Game:
         # when multiple enemies enrage simultaneously.
         self._last_enrage_warning_time = -999.0
 
+        # ── Vengeful Surge ── Tracks the announcement display timer for the
+        # "VENGEFUL SURGE!" HUD text that appears when the player takes damage
+        # at a high combo and gets the fight-back buff.
+        self.vengeful_surge_announce_timer = 0.0
+        self.vengeful_surge_text = Text(
+            text='', position=(0, 0.08), scale=2.0,
+            color=color.rgba(255, 80, 160, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # ── Rapid Pickup Chain ── Tracks very rapid consecutive item pickups
+        # (within RAPID_CHAIN_WINDOW seconds). Each chain step awards bonus
+        # score that grows with chain length. Distinct from the broader pickup
+        # streak — this rewards tight, fast collection patterns.
+        self.rapid_chain_count = 0           # Current chain length
+        self.rapid_chain_timer = 0.0         # Time remaining before chain resets
+        self.rapid_chain_display_timer = 0.0  # How long the HUD text stays visible
+        self.max_rapid_chain = 0               # Highest rapid chain this run (for death screen)
+        self.rapid_chain_text = Text(
+            text='', position=(0.32, -0.02), scale=1.3,
+            color=color.rgba(100, 255, 180, 0),
+            origin=(0, 0), visible=False,
+        )
+
         # ── Threat Proximity Pulse Ring ── A red ground ring at Zorp's feet
         # that intensifies based on nearby enemy count. Lazily created on
         # first need, then made visible/invisible based on threat level. The
@@ -6954,6 +7025,7 @@ class Game:
                       'crit_chain_text', 'flawless_text',
                       'swarm_escape_text',
                       'collection_rush_text', 'slayer_text',
+                      'vengeful_surge_text', 'rapid_chain_text',
                       'ground_reticle', 'facing_arrow',
                       'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
@@ -7500,8 +7572,8 @@ class Game:
             f'Total Kills: {total_kills}   Items Collected: {total_items}',
             f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
             f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
-            f'Best Flawless Streak: x{self.max_flawless}   Missions Completed: {p.completed_missions}',
-            f'Enemies Defeated: {kill_details}',
+            f'Best Flawless Streak: x{self.max_flawless}   Best Rapid Chain: x{self.max_rapid_chain}',
+            f'Missions Completed: {p.completed_missions}   Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
         ]
         self.game_over_stats.text = '\n'.join(stats_lines)
@@ -9166,6 +9238,11 @@ class Game:
         # unleash a burst of lasers during clutch moments.
         if self.player.adrenaline_timer > 0:
             self.player.shoot_timer = SHOOT_COOLDOWN / ADRENALINE_FIRE_RATE_MULT
+        # ── Vengeful Surge fire rate buff ── When the surge is active
+        # (triggered by taking damage at high combo), the shoot cooldown is
+        # reduced, letting the player unleash a burst of retaliatory lasers.
+        elif self.player.vengeful_surge_timer > 0:
+            self.player.shoot_timer = SHOOT_COOLDOWN / VENGEFUL_SURGE_FIRE_RATE_MULT
         else:
             self.player.shoot_timer = SHOOT_COOLDOWN
 
@@ -9601,6 +9678,9 @@ class Game:
         if p.berserk_timer > 0:
             pu_lines.append(f'⚔ BERSERK: {p.berserk_timer:.1f}s')
             pu_timers.append(p.berserk_timer)
+        if p.vengeful_surge_timer > 0:
+            pu_lines.append(f'⚡ VENGEFUL: {p.vengeful_surge_timer:.1f}s')
+            pu_timers.append(p.vengeful_surge_timer)
         if p.photon_boots_timer > 0:
             pu_lines.append(f'👟 PHOTON BOOTS: {p.photon_boots_timer:.1f}s')
             pu_timers.append(p.photon_boots_timer)
@@ -9765,6 +9845,53 @@ class Game:
             self.berserk_text.color = color.rgba(255, 50, 20, alpha)
         else:
             self.berserk_text.visible = False
+
+        # ── Vengeful Surge Announcement ── Pop-in/hold/fade display matching
+        # the berserk announcement pattern, using the pink-magenta surge color.
+        if self.vengeful_surge_announce_timer > 0:
+            self.vengeful_surge_text.visible = True
+            self.vengeful_surge_text.text = '⚡ VENGEFUL SURGE! ⚡'
+            announce_progress = 1.0 - (self.vengeful_surge_announce_timer / VENGEFUL_SURGE_ANNOUNCE_DURATION)
+            if announce_progress < 0.15:
+                pop_t = announce_progress / 0.15
+                scale = 2.5 * (0.5 + 0.5 * pop_t) * (1.0 + 0.3 * math.sin(pop_t * math.pi))
+            elif announce_progress < 0.7:
+                scale = 2.5
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                scale = 2.5 * (1.0 - fade_t * 0.2)
+            self.vengeful_surge_text.scale = scale
+            if announce_progress < 0.7:
+                alpha = 255
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                alpha = int(255 * (1.0 - fade_t))
+            self.vengeful_surge_text.color = color.rgba(255, 80, 160, alpha)
+        else:
+            self.vengeful_surge_text.visible = False
+
+        # ── Rapid Pickup Chain Display ── Shows the current rapid chain count
+        # with a growing scale and mint-green color. Displays while the chain
+        # display timer is active, then fades out.
+        if self.rapid_chain_display_timer > 0 and self.rapid_chain_count >= 2:
+            self.rapid_chain_text.visible = True
+            self.rapid_chain_text.text = f'⚡ RAPID CHAIN x{self.rapid_chain_count}'
+            chain_progress = 1.0 - (self.rapid_chain_display_timer / RAPID_CHAIN_DISPLAY_LIFETIME)
+            if chain_progress < 0.1:
+                pop_t = chain_progress / 0.1
+                scale = 1.3 * (0.7 + 0.3 * pop_t)
+                alpha = 220
+            elif chain_progress < 0.75:
+                scale = 1.3
+                alpha = 220
+            else:
+                fade_t = (chain_progress - 0.75) / 0.25
+                scale = 1.3
+                alpha = int(220 * (1.0 - fade_t))
+            self.rapid_chain_text.scale = scale + min(self.rapid_chain_count, 10) * 0.03
+            self.rapid_chain_text.color = color.rgba(100, 255, 180, alpha)
+        else:
+            self.rapid_chain_text.visible = False
 
         # ── Berserk Screen Flash ── Brief red screen flash when berserk triggers
         # BUG FIX: uses dedicated self.berserk_flash entity instead of reusing
@@ -11855,6 +11982,12 @@ def game_update():
     if p.adrenaline_timer > 0:
         effective_speed *= ADRENALINE_SPEED_MULT
 
+    # ── Vengeful Surge speed buff ── When the surge is active (triggered by
+    # taking damage at high combo), the player moves faster — a "fight back"
+    # burst that turns a setback into an aggressive counterattack window.
+    if p.vengeful_surge_timer > 0:
+        effective_speed *= VENGEFUL_SURGE_SPEED_MULT
+
     # ── Berserk Mode speed buff ── When berserk is active (triggered by rapid
     # kills), the player moves faster — an aggressive rush reward.
     if p.berserk_timer > 0:
@@ -12842,6 +12975,20 @@ def game_update():
     if game.berserk_screen_flash_timer > 0:
         game.berserk_screen_flash_timer -= time.dt
 
+    # ── Vengeful Surge announcement timer ──
+    if game.vengeful_surge_announce_timer > 0:
+        game.vengeful_surge_announce_timer -= time.dt
+
+    # ── Rapid Pickup Chain Timer ── Count down the tight window between
+    # rapid pickups. If it expires, the chain resets to 0. The display
+    # timer fades independently so the chain text can linger briefly.
+    if game.rapid_chain_timer > 0:
+        game.rapid_chain_timer -= time.dt
+        if game.rapid_chain_timer <= 0:
+            game.rapid_chain_count = 0
+    if game.rapid_chain_display_timer > 0:
+        game.rapid_chain_display_timer -= time.dt
+
     # Combo break announcement timer — counts down the display duration
     if game.combo_break_announce_timer > 0:
         game.combo_break_announce_timer -= time.dt
@@ -13254,6 +13401,40 @@ def game_update():
         if game.flawless_streak >= 3:
             game.add_message(f"✦ Flawless streak broken! (was x{game.flawless_streak})")
         game.flawless_streak = 0
+
+    # ── Vengeful Surge ── When the player takes real HP damage while at a high
+    # combo (x5+), a brief speed + fire rate buff activates — turning the
+    # setback of losing your combo into a "fight back!" opportunity. The surge
+    # only triggers if the combo was high enough to feel like a real loss, and
+    # has a cooldown so it doesn't fire repeatedly during sustained damage.
+    if p.vengeful_surge_trigger_flag:
+        p.vengeful_surge_trigger_flag = False
+        if (game.combo_count >= VENGEFUL_SURGE_COMBO_MIN
+                and p.vengeful_surge_cooldown <= 0
+                and p.vengeful_surge_timer <= 0):
+            p.vengeful_surge_timer = VENGEFUL_SURGE_DURATION
+            p.vengeful_surge_cooldown = VENGEFUL_SURGE_COOLDOWN
+            p.vengeful_surge_visual.visible = True
+            game.vengeful_surge_announce_timer = VENGEFUL_SURGE_ANNOUNCE_DURATION
+            # Pink-magenta particle burst around Zorp
+            game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                  VENGEFUL_SURGE_COLOR, count=18)
+            game._spawn_particles(p.position + Vec3(0, 2, 0),
+                                  color.rgb(255, 120, 200), count=12)
+            game.screen_shake = max(game.screen_shake, 0.4)
+            game.add_message(f"⚡ VENGEFUL SURGE! Fight back! +{int((VENGEFUL_SURGE_SPEED_MULT-1)*100)}% SPD +{int((VENGEFUL_SURGE_FIRE_RATE_MULT-1)*100)}% ROF!")
+    # Decrement vengeful surge cooldown timer
+    if p.vengeful_surge_cooldown > 0:
+        p.vengeful_surge_cooldown -= time.dt
+    # Vengeful surge active timer + visual update
+    if p.vengeful_surge_timer > 0:
+        p.vengeful_surge_timer -= time.dt
+        # Pulse the aura for a dynamic visual
+        pulse = 0.5 + 0.5 * math.sin(game.t * 10)
+        p.vengeful_surge_visual.scale = 1.6 + pulse * 0.15
+        if p.vengeful_surge_timer <= 0:
+            p.vengeful_surge_timer = 0
+            p.vengeful_surge_visual.visible = False
 
     # ── Overheal Absorption Burst ── When the Overheal Barrier absorbs a hit,
     # fire a golden particle burst and expanding ring from the player so the
@@ -15028,10 +15209,43 @@ def game_update():
                     tp_x = max(5, min(tp_x, (WORLD_SIZE - 5) * TILE_SCALE))
                     tp_z = max(5, min(tp_z, (WORLD_SIZE - 5) * TILE_SCALE))
                     if game._is_walkable(tp_x, tp_z):
+                        # ── Void Wisp Teleport Blink Rings ── Expanding ring
+                        # effects at both the departure and arrival points make
+                        # the teleport visually readable instead of a sudden
+                        # position change. The departure ring is a contracting
+                        # "implosion" feel (starts larger, shrinks) while the
+                        # arrival ring expands outward — a clear "left here,
+                        # arrived there" visual language.
+                        # Departure ring (at old position)
+                        dep_ring = Entity(
+                            model='quad',
+                            color=color.rgba(100, 255, 200, 160),
+                            scale=1.5,
+                            position=Vec3(enemy.x, 0.1, enemy.z),
+                            rotation_x=90,
+                        )
+                        dep_ring.animate_scale(Vec3(0.2, 1, 0.2),
+                                               duration=0.3, curve=curve.in_expo)
+                        dep_ring.animate_color(color.rgba(100, 255, 200, 0),
+                                               duration=0.3, curve=curve.linear)
+                        destroy(dep_ring, delay=0.31)
                         # Poof at old position
                         game._spawn_particles(enemy.position, color.rgba(100, 255, 200, 200), count=8)
                         enemy.x = tp_x
                         enemy.z = tp_z
+                        # Arrival ring (at new position)
+                        arr_ring = Entity(
+                            model='quad',
+                            color=color.rgba(100, 255, 200, 160),
+                            scale=0.2,
+                            position=Vec3(enemy.x, 0.1, enemy.z),
+                            rotation_x=90,
+                        )
+                        arr_ring.animate_scale(Vec3(1.5, 1, 1.5),
+                                                duration=0.3, curve=curve.out_expo)
+                        arr_ring.animate_color(color.rgba(100, 255, 200, 0),
+                                                duration=0.3, curve=curve.linear)
+                        destroy(arr_ring, delay=0.31)
                         # Poof at new position
                         game._spawn_particles(enemy.position, color.rgba(100, 255, 200, 150), count=6)
                         game.add_message("Void Wisp teleported!")
@@ -16487,6 +16701,21 @@ def game_update():
             p.pickup_punch = 1.0
             # ── Pickup Streak ── Track consecutive rapid pickups for bonus XP
             game._register_pickup_streak()
+            # ── Rapid Pickup Chain ── Track very rapid consecutive pickups
+            # (within RAPID_CHAIN_WINDOW seconds). Each chain step awards
+            # bonus score that grows with chain length. This rewards tight,
+            # fast collection patterns like vacuuming a cluster of items.
+            game.rapid_chain_count += 1
+            game.rapid_chain_timer = RAPID_CHAIN_WINDOW
+            game.rapid_chain_display_timer = RAPID_CHAIN_DISPLAY_LIFETIME
+            game.max_rapid_chain = max(game.max_rapid_chain, game.rapid_chain_count)
+            if game.rapid_chain_count >= 2:
+                chain_bonus = RAPID_CHAIN_SCORE_BONUS_BASE + (game.rapid_chain_count - 2) * RAPID_CHAIN_SCORE_BONUS_PER_STEP
+                p.score += chain_bonus
+                # Spawn a small mint-green particle burst for chain feedback
+                if game.rapid_chain_count >= 3:
+                    game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                          RAPID_CHAIN_COLOR, count=min(8, 3 + game.rapid_chain_count))
             # ── Collectible Pickup Ground Ring ── A brief expanding ground ring
             # radiates outward from the pickup point in the item's color,
             # complementing the pop animation and particle burst with a
