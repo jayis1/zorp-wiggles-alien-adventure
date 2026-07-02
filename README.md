@@ -35,7 +35,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.43.0 — 3D!)
+## Features (v2.43.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -52,10 +52,10 @@ python game.py
 - **Combo Break Shatter** — when a combo of x3+ expires, a dramatic red "COMBO BROKEN!" announcement pops with shatter particles and screen shake, making losing a streak feel impactful instead of silently vanishing!
 - **Flawless Kill Streak** — track consecutive kills made without taking any damage! At every 5 flawless kills, bonus XP is awarded with a golden "✦ FLAWLESS!" announcement and particle burst. Taking damage resets the streak (with a "Flawless streak broken!" message if you had 3+). The gold HUD counter shows your current streak, and the death screen reports your best flawless streak. Rewards skillful dodging and damage avoidance!
 - **Vengeful Surge** — when you take damage while at a high combo (x5+), a brief "⚡ VENGEFUL SURGE!" activates, granting +25% movement speed and +40% fire rate for 3 seconds! Instead of losing your combo and feeling punished, you get a short window of enhanced power to fight back — turning a setback into a counterattack opportunity. The surge has a 12-second cooldown so it doesn't fire repeatedly, and the pink-magenta aura and HUD announcement make it clear when the buff is active. Distinct from Adrenaline Rush (which triggers on low HP) — this is about the combo
-- **Rapid Pickup Chain** — collect items in very rapid succession (within 1.0 seconds of each other) to build a "⚡ RAPID CHAIN" counter! Each chain step awards bonus score that grows with the chain length. The mint-green HUD display shows your current chain count, and the death screen reports your best rapid chain. Distinct from the broader Pickup Streak (which has a longer window and awards XP at milestones) — this rewards tight, fast collection patterns like vacuuming a cluster of items
+- **Rapid Pickup Chain** — collect items in very rapid succession (within 1.0 seconds of each other) to build a "⚡ RAPID CHAIN" counter! Each chain step awards bonus score that grows with the chain length. The mint-green HUD display shows your current chain count, and the death screen reports your best rapid chain. When a chain of 3+ ends, a brief "⚡ Chain ended xN!" message and mint-green particle puff give closure instead of silently vanishing. Distinct from the broader Pickup Streak (which has a longer window and awards XP at milestones) — this rewards tight, fast collection patterns like vacuuming a cluster of items
 - **Void Wisp Teleport Blink Rings** — when a Void Wisp teleports away after being hit, expanding ring effects now appear at both the departure and arrival points, making the teleport visually readable instead of a sudden position change. The departure ring contracts inward (implosion feel) while the arrival ring expands outward — a clear "left here, arrived there" visual language
 - **Emergency Health Potion Magnet** — when your HP drops below 25%, all Health Potions within 18 units are magnetically pulled toward you at accelerated speed — a survival instinct that prevents frustrating deaths where a potion was just out of reach!
-- **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs!
+- **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs! When a streak of 5+ ends, a brief "Streak ended xN" message gives gentle closure
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
 - **Enemy Chase Predictive Lead** — enemies intelligently predict the player's movement and aim at where you're going, not just where you are! This pursuit-curve interception makes kiting more engaging and enemies feel smarter — you must actively change direction to shake them instead of simply walking in a straight line
 - **Dash Eye Squint** — Zorp's eyes squint to a determined "speed face" during a dash, giving the dash ability character personality and making Zorp feel like he's exerting himself during the burst of speed
@@ -456,6 +456,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.43.1 — Rapid Chain Break Feedback, Pickup Streak Closure & Enemy Projectile Fizz
+
+- **Rapid chain break feedback**: When a rapid pickup chain of 3+ ends (the 1-second window expires without another pickup), a brief "⚡ Chain ended xN!" message and a small mint-green particle puff now appear around Zorp — giving the player closure on their chain instead of it silently vanishing. This mirrors the existing combo break shatter feedback, but gentler: a chain ending isn't a failure, just the natural end of a nice run. The 3+ threshold avoids clutter from short incidental pairs. Previously the rapid chain counter silently reset to 0 with no indication the streak had ended, making it hard to tell whether you'd had a good chain or not
+- **Pickup streak closure message**: When a pickup streak of 5+ ends (the 3-second window expires), a brief "Streak ended xN" HUD message now appears so the player gets gentle closure on their gathering run. This is softer than the rapid chain break — no particles, just a message — because pickup streaks are longer and more casual, so a particle burst would feel disproportionate. The 5+ threshold (one full milestone cycle) ensures the message only fires when the player had a meaningful streak going. Previously the pickup streak silently reset to 0 with no feedback
+- **Enemy projectile expiry fizz**: When an enemy projectile (Spore Spitter spit) expires without hitting the player — a near-miss — a small orange fizz particle burst now appears at the expiry point, matching the player projectile fizz system. This gives enemy shots visual closure instead of silently vanishing, making it clear the shot was a near-miss rather than a glitch and helping the player gauge enemy effective range. Previously enemy projectiles just disappeared with no feedback
 
 ### v2.43.0 — Vengeful Surge, Rapid Pickup Chain & Void Wisp Blink Rings
 

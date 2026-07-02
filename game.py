@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.43.0"
+VERSION = "2.43.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -431,6 +431,16 @@ RAPID_CHAIN_SCORE_BONUS_BASE = 5     # Base bonus score per chain step
 RAPID_CHAIN_SCORE_BONUS_PER_STEP = 2  # Additional score per chain length
 RAPID_CHAIN_DISPLAY_LIFETIME = 2.5   # How long the HUD text stays visible
 RAPID_CHAIN_COLOR = color.rgb(100, 255, 180)  # Mint green — distinct from pickup streak (gold)
+# ── Rapid Chain Break Feedback ── When a rapid chain of 3+ ends (the timer
+# expires without another pickup), a brief "CHAIN ENDED xN" message and a
+# small mint-green particle puff appear so the player gets closure on their
+# chain instead of it silently vanishing. This mirrors the combo break
+# shatter feedback, but gentler — a chain ending isn't a failure, just the
+# end of a nice run. Only triggers for chains of 3+ so short incidental
+# pairs don't clutter the feed. The threshold is high enough that the
+# message only fires when the player had a meaningful chain going.
+RAPID_CHAIN_BREAK_MIN = 3           # Minimum chain count to trigger break feedback
+RAPID_CHAIN_BREAK_PARTICLES = 6    # Small particle puff on chain break
 
 # ─── Particles ────────────────────────────────────────────────────────────────
 PARTICLE_GRAVITY = 9.8
@@ -2407,6 +2417,15 @@ PICKUP_STREAK_WINDOW = 3.0           # Seconds between pickups before streak res
 PICKUP_STREAK_MILESTONE_INTERVAL = 5 # Bonus XP every 5 pickups in the streak
 PICKUP_STREAK_XP_PER_MILESTONE = 15  # Bonus XP per milestone
 PICKUP_STREAK_DISPLAY_LIFETIME = 2.5 # How long the streak text stays visible
+# ── Pickup Streak Break Feedback ── When a pickup streak of 5+ ends (the
+# timer expires without another pickup), a brief "STREAK ENDED xN" message
+# appears so the player gets gentle closure on their gathering run instead
+# of the streak silently resetting. This is softer than the rapid chain
+# break — no particles, just a HUD message — because pickup streaks are
+# longer and more casual, so a particle burst would feel disproportionate.
+# Only triggers for streaks of 5+ (one full milestone cycle) so short
+# streaks don't clutter the feed.
+PICKUP_STREAK_BREAK_MIN = 5          # Minimum streak count to trigger break message
 PICKUP_STREAK_BAR_FLASH_DURATION = 0.25  # Green flash on the streak bar on each pickup
 PICKUP_STREAK_COLOR = color.rgb(100, 255, 200)  # Mint-cyan for streak text
 # ── Pickup Streak Milestone Celebration ── At every milestone (every 5 pickups
@@ -5601,6 +5620,14 @@ class Projectile(Entity):
 # while making them instantly distinguishable by color.
 ENEMY_PROJ_TRAIL_INTERVAL = 0.04  # Seconds between trail dot spawns
 ENEMY_PROJ_TRAIL_COLOR = color.rgba(255, 120, 20, 140)  # Orange trail (matching projectile color)
+# ── Enemy Projectile Expiry Fizz ── When an enemy projectile's lifetime
+# expires without hitting the player (a missed shot), a small orange fizz
+# particle burst appears at the expiry point — matching the player
+# projectile fizz system so enemy shots also get visual closure instead
+# of silently vanishing. This makes it clear the shot was a near-miss
+# rather than a glitch, and helps the player gauge enemy effective range.
+ENEMY_PROJ_FIZZ_PARTICLE_COUNT = 4   # Small particle burst on expiry
+ENEMY_PROJ_FIZZ_COLOR = color.rgb(200, 100, 0)  # Orange fizz (matching projectile color)
 
 
 class EnemyProjectile(Entity):
@@ -12989,6 +13016,26 @@ def game_update():
     if game.rapid_chain_timer > 0:
         game.rapid_chain_timer -= time.dt
         if game.rapid_chain_timer <= 0:
+            # ── Rapid Chain Break Feedback ── When a meaningful rapid chain
+            # (3+) ends, show a brief "CHAIN ENDED xN" message and a small
+            # mint-green particle puff so the player gets closure instead
+            # of the chain silently vanishing. The threshold avoids clutter
+            # from short incidental pairs.
+            if game.rapid_chain_count >= RAPID_CHAIN_BREAK_MIN:
+                game.add_message(f"⚡ Chain ended x{game.rapid_chain_count}!")
+                cr, cg, cb = _c255_color(RAPID_CHAIN_COLOR)
+                if len(game.particles) < MAX_PARTICLES:
+                    for _ in range(min(RAPID_CHAIN_BREAK_PARTICLES, MAX_PARTICLES - len(game.particles))):
+                        angle = random.uniform(0, math.pi * 2)
+                        burst_vel = Vec3(
+                            math.cos(angle) * random.uniform(1.5, 3.0),
+                            random.uniform(1.0, 2.5),
+                            math.sin(angle) * random.uniform(1.5, 3.0),
+                        )
+                        burst_p = Entity(model='sphere', color=color.rgb(cr, cg, cb),
+                                         scale=random.uniform(0.1, 0.18),
+                                         position=p.position + Vec3(0, 1, 0))
+                        game.particles.append((burst_p, burst_vel, random.uniform(0.2, 0.4)))
             game.rapid_chain_count = 0
     if game.rapid_chain_display_timer > 0:
         game.rapid_chain_display_timer -= time.dt
@@ -13003,6 +13050,12 @@ def game_update():
     if game.pickup_streak_timer > 0:
         game.pickup_streak_timer -= time.dt
         if game.pickup_streak_timer <= 0:
+            # ── Pickup Streak Break Feedback ── When a meaningful streak (5+)
+            # ends, show a brief "STREAK ENDED xN" message so the player gets
+            # gentle closure instead of the streak silently vanishing. No
+            # particles — pickup streaks are casual, so a message suffices.
+            if game.pickup_streak >= PICKUP_STREAK_BREAK_MIN:
+                game.add_message(f"Streak ended x{game.pickup_streak}")
             game.pickup_streak = 0
     if game.pickup_streak_display_timer > 0:
         game.pickup_streak_display_timer -= time.dt
@@ -15800,6 +15853,13 @@ def game_update():
     for eproj in game.enemy_projectiles[:]:
         alive = eproj.move(time.dt)
         if not alive:
+            # ── Enemy Projectile Expiry Fizz ── When an enemy shot's lifetime
+            # expires without hitting the player, emit a small orange fizz
+            # particle burst at the expiry point so the shot has visual closure
+            # instead of silently vanishing — matching the player projectile
+            # fizz system. This communicates "near miss" to the player.
+            game._spawn_particles(eproj.position, ENEMY_PROJ_FIZZ_COLOR,
+                                  count=ENEMY_PROJ_FIZZ_PARTICLE_COUNT)
             destroy(eproj)
             game.enemy_projectiles.remove(eproj)
             continue
