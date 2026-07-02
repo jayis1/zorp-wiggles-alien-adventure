@@ -2928,6 +2928,7 @@ class Player(Entity):
         self.damage_taken_flag = False  # Set by take_damage, checked by game_update for HP bar shake
         self.xp_gained_flag = False      # Set by gain_xp, checked by _update_hud for XP bar flash
         self.flawless_reset_flag = False  # Set by take_damage, checked by game_update to reset flawless streak
+        self.vengeful_surge_trigger_flag = False  # BUG FIX: Set by take_damage, checked by game_update for Vengeful Surge — was missing from __init__, causing potential AttributeError if game_update ran before any take_damage() call
 
         # Dash ability
         self.dash_timer = 0
@@ -5965,7 +5966,8 @@ class Game:
         self.game_over = False
         self.paused = False
         self.t = 0
-        self.game_start_time = 0
+        # BUG FIX: Removed unused 'game_start_time' — survival time is tracked
+        # via self.t which is incremented in game_update. This was dead state.
         self.spawn_timer = 0
         self.mission_timer = 0
 
@@ -6663,7 +6665,9 @@ class Game:
 
         # Damage direction indicator — red arrow pointing toward the source of damage
         self.damage_indicators = []  # List of (Entity, direction_vec, remaining_time) tuples
-        self.damage_indicator_entities = []  # Arrow entities on the HUD
+        # BUG FIX: Removed unused 'damage_indicator_entities' list — it was initialized
+        # but never populated or read. The actual arrow entities are tracked in
+        # self.dmg_arrow_entities below.
 
         # Pre-create 4 directional damage arrows (up, down, left, right quadrants)
         # These are hidden and shown when the player takes damage from a direction
