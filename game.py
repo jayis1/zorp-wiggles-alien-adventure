@@ -7190,9 +7190,16 @@ class Game:
         self.damage_indicators.clear()
         self.spawn_indicators.clear()
         # Destroy bounty ring entity if it exists
+        # BUG FIX: Also clear bounty_enemy — it was leaving a dangling reference
+        # to a destroyed enemy entity after restart. While the old Game object is
+        # replaced by a new one (so the dangling reference doesn't persist), it's
+        # good practice to clean up all references to avoid confusion during
+        # debugging and prevent issues if _cleanup is ever called without
+        # creating a new Game.
         if self.bounty_ring_entity is not None:
             destroy(self.bounty_ring_entity)
             self.bounty_ring_entity = None
+        self.bounty_enemy = None
         for t in self.msg_texts:
             if t:
                 destroy(t)
@@ -8979,6 +8986,14 @@ class Game:
         """
         lod_count = self._particle_lod_count(pos, PARTICLE_COLLECT_COUNT)
         count = min(lod_count, MAX_PARTICLES - len(self.particles))
+        # BUG FIX: Guard against zero/negative count — _spawn_particles and
+        # _spawn_kill_burst both have this check, but _spawn_collect_burst was
+        # missing it. While range(0) is safe (empty loop), the i / count
+        # division inside the loop would raise ZeroDivisionError if count were
+        # ever 0 and the loop body executed. Adding the guard for consistency
+        # and to prevent a latent crash if the loop condition ever changes.
+        if count <= 0:
+            return
         for i in range(count):
             angle = (i / count) * math.pi * 2
             spread = random.uniform(1.5, 3.5)
@@ -13670,7 +13685,13 @@ def game_update():
     # Last Stand announcement timer decay
     if game.last_stand_announce_timer > 0:
         game.last_stand_announce_timer -= time.dt
-        alpha = min(1.0, game.last_stand_announce_timer / 0.5)
+        # BUG FIX: Clamp alpha to >= 0 — when the timer goes negative after
+        # subtraction (e.g. timer=0.01, dt=0.016 → timer=-0.006), the old
+        # alpha = min(1.0, negative/0.5) produced a negative value, leading
+        # to int(255 * negative) < 0. A negative alpha in color.rgba() can
+        # cause rendering artifacts. The visible=False check below hides the
+        # text on the next line, but the negative color was still set first.
+        alpha = max(0, min(1.0, game.last_stand_announce_timer / 0.5))
         # Pulse the text for dramatic effect
         pulse = 1.0 + 0.1 * math.sin(game.t * 12)
         game.last_stand_text.scale = 2.2 * pulse
@@ -17250,7 +17271,9 @@ def game_update():
     # Bounty announcement timer decay
     if game.bounty_announce_timer > 0:
         game.bounty_announce_timer -= time.dt
-        alpha = min(1.0, game.bounty_announce_timer / 0.5)
+        # BUG FIX: Clamp alpha to >= 0 — same fix as Last Stand announcement
+        # above. Negative timer after dt subtraction produced negative alpha.
+        alpha = max(0, min(1.0, game.bounty_announce_timer / 0.5))
         game.bounty_announce_text.color = color.rgba(255, 215, 0, int(255 * alpha))
         if game.bounty_announce_timer <= 0:
             game.bounty_announce_text.visible = False
