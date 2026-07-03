@@ -15843,6 +15843,13 @@ def game_update():
                                     ))
                                     game.kill_feed.append((game.t, f"💥 {other_enemy.name}"))
                                     game._maybe_drop_health_fragment(other_enemy.position, other_enemy.max_hp)
+                                    # BUG FIX: Friendly-fire kills were missing
+                                    # _maybe_drop_combo_orb — every other primary kill
+                                    # path (projectile, dash, chain lightning, overkill
+                                    # surge, nova blast) calls it. Without it, Void Bomber
+                                    # chain kills can't drop combo orbs, making them less
+                                    # rewarding for combo sustain than other kill types.
+                                    game._maybe_drop_combo_orb(other_enemy.position, game.combo_count)
                                     # BUG FIX: Friendly-fire kills were missing hit-stop,
                                     # FOV punch, and kill flash — every other kill path
                                     # (projectile, dash, AOE, Pulse Wave) includes these
@@ -16249,7 +16256,11 @@ def game_update():
                 game._spawn_attack_sparks(enemy.position)
             else:
                 died = p.take_damage(effective_damage)
-                game.screen_shake = SCREEN_SHAKE_DAMAGE
+                # BUG FIX: Use max() instead of direct assignment — direct
+                # assignment overwrites any larger screen shake from a recent
+                # kill, combo, or boss death, making those impactful events
+                # feel less powerful when a melee hit lands simultaneously.
+                game.screen_shake = max(game.screen_shake, SCREEN_SHAKE_DAMAGE)
                 game._spawn_particles(p.position, color.red, count=PARTICLE_DAMAGE_COUNT)
                 # ── Attack Impact Sparks ── A directional spark burst fires from
                 # the enemy toward the player along the attack direction — a
@@ -16945,6 +16956,12 @@ def game_update():
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 game._drop_loot(nearby_enemy.position, nearby_enemy.name)
                                 game._maybe_drop_health_fragment(nearby_enemy.position, nearby_enemy.max_hp)
+                                # BUG FIX: AOE kills were missing _maybe_drop_combo_orb —
+                                # every other primary kill path (projectile, dash, chain
+                                # lightning, overkill surge, nova blast, Void Bomber) calls
+                                # it. Without it, Fireball Scroll splash kills can't drop
+                                # combo orbs, making them less rewarding for combo sustain.
+                                game._maybe_drop_combo_orb(nearby_enemy.position, game.combo_count)
                                 # BUG FIX: Boss slow-mo was missing for AOE kills —
                                 # every other kill path triggers it for boss-tier enemies.
                                 if nearby_enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
@@ -17051,6 +17068,12 @@ def game_update():
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                         game._drop_loot(enemy.position, enemy.name)
                         game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                        # BUG FIX: First piercing crit kill was missing
+                        # _maybe_drop_combo_orb — every other primary kill path
+                        # (projectile, dash, chain lightning, overkill surge, nova
+                        # blast, Void Bomber, AOE) calls it. Without it, piercing
+                        # kills can't drop combo orbs for combo sustain.
+                        game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                         game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                         game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                         game.enemy_death_rings.append(EnemyDeathRing(
@@ -17161,6 +17184,11 @@ def game_update():
                                 game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                             game._drop_loot(enemy.position, enemy.name)
                             game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                            # BUG FIX: Subsequent piercing kills were missing
+                            # _maybe_drop_combo_orb — every other primary kill
+                            # path calls it. Without it, piercing multi-kills
+                            # can't drop combo orbs for combo sustain.
+                            game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                             game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                             game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                             game.enemy_death_rings.append(EnemyDeathRing(
@@ -17391,6 +17419,11 @@ def game_update():
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
+                # BUG FIX: Must set proj_destroyed=True so the out-of-world
+                # check below doesn't access proj.x/.z on the already-destroyed
+                # entity (which could cause a double-destroy and stale-position
+                # read). All other paths that destroy the projectile set this flag.
+                proj_destroyed = True
                 break
 
         # Remove if out of world
@@ -17506,7 +17539,11 @@ def game_update():
                 game.add_message("Shield blocked!")
             else:
                 died = p.take_damage(eproj.damage)
-                game.screen_shake = SCREEN_SHAKE_DAMAGE
+                # BUG FIX: Use max() instead of direct assignment — direct
+                # assignment overwrites any larger screen shake from a recent
+                # kill, combo, or boss death, making those impactful events
+                # feel less powerful when an enemy projectile hits simultaneously.
+                game.screen_shake = max(game.screen_shake, SCREEN_SHAKE_DAMAGE)
                 game._spawn_particles(p.position, color.rgb(200, 100, 0), count=PARTICLE_DAMAGE_COUNT)
                 game.damage_numbers.append(DamageNumber(p.position, eproj.damage, is_kill=False))
                 # Show damage direction indicator pointing toward the projectile source
@@ -17572,7 +17609,11 @@ def game_update():
                     game.add_message("Shield blocked shockwave!")
                 else:
                     died = p.take_damage(ring.damage)
-                    game.screen_shake = SCREEN_SHAKE_DAMAGE
+                    # BUG FIX: Use max() instead of direct assignment — direct
+                    # assignment overwrites any larger screen shake from a recent
+                    # kill, combo, or boss death, making those impactful events
+                    # feel less powerful when a shockwave hits simultaneously.
+                    game.screen_shake = max(game.screen_shake, SCREEN_SHAKE_DAMAGE)
                     game._spawn_particles(p.position, color.rgb(255, 220, 50), count=PARTICLE_DAMAGE_COUNT)
                     game.damage_numbers.append(DamageNumber(p.position, ring.damage, is_kill=False))
                     game._show_damage_indicator(ring.position)
@@ -17832,6 +17873,11 @@ def game_update():
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
                     game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                    # BUG FIX: Pulse Wave kills were missing _maybe_drop_combo_orb —
+                    # every other primary kill path (projectile, dash, chain lightning,
+                    # overkill surge, nova blast, Void Bomber, AOE, piercing) calls it.
+                    # Without it, Pulse Wave kills can't drop combo orbs for combo sustain.
+                    game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                     # ── Enemy Death Ground Ring ── (Pulse Wave kill variant)
