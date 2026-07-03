@@ -26,6 +26,7 @@ python game.py
 | **X** | Toggle auto-fire |
 | **Space** | Dash (dodge in movement direction) |
 | **Q** | Pulse Wave (push enemies away!) |
+| **C** | Nova Blast (AOE damage nuke!) |
 | **V** | Vacuum Pulse (pull all nearby collectibles!) |
 | **F** | Toggle achievements panel |
 | **E** | Trade with Wandering Trader |
@@ -35,7 +36,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.44.2 — 3D!)
+## Features (v2.45.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -274,6 +275,9 @@ python game.py
 - **Smooth enemy attack lunge slide** — when an enemy lands a melee attack, it now smoothly slides forward toward you over a brief duration instead of instantly teleporting to the lunge position. The velocity-based slide decays exponentially, so the enemy visibly commits to the strike direction and glides forward dynamically — making attacks feel like real physical lunges rather than snap-to-position jumps. The lunge distance still scales inversely with enemy size (small enemies lunge further, large enemies barely move), preserving the existing balance while dramatically improving the combat feel
 - **Enemy attack lunge directional stretch** — during the smooth lunge slide, the enemy briefly stretches along the lunge direction (elongated forward, compressed perpendicular) — a directional squash & stretch that makes each melee strike look like a committed forward thrust. The stretch intensity scales with the remaining lunge velocity (strongest at the strike's start, easing back to normal as the lunge settles), giving attacks a dynamic, muscular quality that complements the existing windup telegraph and impact sparks
 - **Player damage ground impact ring** — when Zorp takes damage, a brief expanding red ring now radiates outward from his position on the ground, matching the established visual language of heal pulse rings (green), dash landing rings, footstep ripples, muzzle flash rings (cyan), enemy death rings, and pickup rings. Every other gameplay event had a ground ring — player damage was the last one without. The red impact ring makes each hit feel physically grounded: you see the damage ripple outward from where Zorp was standing, complementing the existing screen shake, HP bar shake, damage particles, danger vignette, and damage direction indicator with a ground-level visual visible from the third-person camera
+- **Nova Blast ability (C key)** — press C to unleash a pure-damage AOE nuke around Zorp! Unlike Pulse Wave (which is knockback-focused with minor damage), Nova Blast deals significant damage to ALL enemies within a large 14-unit radius with no knockback — it's a tactical nuke you save for dense crowds or tough enemies. The 15-second cooldown makes it a "big spell" rather than a spammy tool. Damage scales with player level and benefits from the combo damage buff, berserk damage buff, monolith damage buff, and Cornered Beast low-HP damage buff for full consistency with other damage sources. The visual is a dramatic expanding white-cyan ring, a bright central flash sphere at Zorp's position, a 30-particle radial burst, and screen shake — making the nova feel like a genuine explosion of power radiating outward. Kills from Nova Blast trigger the full kill feedback suite (combo, milestones, hit-stop, FOV punch, kill flash, overkill/execution bonuses, boss slow-mo, loot drops, death effects) just like all other kill paths. A cooldown bar on the HUD shows when it's ready, with the same anticipation glow and ready flash patterns as Dash, Pulse Wave, and Vacuum Pulse
+- **Enemy Hit Slow** — each projectile hit has a 20% chance to briefly slow the enemy's movement speed by 50% for 1.5 seconds, simulating the tentacle laser energy disrupting the enemy's locomotion! The slowed enemy gets a brief blue tint so you can see the slow is working. This adds tactical depth to combat — lucky shots temporarily slow fast enemies like Swarm Mites and Void Wisps, making them easier to hit and kite. The slow stacks multiplicatively with Time Warp and enrage, so a slowed enraged enemy is still faster than a slowed normal one, but both are slower than their unslowed counterparts. The slow is a per-hit random proc (distinct from Time Warp, which is a global power-up that slows ALL enemies) — you can't count on it, but when it procs on a fast enemy it feels great
+- **Speed Boost Energy Trail** — when the Speed Boost power-up is active, a vibrant green energy trail with upward sparkle particles follows Zorp, making the speed boost visually exciting and distinct from the normal subtle movement trail! The trail spawns bright green particles more frequently than the normal movement trail, plus occasional upward green sparkles that make Zorp look like he's glowing with speed energy. This makes the Speed Boost feel like a significant power-up visually, not just a stat change — you SEE the difference immediately when you grab a Speed Boost
 
 ## The Self-Improving Game
 
@@ -393,6 +397,17 @@ Every projectile hit has a **15% chance** to be a critical hit, dealing **2x dam
 - Enemies caught in the wave flash, take damage, and get knocked back — with hit ripples and floating damage numbers for clear feedback
 - Kills from pulse wave count toward combos and drop loot!
 
+## Nova Blast Ability
+
+- Press **C** to unleash a **pure-damage AOE nuke** around Zorp
+- Deals significant damage to ALL enemies within a **14-unit radius** — no knockback, just damage
+- **15-second cooldown** — a tactical "big spell" you save for dense crowds or tough enemies
+- Damage scales with player level and benefits from combo damage buff, berserk, monolith, and Cornered Beast buffs
+- Visual: dramatic expanding **white-cyan ring**, central flash sphere, 30-particle radial burst, and screen shake
+- Kills from Nova Blast trigger the full kill feedback suite (combo, milestones, hit-stop, loot, death effects)
+- Cooldown bar on the HUD with anticipation glow and ready flash, matching the Dash/Pulse/Vacuum pattern
+- **Distinct from Pulse Wave**: Pulse Wave is knockback + minor damage (crowd control); Nova Blast is pure damage (nuke)
+
 ## Spawn Healing Zone
 
 - A **gentle green healing aura** surrounds the world's center (spawn point)
@@ -459,6 +474,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.45.0 — Nova Blast, Enemy Hit Slow & Speed Boost Trail
+
+- **Nova Blast ability (C key)**: Press C to unleash a pure-damage AOE nuke around Zorp! Unlike Pulse Wave (knockback + minor damage), Nova Blast deals significant damage to ALL enemies within a large 14-unit radius with no knockback. The 15-second cooldown makes it a tactical "big spell" for dense crowds. Damage scales with player level and benefits from combo damage buff, berserk, monolith, and Cornered Beast buffs. Visual: expanding white-cyan ring, central flash sphere, 30-particle radial burst, and screen shake. Kills trigger the full kill feedback suite (combo, milestones, hit-stop, loot, etc.). A cooldown bar with anticipation glow and ready flash on the HUD matches the Dash/Pulse/Vacuum pattern
+- **Enemy Hit Slow**: Each projectile hit has a 20% chance to briefly slow the enemy's movement speed by 50% for 1.5 seconds, with a blue tint visual. The slow stacks multiplicatively with Time Warp and enrage. A per-hit random proc (distinct from Time Warp's global slow) that adds tactical depth — lucky shots temporarily slow fast enemies like Swarm Mites and Void Wisps, making them easier to hit and kite
+- **Speed Boost Energy Trail**: When the Speed Boost power-up is active, a vibrant green energy trail with upward sparkle particles follows Zorp, making the speed boost visually exciting and distinct from the normal movement trail. The trail spawns bright green particles more frequently than the normal trail, plus occasional upward green sparkles that make Zorp look like he's glowing with speed energy
 
 ### v2.44.0 — Last Stand, Cornered Beast & Bounty Mark
 

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.44.2"
+VERSION = "2.45.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1678,6 +1678,7 @@ PULSE_READY_FLASH_DURATION = 0.4    # How long the pulse wave ready flash lasts
 PULSE_READY_FLASH_COLOR = color.rgba(0, 255, 200, 0)   # Teal flash for pulse wave
 VACUUM_READY_FLASH_DURATION = 0.4   # How long the vacuum pulse ready flash lasts
 VACUUM_READY_FLASH_COLOR = color.rgba(255, 220, 80, 0)  # Gold flash for vacuum pulse
+NOVA_READY_FLASH_DURATION = 0.4    # How long the nova blast ready flash lasts
 
 # ─── Enemy Death Ground Ring ──────────────────────────────────────────────────
 # When an enemy dies, a brief expanding ground ring radiates outward from the
@@ -2310,6 +2311,63 @@ VACUUM_PULSE_PULL_SPEED = 40.0        # How fast items are vacuumed in
 VACUUM_PULSE_ACTIVE_DURATION = 0.8    # How long the pull lasts — long enough to vacuum edge items
 VACUUM_PULSE_PARTICLE_COUNT = 20      # Particles on activation
 VACUUM_PULSE_RING_COLOR = color.rgb(255, 220, 80)  # Gold ring for the vacuum pulse
+
+# ─── Nova Blast Ability (C key) ────────────────────────────────────────────────
+# Active ability that deals pure AOE damage to ALL enemies within a large radius
+# around Zorp. Unlike Pulse Wave (which is knockback-focused with minor damage),
+# Nova Blast is a pure damage nuke — no knockback, but significantly higher damage
+# and a much larger radius. The longer cooldown (15s vs 7s for Pulse Wave) makes
+# it a tactical "big spell" you save for dense crowds or tough enemies, rather
+# than a spammy crowd-control tool. The visual is a dramatic expanding white-cyan
+# ring with a bright flash sphere at Zorp's position, plus a radial particle burst
+# — making the nova feel like a genuine explosion of power radiating outward.
+# Damage scales with player level (like Pulse Wave and projectiles) so it stays
+# relevant in late game. Also benefits from the combo damage buff and monolith
+# damage buff for consistency with other damage sources.
+NOVA_BLAST_COOLDOWN = 15.0            # Seconds between Nova Blast uses
+NOVA_BLAST_RADIUS = 14.0              # How far the nova damage reaches (larger than Pulse Wave)
+NOVA_BLAST_DAMAGE = 35                # Base damage — significantly more than Pulse Wave (10)
+NOVA_BLAST_LEVEL_DAMAGE_BONUS = 2.0   # Extra damage per player level — keeps it relevant late game
+NOVA_BLAST_RING_LIFETIME = 0.6        # How long the visual ring expands
+NOVA_BLAST_RING_EXPAND_SPEED = 30.0   # How fast the ring expands outward
+NOVA_BLAST_RING_START_SCALE = 0.5     # Starting scale of the ring visual
+NOVA_BLAST_RING_MAX_SCALE = 14.0      # Final scale (matches radius)
+NOVA_BLAST_RING_COLOR = color.rgb(180, 240, 255)  # White-cyan — distinct from Pulse Wave's teal
+NOVA_BLAST_FLASH_SCALE = 3.0          # Scale of the central flash sphere
+NOVA_BLAST_FLASH_DURATION = 0.15      # How long the central flash lasts
+NOVA_BLAST_PARTICLE_COUNT = 30        # Radial particle burst on activation
+NOVA_BLAST_SCREEN_SHAKE = 0.3         # Screen shake intensity on activation
+
+# ─── Enemy Hit Slow Chance ────────────────────────────────────────────────────
+# Each projectile hit has a chance to briefly slow the enemy's movement speed,
+# simulating the laser energy disrupting the enemy's locomotion. This adds
+# tactical depth to combat — lucky shots temporarily slow fast enemies like
+# Swarm Mites and Void Wisps, making them easier to hit and kite. The slow
+# applies a brief blue tint to the enemy so the player can see it's working.
+# The chance and duration are modest so it's a nice bonus rather than a
+# reliable strategy — you can't count on it, but when it procs on a fast
+# enemy it feels great. Distinct from Time Warp (which slows ALL enemies
+# as a power-up) — this is a per-hit random proc on individual enemies.
+ENEMY_HIT_SLOW_CHANCE = 0.20          # 20% chance per projectile hit to slow the enemy
+ENEMY_HIT_SLOW_DURATION = 1.5         # How long the slow lasts (seconds)
+ENEMY_HIT_SLOW_MULT = 0.5             # Speed multiplier while slowed (50% of normal)
+ENEMY_HIT_SLOW_TINT = color.rgb(100, 180, 255)  # Blue tint applied to slowed enemies
+
+# ─── Speed Boost Energy Trail ─────────────────────────────────────────────────
+# When the Speed Boost power-up is active, a vibrant green energy trail with
+# sparkle particles follows Zorp — making the speed boost visually exciting and
+# distinct from the normal subtle movement trail. The trail spawns more
+# frequently and with brighter, larger particles than the normal movement trail,
+# and includes occasional upward sparkles that make Zorp look like he's glowing
+# with speed energy. This makes the Speed Boost feel like a significant power-up
+# visually, not just a stat change — you SEE the difference immediately.
+SPEED_BOOST_TRAIL_INTERVAL = 0.04     # Seconds between trail particles while speed-boosted
+SPEED_BOOST_TRAIL_SCALE = 0.3         # Size of trail particles
+SPEED_BOOST_TRAIL_LIFETIME = 0.4      # How long each trail particle lives
+SPEED_BOOST_SPARKLE_INTERVAL = 0.12   # Seconds between upward sparkle spawns
+SPEED_BOOST_SPARKLE_COUNT = 2         # Sparkles per spawn
+SPEED_BOOST_SPARKLE_RISE_SPEED = 3.0  # Upward speed of sparkles
+SPEED_BOOST_TRAIL_COLOR = color.rgb(80, 255, 80)  # Bright green — matching Speed Boost
 
 # ─── Idle HP Regeneration ──────────────────────────────────────────────────────
 # When Zorp stands still for a few seconds without taking damage, HP slowly
@@ -3691,6 +3749,13 @@ class Enemy(Entity):
         # instead of snapping from wander speed to full sprint instantly.
         self.chase_ramp_timer = 0.0
 
+        # ── Hit Slow ── When a projectile hits this enemy, there's a chance the
+        # laser energy disrupts its locomotion, briefly slowing its movement.
+        # The hit_slow_timer counts down while the slow is active; while > 0,
+        # the enemy's movement speed is multiplied by ENEMY_HIT_SLOW_MULT.
+        # The enemy also gets a brief blue tint so the player can see the slow.
+        self.hit_slow_timer = 0.0
+
         # Type-specific special behaviors
         self.is_phase_shifter = (enemy_type == 'Phase Shifter')
         self.phase_timer = random.uniform(4, 8) if self.is_phase_shifter else 0
@@ -3998,6 +4063,20 @@ class Enemy(Entity):
                 ENEMY_KNOCKBACK_UP,
                 kb_dir.z * ENEMY_KNOCKBACK_FORCE,
             )
+        # ── Hit Slow Chance ── Each projectile hit has a chance to briefly slow
+        # the enemy's movement speed, simulating the laser energy disrupting the
+        # enemy's locomotion. The slow applies a blue tint so the player can see
+        # it's working. This is a per-hit random proc, distinct from Time Warp
+        # (which is a global power-up that slows ALL enemies). When the slow
+        # triggers, the enemy's movement speed is halved for 1.5 seconds —
+        # making fast enemies like Swarm Mites and Void Wisps much easier to
+        # hit and kite during the slow window.
+        if random.random() < ENEMY_HIT_SLOW_CHANCE:
+            self.hit_slow_timer = ENEMY_HIT_SLOW_DURATION
+            # Brief blue tint to indicate the slow is active
+            slow_tint = ENEMY_HIT_SLOW_TINT
+            self.color = slow_tint
+            invoke(setattr, self, 'color', self.original_color, delay=ENEMY_HIT_FLASH_DURATION)
         if self.hp <= 0:
             self.alive = False
             self.dying = True
@@ -6223,6 +6302,21 @@ class Game:
         # or 20.
         self.vacuum_pulse_collected_count = 0
 
+        # ── Nova Blast (C key) ── A pure-damage AOE ability. Unlike Pulse Wave
+        # (knockback + minor damage), Nova Blast deals significant damage to all
+        # enemies in a large radius with no knockback. Longer cooldown makes it
+        # a tactical nuke rather than a spammy tool. The nova_rings list holds
+        # active visual ring entities; nova_cooldown tracks the cooldown timer.
+        self.nova_blast_cooldown = 0.0
+        self.nova_blast_rings = []  # Active Nova Blast ring entities
+
+        # ── Speed Boost Energy Trail ── Tracks accumulators for the vibrant
+        # green trail and upward sparkles that appear when the Speed Boost
+        # power-up is active. The trail_timer counts down between trail particle
+        # spawns; the sparkle_timer counts down between upward sparkle bursts.
+        self._speed_boost_trail_timer = 0.0
+        self._speed_boost_sparkle_timer = 0.0
+
         # Auto-fire toggle (X key) — continuous shooting without holding mouse
         self.auto_fire_enabled = False
 
@@ -6985,6 +7079,12 @@ class Game:
                 destroy(vpr)
         self.vacuum_pulse_rings.clear()
 
+        # Destroy Nova Blast rings
+        for nr in self.nova_blast_rings:
+            if nr and hasattr(nr, 'enabled') and nr.enabled:
+                destroy(nr)
+        self.nova_blast_rings.clear()
+
         # Destroy spawn warning rings
         for sw in self.spawn_warnings:
             if sw and hasattr(sw, 'enabled') and sw.enabled:
@@ -7178,6 +7278,7 @@ class Game:
                       'compass_arrow', 'multi_kill_glow',
                       'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
                       'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash',
+                      'nova_blast_text', 'nova_cd_bar_bg', 'nova_cd_bar', 'nova_ready_flash',
                       'radar_bg',
                       'biome_banner_text_ent', 'biome_banner_flash',
                       'boss_spawn_warning_text', 'boss_spawn_flash',
@@ -8315,6 +8416,28 @@ class Game:
             parent=camera.ui, model='quad', color=color.rgba(255, 220, 80, 220),
             scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
             position=(-0.65, 0.155), origin=(-0.5, 0), visible=False, z=-0.01,
+        )
+        # Nova Blast ability (C key) — AOE damage nuke HUD text + cooldown bar
+        self.nova_blast_text = Text(
+            text='NOVA READY [C]', position=(-0.75, 0.09), scale=0.85,
+            color=color.rgb(180, 240, 255),
+        )
+        self.nova_cd_bar_bg = Entity(
+            parent=camera.ui, model='quad', color=ABILITY_BAR_BG_COLOR,
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=(-0.65, 0.075), origin=(-0.5, 0), visible=False,
+        )
+        self.nova_cd_bar = Entity(
+            parent=camera.ui, model='quad', color=color.rgba(180, 240, 255, 220),
+            scale=(ABILITY_BAR_WIDTH, ABILITY_BAR_HEIGHT),
+            position=(-0.65, 0.075), origin=(-0.5, 0), visible=False, z=-0.01,
+        )
+        # Nova Blast ready flash overlay — brief white-cyan pulse behind text
+        self.nova_ready_flash = Entity(
+            parent=camera.ui, model='quad',
+            color=color.rgba(180, 240, 255, 0),
+            scale=(0.2, 0.035),
+            position=(-0.65, 0.09),
         )
         # Auto-fire indicator — small text showing [AUTO] when auto-fire is on
         self.auto_fire_text = Text(
@@ -10442,6 +10565,47 @@ class Game:
         else:
             self.vacuum_ready_flash.color = color.rgba(255, 220, 80, 0)
 
+        # ── Nova Blast Cooldown Indicator ── Shows the AOE nuke ability
+        # cooldown with a progress bar, matching the dash/pulse/vacuum style.
+        if self.nova_blast_cooldown > 0:
+            self.nova_blast_text.text = f'NOVA: {self.nova_blast_cooldown:.1f}s'
+            self.nova_blast_text.color = color.gray
+            cd_ratio = max(0, 1.0 - (self.nova_blast_cooldown / NOVA_BLAST_COOLDOWN))
+            self.nova_cd_bar_bg.visible = True
+            self.nova_cd_bar.visible = True
+            self.nova_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
+            # Color shifts from dim blue-white → bright white-cyan as it nears ready
+            fill_r = int(100 + 80 * cd_ratio)
+            fill_g = int(140 + 100 * cd_ratio)
+            fill_b = int(160 + 95 * cd_ratio)
+            # Near-Ready Anticipation Glow (same pattern as other ability bars)
+            if cd_ratio > ABILITY_BAR_ANTICIPATION_THRESHOLD:
+                antic_t = (cd_ratio - ABILITY_BAR_ANTICIPATION_THRESHOLD) / (1.0 - ABILITY_BAR_ANTICIPATION_THRESHOLD)
+                pulse_speed = lerp(ABILITY_BAR_ANTICIPATION_PULSE_MIN, ABILITY_BAR_ANTICIPATION_PULSE_MAX, antic_t)
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+                glow = int(ABILITY_BAR_ANTICIPATION_GLOW * antic_t * pulse)
+                fill_r = min(255, fill_r + glow)
+                fill_g = min(255, fill_g + glow)
+                fill_b = min(255, fill_b + glow)
+            self.nova_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
+        else:
+            self.nova_blast_text.text = 'NOVA READY [C]'
+            self.nova_blast_text.color = color.rgb(180, 240, 255)
+            self.nova_cd_bar_bg.visible = False
+            self.nova_cd_bar.visible = False
+
+        # ── Nova Blast Ready Flash ── Brief white-cyan pulse behind the nova
+        # text when the cooldown ends, matching the Dash/Pulse/Vacuum pattern.
+        if getattr(self, 'nova_ready_flash_timer', 0) > 0:
+            self.nova_ready_flash_timer -= time.dt
+            flash_ratio = max(0, self.nova_ready_flash_timer / NOVA_READY_FLASH_DURATION)
+            flash_alpha = int(120 * flash_ratio)
+            self.nova_ready_flash.color = color.rgba(180, 240, 255, flash_alpha)
+            scale_pulse = 1.0 + 0.15 * flash_ratio
+            self.nova_ready_flash.scale = (0.2 * scale_pulse, 0.035 * scale_pulse)
+        else:
+            self.nova_ready_flash.color = color.rgba(180, 240, 255, 0)
+
         # ── Auto-Fire Indicator ── Shows [AUTO] in magenta when auto-fire is on
         if self.auto_fire_enabled:
             self.auto_fire_text.text = '⚡ AUTO-FIRE [X]'
@@ -11817,6 +11981,177 @@ class Game:
         self.add_message("VACUUM PULSE!")
         self.screen_shake = max(self.screen_shake, 0.1)
 
+    def _activate_nova_blast(self):
+        """Activate a Nova Blast — a pure-damage AOE nuke around the player.
+
+        Unlike Pulse Wave (knockback + minor damage), Nova Blast deals
+        significant damage to ALL enemies within NOVA_BLAST_RADIUS with no
+        knockback. The damage scales with player level and benefits from the
+        combo damage buff and monolith damage buff. A dramatic expanding
+        white-cyan ring, central flash sphere, radial particle burst, and
+        screen shake make the nova feel like a genuine explosion of power.
+
+        Kills from Nova Blast trigger the full kill feedback suite (combo,
+        chain lightning, milestones, hit-stop, etc.) just like other kill
+        paths, but the recursive calls (_chain_lightning, _overkill_surge)
+        are skipped on Nova Blast kills to prevent infinite recursion.
+        """
+        if self.nova_blast_cooldown > 0:
+            return
+        p = self.player
+        self.nova_blast_cooldown = NOVA_BLAST_COOLDOWN
+        # ── Visual: expanding white-cyan ring ── Reuse PulseWaveRing with the
+        # nova color so it integrates with the existing ring update system.
+        _nr, _ng, _nb = _c255_color(NOVA_BLAST_RING_COLOR)
+        ring = PulseWaveRing(position=Vec3(p.x, 0, p.z), base_color=(_nr, _ng, _nb))
+        self.nova_blast_rings.append(ring)
+        # Central flash sphere — bright white-cyan burst at Zorp's position
+        flash = Entity(
+            model='sphere',
+            color=color.rgba(220, 250, 255, 240),
+            scale=NOVA_BLAST_FLASH_SCALE,
+            position=p.position + Vec3(0, 1, 0),
+        )
+        destroy(flash, delay=NOVA_BLAST_FLASH_DURATION)
+        # Radial particle burst — particles fly outward in all directions
+        for i in range(NOVA_BLAST_PARTICLE_COUNT):
+            angle = (i / NOVA_BLAST_PARTICLE_COUNT) * math.pi * 2
+            spread = random.uniform(4, 8)
+            vel = Vec3(math.cos(angle) * spread, random.uniform(2, 6), math.sin(angle) * spread)
+            bp = Entity(
+                model='sphere',
+                color=color.rgb(
+                    max(0, min(255, int(180 + random.uniform(-30, 30)))),
+                    max(0, min(255, int(240 + random.uniform(-20, 15)))),
+                    255,
+                ),
+                scale=random.uniform(0.15, 0.35),
+                position=p.position + Vec3(0, 1, 0),
+            )
+            self.particles.append((bp, vel, random.uniform(0.4, 0.8)))
+        self.add_message("NOVA BLAST!")
+        self.screen_shake = max(self.screen_shake, NOVA_BLAST_SCREEN_SHAKE)
+
+        # ── Deal damage to all enemies within radius ── Unlike Pulse Wave,
+        # Nova Blast deals damage instantly to all enemies in range (no
+        # expanding-ring hit detection needed since the visual ring is purely
+        # cosmetic). The damage scales with level and benefits from combo/
+        # monolith damage buffs for consistency with other damage sources.
+        nova_dmg = int(NOVA_BLAST_DAMAGE + p.level * NOVA_BLAST_LEVEL_DAMAGE_BONUS)
+        if self.combo_count >= COMBO_DAMAGE_TIER:
+            nova_dmg = int(nova_dmg * COMBO_DAMAGE_MULT)
+        if p.monolith_damage_timer > 0:
+            nova_dmg = int(nova_dmg * MONOLITH_DAMAGE_MULT)
+        # Apply Berserk damage buff if active
+        if p.berserk_timer > 0:
+            nova_dmg = int(nova_dmg * BERSERK_DAMAGE_MULT)
+        # Apply Cornered Beast damage buff if at low HP
+        if p.max_hp > 0:
+            hp_ratio = p.hp / p.max_hp
+            if hp_ratio < CORNERED_BEAST_HP_THRESHOLD:
+                t = 1.0 - (hp_ratio / CORNERED_BEAST_HP_THRESHOLD)
+                cornered_mult = CORNERED_BEAST_MIN_MULT + (CORNERED_BEAST_MAX_MULT - CORNERED_BEAST_MIN_MULT) * t
+                nova_dmg = int(nova_dmg * cornered_mult)
+
+        for enemy in self.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            e_dist = math.sqrt((enemy.x - p.x) ** 2 + (enemy.z - p.z) ** 2)
+            if e_dist > NOVA_BLAST_RADIUS:
+                continue
+            # Deal damage with visual feedback
+            killed = enemy.take_damage(nova_dmg)
+            self._spawn_particles(enemy.position, NOVA_BLAST_RING_COLOR, count=6)
+            self.damage_numbers.append(DamageNumber(enemy.position, nova_dmg, is_kill=False))
+            self.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(180, 240, 255, 180)))
+            if killed:
+                # ── Kill handling ── Full kill feedback suite, matching the
+                # pattern used by Pulse Wave and chain lightning kills.
+                # NOTE: _chain_lightning and _overkill_surge are intentionally
+                # NOT called here to prevent infinite recursion.
+                if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                    self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                    self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                    self.add_message("BOSS DOWN! SLOW-MO!")
+                p.add_kill(enemy.name)
+                self.total_kills += 1
+                self._register_kill(enemy.name)
+                self.combo_count += 1
+                self.max_combo = max(self.max_combo, self.combo_count)
+                self.combo_timer = _effective_combo_timeout(self.combo_count)
+                self.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                # Combo milestone fireworks
+                if self.combo_count > 1 and self.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                    milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                       color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                    for _ in range(COMBO_MILESTONE_PARTICLES):
+                        burst_color = random.choice(milestone_colors)
+                        burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                        self._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                    self.screen_shake = max(self.screen_shake, 0.4)
+                    self.add_message(f"COMBO x{self.combo_count} MILESTONE!")
+                    milestone_tier = self.combo_count // COMBO_MILESTONE_INTERVAL
+                    milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                    monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                    p.gain_xp(milestone_xp)
+                # Combo shield
+                if self.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                    p.combo_shield_active = True
+                    self.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                    self._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
+                # XP and score
+                combo_xp_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                combo_score_mult = 1.0 + (min(self.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
+                monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
+                xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                if is_overkill:
+                    overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                    xp_gain += overkill_xp
+                    self.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                    self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
+                if getattr(enemy, 'enraged', False):
+                    exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                    xp_gain += exec_xp
+                    self.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                    self._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                    self.screen_shake = max(self.screen_shake, EXECUTION_SCREEN_SHAKE)
+                    self.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
+                p.gain_xp(xp_gain)
+                p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                # Hit-stop, FOV punch, kill flash
+                self.hit_stop_timer = HIT_STOP_KILL_DURATION
+                self.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                camera.fov = CAMERA_KILL_ZOOM_FOV
+                self.kill_flash_timer = KILL_FLASH_DURATION
+                self.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                self.screen_shake = max(self.screen_shake, self._combo_scaled_kill_shake())
+                # Kill damage number
+                if is_overkill:
+                    self.damage_numbers.append(DamageNumber(enemy.position, nova_dmg, is_kill=True, is_overkill=True))
+                else:
+                    self.damage_numbers.append(DamageNumber(enemy.position, nova_dmg, is_kill=True))
+                # Loot drop, particles, death ring, kill feed
+                self._drop_loot(enemy.position, enemy.name)
+                self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
+                self.enemy_death_rings.append(EnemyDeathRing(
+                    position=Vec3(enemy.x, 0, enemy.z),
+                    col=enemy.original_color,
+                    enemy_scale=enemy.original_scale,
+                ))
+                self.kill_feed.append((self.t, f"💥 {enemy.name}"))
+                self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                enemy.alive = False
+                enemy.dying = True
+                enemy.death_timer = DEATH_ANIM_DURATION
+                if enemy.is_plasma_serpent:
+                    self._handle_plasma_serpent_split(enemy)
+
 
 def game_update():
     """Main update loop — called every frame by Ursina.
@@ -12077,6 +12412,11 @@ def game_update():
             if pwr.update_ring(time.dt):
                 destroy(pwr)
                 game.pulse_wave_rings.remove(pwr)
+        # Update Nova Blast rings during freeze (visual only)
+        for nr in game.nova_blast_rings[:]:
+            if nr.update_ring(time.dt):
+                destroy(nr)
+                game.nova_blast_rings.remove(nr)
         # Update spawn warning rings during freeze (visual only)
         # BUG FIX: Previously, expired warning rings were destroyed here during
         # hit-stop freeze, but the materialization code (which spawns the actual
@@ -13046,6 +13386,17 @@ def game_update():
         game._vacuum_was_on_cooldown = False
         game.vacuum_ready_flash_timer = VACUUM_READY_FLASH_DURATION
 
+    # Nova Blast cooldown — counts down like other ability cooldowns
+    if game.nova_blast_cooldown > 0:
+        game.nova_blast_cooldown -= time.dt
+        if game.nova_blast_cooldown < 0:
+            game.nova_blast_cooldown = 0
+        game._nova_was_on_cooldown = True
+    elif getattr(game, '_nova_was_on_cooldown', False):
+        # Nova Blast just came off cooldown — trigger readiness flash
+        game._nova_was_on_cooldown = False
+        game.nova_ready_flash_timer = NOVA_READY_FLASH_DURATION
+
     # ── Vacuum Pulse Active ── While the vacuum pulse is active, pull ALL
     # collectibles within range toward the player at high speed.
     if game.vacuum_pulse_active_timer > 0:
@@ -13559,6 +13910,56 @@ def game_update():
                     game.particles.append((trail_ghost, Vec3(0, 0, 0), PLAYER_TRAIL_LIFETIME))
         else:
             p._trail_accumulator = 0.0
+
+    # ── Speed Boost Energy Trail ── When the Speed Boost power-up is active,
+    # a vibrant green energy trail with sparkle particles follows Zorp — making
+    # the speed boost visually exciting and distinct from the normal subtle
+    # movement trail. The trail spawns more frequently and with brighter, larger
+    # particles than the normal movement trail, plus occasional upward green
+    # sparkles that make Zorp look like he's glowing with speed energy. This
+    # makes the Speed Boost feel like a significant power-up visually, not just
+    # a stat change — you SEE the difference immediately.
+    if p.speed_boost_timer > 0 and p.dash_timer <= 0:
+        current_speed = p.velocity.length()
+        if current_speed > 1.0:  # Only show trail while actually moving
+            # Trail particles — bright green, larger than normal trail
+            game._speed_boost_trail_timer -= time.dt
+            if game._speed_boost_trail_timer <= 0 and len(game.particles) < MAX_PARTICLES:
+                game._speed_boost_trail_timer = SPEED_BOOST_TRAIL_INTERVAL
+                trail_particle = Entity(
+                    model='sphere',
+                    color=color.rgba(80, 255, 80, 200),
+                    scale=SPEED_BOOST_TRAIL_SCALE,
+                    position=Vec3(p.x, p.y - 0.2, p.z),
+                )
+                game.particles.append((trail_particle, Vec3(0, 0, 0), SPEED_BOOST_TRAIL_LIFETIME))
+            # Upward sparkles — occasional green sparkles rising from Zorp
+            game._speed_boost_sparkle_timer -= time.dt
+            if game._speed_boost_sparkle_timer <= 0 and len(game.particles) < MAX_PARTICLES:
+                game._speed_boost_sparkle_timer = SPEED_BOOST_SPARKLE_INTERVAL
+                for _ in range(SPEED_BOOST_SPARKLE_COUNT):
+                    if len(game.particles) >= MAX_PARTICLES:
+                        break
+                    sparkle = Entity(
+                        model='sphere',
+                        color=color.rgb(
+                            max(0, min(255, int(80 + random.uniform(-20, 40)))),
+                            255,
+                            max(0, min(255, int(80 + random.uniform(-20, 40)))),
+                        ),
+                        scale=random.uniform(0.08, 0.15),
+                        position=Vec3(
+                            p.x + random.uniform(-0.5, 0.5),
+                            p.y + random.uniform(-0.2, 0.3),
+                            p.z + random.uniform(-0.5, 0.5),
+                        ),
+                    )
+                    vel = Vec3(
+                        random.uniform(-0.5, 0.5),
+                        SPEED_BOOST_SPARKLE_RISE_SPEED + random.uniform(-0.5, 1.0),
+                        random.uniform(-0.5, 0.5),
+                    )
+                    game.particles.append((sparkle, vel, 0.5))
 
     # Face mouse
     # ── Smooth Player Facing ── The facing *vector* updates instantly (so
@@ -14316,6 +14717,17 @@ def game_update():
                         effective_count = int(ENRAGE_PARTICLE_COUNT * (1.0 + (ENRAGE_DESPERATION_COUNT_MULT - 1.0) * desperation_t))
                         game._spawn_particles(enemy.position + Vec3(0, 0.5, 0),
                                               color.rgb(255, 30, 30), count=effective_count)
+            # ── Hit Slow ── If the enemy was recently hit by a projectile and
+            # the hit slow proc triggered, reduce its movement speed. The slow
+            # stacks with Time Warp and enrage (multiplicatively) so a slowed
+            # enraged enemy is still faster than a slowed normal one, but both
+            # are slower than their unslowed counterparts. The timer is
+            # decremented here so the slow duration is framerate-independent.
+            if enemy.hit_slow_timer > 0:
+                speed_mult *= ENEMY_HIT_SLOW_MULT
+                enemy.hit_slow_timer -= time.dt
+                if enemy.hit_slow_timer < 0:
+                    enemy.hit_slow_timer = 0
             # ── Chase Predictive Lead ── Instead of always heading toward the
             # player's current position, enemies aim at a predicted future
             # position based on the player's velocity. This produces a pursuit
@@ -14905,6 +15317,10 @@ def game_update():
                 enemy.wander_dir = enemy.wander_dir / wd_len
             # Time Warp slow factor applies to wander too
             wander_speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
+            # ── Hit Slow ── Also applies while wandering so a slowed enemy
+            # moves slowly even when not chasing the player.
+            if enemy.hit_slow_timer > 0:
+                wander_speed_mult *= ENEMY_HIT_SLOW_MULT
             new_pos = enemy.position + enemy.wander_dir * enemy.speed * ENEMY_WANDER_SPEED_FACTOR * wander_speed_mult * time.dt
             if game._is_walkable(new_pos.x, new_pos.z):
                 enemy.position = new_pos
@@ -16361,6 +16777,15 @@ def game_update():
             destroy(pwr)
             game.pulse_wave_rings.remove(pwr)
 
+    # ── Nova Blast Ring Visual Update ── Update the expanding white-cyan ring
+    # visuals. Nova Blast rings are purely cosmetic (damage is applied instantly
+    # at activation), so this only handles the ring animation — no enemy
+    # interaction needed here.
+    for nr in game.nova_blast_rings[:]:
+        if nr.update_ring(time.dt):
+            destroy(nr)
+            game.nova_blast_rings.remove(nr)
+
     # ── Pulse Wave Enemy Interaction ──
     # The expanding pulse ring pushes enemies away and deals minor damage.
     # Each enemy is only affected once per ring (tracked via hit_enemies set),
@@ -17674,6 +18099,16 @@ def game_update():
         game._activate_vacuum_pulse()
     elif not held_keys['v']:
         game._v_held = False
+
+    # ── Nova Blast (C key) ── Press C to unleash a pure-damage AOE nuke around
+    # Zorp. Unlike Pulse Wave (knockback + minor damage), Nova Blast deals
+    # significant damage to all enemies in a large radius with no knockback.
+    # 15-second cooldown makes it a tactical "big spell" for dense crowds.
+    if held_keys['c'] and not getattr(game, '_c_held', False):
+        game._c_held = True
+        game._activate_nova_blast()
+    elif not held_keys['c']:
+        game._c_held = False
 
     # ── Trader respawn timer ──
     game.trader_spawn_timer -= time.dt
