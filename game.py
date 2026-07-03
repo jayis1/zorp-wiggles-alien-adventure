@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.47.0"
+VERSION = "2.47.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -119,7 +119,7 @@ ENEMY_SPAWN_GRACE_SHIELD_ALPHA = 80    # Max alpha of the grace dome
 ENEMY_SPAWN_GRACE_SHIELD_SCALE = 1.8  # Dome scale multiplier on enemy scale
 
 # ─── Enemy Behavior ───────────────────────────────────────────────────────────
-ENEMY_WANDER_SPEED_FACTOR = 0.20
+ENEMY_WANDER_SPEED_FACTOR = 0.28  # More lively idle movement — enemies amble noticeably rather than crawling, making the world feel alive outside combat
 ENEMY_WANDER_INTERVAL_MIN = 2.0
 ENEMY_WANDER_INTERVAL_MAX = 5.0
 ENEMY_WANDER_DIR_JITTER = 1.0
@@ -1801,8 +1801,8 @@ ENEMY_SHUDDER_AMP_MAX = 0.10        # Max amplitude (at near-0% HP)
 # breathing. This makes aggroed enemies feel alive and predatory instead of
 # being static shapes gliding across the terrain. The panting is faster and
 # slightly bigger than idle breathing to convey exertion and threat.
-ENEMY_COMBAT_BREATHE_SPEED = 4.0   # Faster than idle (1.8) — conveys exertion
-ENEMY_COMBAT_BREATHE_AMOUNT = 0.05  # 5% scale variation — slightly more visible than idle's 4%
+ENEMY_COMBAT_BREATHE_SPEED = 4.5   # Faster than idle (1.8) — conveys exertion and urgency
+ENEMY_COMBAT_BREATHE_AMOUNT = 0.06  # 6% scale variation — more visible predatory exertion than idle's 4%
 
 # ─── Collectible Rarity Bob/Spin ──────────────────────────────────────────────
 # Rarer items bob higher and spin faster, making them visually distinct and
@@ -3340,9 +3340,11 @@ class Player(Entity):
                                             scale=COLLECTION_RUSH_AURA_SCALE, parent=self, visible=False)
 
         # Ground shadow beneath player for spatial awareness
+        # Alpha 55 — slightly darker than before (was 40) for better depth
+        # perception in the 3D world without being too heavy.
         self.ground_shadow = Entity(
             model='quad',
-            color=color.rgba(0, 0, 0, 40),
+            color=color.rgba(0, 0, 0, 55),
             scale=2.0,
             position=(self.x, 0.05, self.z),
             rotation_x=90,
@@ -4111,10 +4113,12 @@ class Enemy(Entity):
                              scale=(hp_bar_scaled_width, hp_bar_scaled_height),
                              parent=self, position=(0, hp_bar_y, -0.01), billboard=True)
 
-        # Ground shadow for spatial awareness — dark disc beneath the enemy
+        # Ground shadow for spatial awareness — dark disc beneath the enemy.
+        # Alpha 65 — slightly darker than before (was 50) so enemies read
+        # more clearly against the terrain in the 3D world.
         self.ground_shadow = Entity(
             model='quad',
-            color=color.rgba(0, 0, 0, 50),
+            color=color.rgba(0, 0, 0, 65),
             scale=self.original_scale * 2.0,
             position=(self.x, 0.05, self.z),
             rotation_x=90,
@@ -16316,7 +16320,18 @@ def game_update():
         # PERFORMANCE: skip bob animation for distant enemies (beyond visual cull range)
         if not enemy.is_nebula_phantom:
             if dist_to_player < VISUAL_CULL_RANGE:
-                enemy.y = 1 + math.sin(game.t * 2 + id(enemy) % 100) * 0.2
+                # ── Per-Enemy Bob Variation ── Each enemy uses its own random
+                # bob_freq, bob_amp, and bob_phase (assigned in __init__) so
+                # groups of enemies breathe with individual rhythms instead
+                # of all bobbing in unison. The per-enemy freq ranges from
+                # 1.4–3.0 rad/s and amplitude from 0.12–0.32, making small
+                # fast enemies bob quicker and large enemies bob slower for a
+                # more organic, less mechanical world. Previously these
+                # per-enemy values were defined but never used — the bob used
+                # a hardcoded frequency (2) and amplitude (0.2) with only
+                # id()-based phase variation, making all enemies breathe in
+                # near-synchrony.
+                enemy.y = 1 + math.sin(game.t * enemy.bob_freq + enemy.bob_phase) * enemy.bob_amp
             else:
                 enemy.y = 1  # Static position when culled
             # ── Enemy Hit Vertical Flinch ── When the enemy is hit, it briefly
