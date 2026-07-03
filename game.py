@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.46.0"
+VERSION = "2.47.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -825,6 +825,37 @@ DMG_NUMBER_SCALE = 1.2
 # producing a natural floating-leaf feel rather than a mechanical elevator.
 DMG_NUMBER_DRIFT_SPEED = 1.2   # Max horizontal drift speed (world units/sec)
 DMG_NUMBER_DRIFT_DECAY = 2.0   # How fast drift decays (higher = stops sooner)
+
+# ─── HP Bar Heal Pulse ───────────────────────────────────────────────────────
+# When the player heals from any source (Health Potion, fragment, regen, level-up,
+# idle regen, shrine, spawn zone), the HP bar briefly glows brighter green and
+# pulses in scale — a positive counterpart to the existing damage shake. This
+# makes every heal feel rewarding and visible at the HUD level, not just through
+# the screen flash that only fires at low HP. The pulse decays smoothly over
+# HP_BAR_HEAL_PULSE_DURATION seconds.
+HP_BAR_HEAL_PULSE_DURATION = 0.5   # How long the heal pulse lasts (seconds)
+HP_BAR_HEAL_PULSE_SCALE = 1.4      # Peak Y-scale multiplier during the pulse
+HP_BAR_HEAL_PULSE_GLOW_ALPHA = 120  # Peak glow alpha on the HP bar background
+
+# ─── Kill Score Popup ────────────────────────────────────────────────────────
+# When an enemy is killed, a small "+N pts" floating number appears at the kill
+# location in bright cyan-white — distinct from the yellow damage/kill number.
+# This makes the score reward tangible and immediate: you see exactly how many
+# points each kill was worth, which is especially satisfying at high combo
+# multipliers where the score scales up significantly. The popup uses the
+# existing DamageNumber system with a dedicated flag for clean rendering.
+KILL_SCORE_POPUP_COLOR = color.rgb(120, 255, 255)  # Bright cyan-white
+
+# ─── Per-Enemy Bob Variation ─────────────────────────────────────────────────
+# Enemies bob up and down while alive, but previously all used the same frequency
+# (2.0 rad/s) with only phase variation via id() % 100. This made groups of
+# enemies look synchronized — all breathing in unison. Now each enemy gets a
+# random bob frequency and amplitude within a range, so the world feels more
+# alive and organic. Small/fast enemies bob quicker; large enemies bob slower.
+ENEMY_BOB_FREQ_MIN = 1.4     # Minimum bob frequency (rad/s)
+ENEMY_BOB_FREQ_MAX = 3.0     # Maximum bob frequency (rad/s)
+ENEMY_BOB_AMP_MIN = 0.12     # Minimum bob amplitude (world units)
+ENEMY_BOB_AMP_MAX = 0.32     # Maximum bob amplitude (world units)
 
 # ─── Low-HP Danger Overlay ──────────────────────────────────────────────────
 LOW_HP_VIGNETTE_THRESHOLD = 0.30   # HP ratio below which the danger vignette appears
@@ -2414,6 +2445,15 @@ ENEMY_HIT_SLOW_CHANCE = 0.20          # 20% chance per projectile hit to slow th
 ENEMY_HIT_SLOW_DURATION = 1.5         # How long the slow lasts (seconds)
 ENEMY_HIT_SLOW_MULT = 0.5             # Speed multiplier while slowed (50% of normal)
 ENEMY_HIT_SLOW_TINT = color.rgb(100, 180, 255)  # Blue tint applied to slowed enemies
+# ── Hit Slow Crack Particles ── When the hit slow procs, a burst of small
+# ice-blue crack particles spawns around the enemy in addition to the blue
+# tint, making the slow immediately visually readable — you see the enemy
+# get "frozen" by the laser energy as crack-like particles burst from the
+# impact point. The particles use a bright blue-white color that's distinct
+# from the hit flash (which uses the enemy's own color) so the slow proc is
+# instantly distinguishable from a normal hit.
+ENEMY_HIT_SLOW_CRACK_PARTICLES = 8   # Number of crack particles on slow proc
+ENEMY_HIT_SLOW_CRACK_COLOR = color.rgb(150, 220, 255)  # Ice-blue crack particles
 
 # ─── Speed Boost Energy Trail ─────────────────────────────────────────────────
 # When the Speed Boost power-up is active, a vibrant green energy trail with
@@ -2822,6 +2862,17 @@ CHAIN_LIGHTNING_MAX_TARGETS = 4      # Max enemies struck per arc
 CHAIN_LIGHTNING_DAMAGE_BASE = 10     # Base damage per arc
 CHAIN_LIGHTNING_DAMAGE_PER_COMBO = 1 # Extra damage per combo tier above min
 CHAIN_LIGHTNING_COLOR = color.rgba(100, 200, 255, 200)  # Bright cyan-white
+# ── Jagged Bolt Visual ── The chain lightning now renders as a multi-segment
+# zigzag bolt instead of a straight line, making the arc look like actual
+# crackling electricity. CHAIN_LIGHTNING_BOLT_SEGMENTS controls how many
+# short segments make up the bolt (more = denser crackle), and
+# CHAIN_LIGHTNING_BOLT_JITTER controls how far each segment can deviate
+# perpendicular to the bolt direction (higher = wider zigzag). The jitter
+# uses a sine envelope so it's zero at the endpoints and maximum in the
+# middle, producing the classic forked lightning shape that connects
+# cleanly at source and target while crackling wildly in between.
+CHAIN_LIGHTNING_BOLT_SEGMENTS = 5    # Number of jagged segments per bolt
+CHAIN_LIGHTNING_BOLT_JITTER = 0.8    # Max perpendicular offset per segment (world units)
 
 # ─── High-HP Green Glow ──────────────────────────────────────────────────────
 # When the player's HP is above HIGH_HP_GLOW_THRESHOLD (75%), the HP bar
@@ -2914,6 +2965,23 @@ SLAYER_ANNOUNCE_DURATION = 2.5    # How long the slayer announcement stays visib
 SLAYER_PARTICLE_COUNT = 15       # Fiery orange particles on slayer trigger
 SLAYER_SCREEN_SHAKE = 0.2         # Screen shake on slayer trigger
 SLAYER_COLOR = color.rgb(255, 120, 40)  # Fiery orange for the announcement
+
+# ─── Headhunter Bonus ──────────────────────────────────────────────────────────
+# The counterpart to the Slayer bonus (which rewards killing the SAME enemy type
+# repeatedly): the Headhunter bonus rewards killing DIFFERENT enemy types within
+# a single combo. When you kill HEADHUNTER_THRESHOLD distinct enemy types during
+# one active combo, a "🎯 HEADHUNTER!" bonus triggers — awarding bonus XP that
+# scales with the number of distinct types killed. This encourages target
+# diversity and situational awareness instead of just farming the easiest enemy.
+# The tracking set resets when the combo breaks. A unique blue-violet
+# announcement and particle burst celebrate the versatile kill streak.
+HEADHUNTER_THRESHOLD = 3              # Distinct enemy types needed to trigger
+HEADHUNTER_XP_BASE = 50              # Base bonus XP for first headhunter bonus
+HEADHUNTER_XP_PER_TYPE = 25          # Extra XP per distinct type beyond threshold
+HEADHUNTER_ANNOUNCE_DURATION = 2.5   # How long the announcement stays visible
+HEADHUNTER_PARTICLE_COUNT = 18       # Blue-violet particles on headhunter trigger
+HEADHUNTER_SCREEN_SHAKE = 0.25       # Screen shake on headhunter trigger
+HEADHUNTER_COLOR = color.rgb(140, 120, 255)  # Blue-violet for the announcement
 
 # ─── Collection Rush Speed Boost ──────────────────────────────────────────────
 # When the player rapidly collects 5+ items in quick succession (within the
@@ -3128,6 +3196,7 @@ class Player(Entity):
         self.level_up_pending = False
         self.milestone_level_pending = False  # Set by gain_xp at milestone levels (5, 10, 15...)
         self.damage_taken_flag = False  # Set by take_damage, checked by game_update for HP bar shake
+        self.hp_heal_flag = False       # Set by heal(), checked by game_update for HP bar heal pulse
         self.xp_gained_flag = False      # Set by gain_xp, checked by _update_hud for XP bar flash
         self.flawless_reset_flag = False  # Set by take_damage, checked by game_update to reset flawless streak
         self.vengeful_surge_trigger_flag = False  # BUG FIX: Set by take_damage, checked by game_update for Vengeful Surge — was missing from __init__, causing potential AttributeError if game_update ran before any take_damage() call
@@ -3391,7 +3460,10 @@ class Player(Entity):
             # HP), but late game when max HP is 240+, the 15% percentage heal
             # (36+ HP) takes over so level-ups never feel insignificant.
             heal_amt = max(LEVEL_UP_HEAL_AMOUNT, int(self.max_hp * LEVEL_UP_HEAL_PERCENT))
-            self.hp = min(self.hp + heal_amt, self.max_hp)
+            # Use heal() so the HP bar heal pulse fires on level-up too
+            actual_level_heal = min(heal_amt, self.max_hp - self.hp)
+            if actual_level_heal > 0:
+                self.heal(actual_level_heal)
             self.speed += LEVEL_UP_SPEED_BONUS
             self.level_up_pending = True
             # ── Milestone Level Cooldown Reset ── At every LEVEL_MILESTONE_INTERVAL
@@ -3496,6 +3568,23 @@ class Player(Entity):
             self.hp = 0
             return True  # dead
         return False
+
+    def heal(self, amount):
+        """Heal the player by a given amount (capped at max_hp).
+
+        Sets the hp_heal_flag so game_update can trigger the HP bar heal pulse
+        — a bright green glow on the HP bar that makes every heal feel
+        rewarding and visible at the HUD level. This centralizes healing
+        through a single method so the heal pulse fires consistently from
+        all heal sources (potions, fragments, regen, level-up, shrines, etc.)
+        without each call site needing to set the flag individually.
+
+        Args:
+            amount: HP to restore (clamped to max_hp - hp).
+        """
+        if amount > 0 and self.hp < self.max_hp:
+            self.hp = min(self.max_hp, self.hp + amount)
+            self.hp_heal_flag = True
 
     def add_item(self, name, count=1):
         """Add an item to the player's inventory."""
@@ -3868,6 +3957,16 @@ class Enemy(Entity):
         self.shudder_timer = random.uniform(ENEMY_SHUDDER_INTERVAL_MIN, ENEMY_SHUDDER_INTERVAL_MAX)
         self.shudder_active = 0.0  # >0 while a shudder burst is playing
 
+        # ── Per-Enemy Bob Variation ── Each enemy gets a random bob frequency
+        # and amplitude so groups of enemies don't breathe in perfect sync.
+        # Small/fast enemies bob quicker with smaller amplitude; large/slow
+        # enemies bob slower with larger amplitude. This makes the world feel
+        # more alive and organic — a pack of Slime Blobs all bobbing at the
+        # same frequency looked mechanical; now each has its own rhythm.
+        self.bob_freq = random.uniform(ENEMY_BOB_FREQ_MIN, ENEMY_BOB_FREQ_MAX)
+        self.bob_amp = random.uniform(ENEMY_BOB_AMP_MIN, ENEMY_BOB_AMP_MAX)
+        self.bob_phase = random.uniform(0, math.pi * 2)
+
         # Nebula Phantom: flying enemy that orbits and dive-attacks
         self.is_nebula_phantom = (enemy_type == 'Nebula Phantom')
         self.orbit_angle = random.uniform(0, math.pi * 2) if self.is_nebula_phantom else 0
@@ -4050,6 +4149,22 @@ class Enemy(Entity):
             visible=False,
         )
 
+        # ── Hit Slow Visual Ring ── A ground ring at the enemy's feet that
+        # becomes visible while the hit slow is active, giving a persistent
+        # visual indicator of the slow state — complementing the brief blue
+        # tint with an ongoing ground-level effect that's visible from the
+        # third-person camera even after the tint fades. The ring pulses
+        # gently in the ice-blue crack color, making it easy to track which
+        # enemies are currently slowed during combat.
+        self.hit_slow_ring = Entity(
+            model='quad',
+            color=color.rgba(150, 220, 255, 0),
+            scale=self.original_scale * 2.0,
+            position=(self.x, 0.04, self.z),
+            rotation_x=90,
+            visible=False,
+        )
+
     def take_damage(self, amount, hit_direction=None):
         """Apply damage to the enemy. Returns True if killed.
 
@@ -4158,6 +4273,20 @@ class Enemy(Entity):
             # active; the speed reduction itself lasts the full duration.
             invoke(setattr, self, 'color', ENEMY_HIT_SLOW_TINT, delay=ENEMY_HIT_FLASH_DURATION)
             invoke(setattr, self, 'color', self.original_color, delay=ENEMY_HIT_FLASH_DURATION + 0.3)
+            # ── Hit Slow Crack Particles ── Spawn a burst of ice-blue crack
+            # particles around the enemy so the slow proc is immediately
+            # visually distinct from a normal hit. The particles burst from
+            # the enemy's position in a small radial pattern, making it look
+            # like the laser energy "froze" the enemy — you see the crackle
+            # of the slow taking effect, not just a color tint. The game
+            # reference is accessed via globals() since Enemy doesn't hold a
+            # Game reference (same pattern used by Player.take_damage for
+            # Last Stand combo check).
+            _g = globals().get('game', None)
+            if _g is not None:
+                _g._spawn_particles(self.position + Vec3(0, 1, 0),
+                                    ENEMY_HIT_SLOW_CRACK_COLOR,
+                                    count=ENEMY_HIT_SLOW_CRACK_PARTICLES)
         if self.hp <= 0:
             self.alive = False
             self.dying = True
@@ -4166,6 +4295,10 @@ class Enemy(Entity):
             # linger through the death animation
             if hasattr(self, 'enrage_aura') and self.enrage_aura:
                 self.enrage_aura.visible = False
+            # Hide the hit slow ring when the enemy starts dying so it doesn't
+            # linger through the death animation
+            if hasattr(self, 'hit_slow_ring') and self.hit_slow_ring is not None:
+                self.hit_slow_ring.visible = False
             return True
         return False
 
@@ -4608,7 +4741,7 @@ class HealthFragment(Entity):
                 if p.hp < p.max_hp:
                     self._collected = True
                     actual_heal = self.heal_amount
-                    p.hp = min(p.max_hp, p.hp + actual_heal)
+                    p.heal(actual_heal)
                     game.add_message(f"+{actual_heal} HP (Fragment)")
                     game._spawn_particles(p.position + Vec3(0, 1, 0),
                                           color.rgb(*HEALTH_FRAGMENT_COLOR), count=4)
@@ -5978,12 +6111,22 @@ class DamageNumber:
     feel punchier and more satisfying instead of numbers appearing flat.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None):
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None, is_score=False):
         # Color: gold for flawless, green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
         if is_flawless:
             col = color.rgb(255, 215, 0)
             text_str = f"✦+{amount} XP"
             scale_factor = 1.45
+        elif is_score:
+            # ── Kill Score Popup ── A small "+N pts" floating number in bright
+            # cyan-white appears at the kill location, showing exactly how many
+            # points the kill was worth. Distinct from the yellow damage/kill
+            # number so players can see both the damage dealt AND the score
+            # gained. Especially satisfying at high combo multipliers where the
+            # score scales up significantly.
+            col = KILL_SCORE_POPUP_COLOR
+            text_str = f"+{amount} pts"
+            scale_factor = 0.9
         elif is_heal:
             col = color.rgb(80, 255, 120)
             text_str = f"+{amount}"
@@ -6039,7 +6182,7 @@ class DamageNumber:
         # noticeably bigger than a 20-damage hit, enhancing the visual hierarchy
         # Skipped for heals, pickups, and XP/execution/flawless numbers
         # (those use fixed scales and aren't raw damage).
-        if not is_heal and not is_pickup and not is_flawless and not is_execution and amount > 0:
+        if not is_heal and not is_pickup and not is_flawless and not is_execution and not is_score and amount > 0:
             if amount > DMG_NUMBER_MAGNITUDE_BASE:
                 # Log curve: 0 boost at BASE, approaching MAX_BOOST at high damage
                 log_ratio = math.log(amount / DMG_NUMBER_MAGNITUDE_BASE) / DMG_NUMBER_MAGNITUDE_CURVE
@@ -6083,6 +6226,7 @@ class DamageNumber:
         self.is_heal = is_heal
         self.is_flawless = is_flawless
         self.is_pickup = is_pickup
+        self.is_score = is_score
         self.alive = True
         # ── Pop-In Animation ── The number scales in from small to an
         # overshoot peak then settles to normal, making damage feedback
@@ -6153,6 +6297,8 @@ class DamageNumber:
         # the color is always overridden below with hardcoded values.
         if self.is_flawless:
             self.text_ent.color = color.rgba(255, 215, 0, int(255 * alpha))
+        elif self.is_score:
+            self.text_ent.color = color.rgba(120, 255, 255, int(255 * alpha))
         elif self.is_pickup:
             self.text_ent.color = color.rgba(self._bg_r, self._bg_g, self._bg_b, int(255 * alpha))
         elif self.is_heal:
@@ -6493,6 +6639,18 @@ class Game:
         self.slayer_announce_text = ''
         self.slayer_announce_scale = 1.0
 
+        # ── Headhunter Bonus ── Tracks distinct enemy types killed within the
+        # current combo. When HEADHUNTER_THRESHOLD different types are killed
+        # in one combo, a bonus XP reward fires with a blue-violet
+        # announcement. The set resets when the combo breaks. This is the
+        # counterpart to the Slayer bonus (same type repeatedly) — Headhunter
+        # rewards target diversity instead.
+        self.headhunter_types = set()           # Enemy types killed in current combo
+        self.headhunter_announce_timer = 0.0    # How long the announcement stays
+        self.headhunter_announce_text = ''
+        self.headhunter_announce_scale = 1.0
+        self.headhunter_triggered = False       # Prevents re-trigger in same combo
+
         # ── Collection Rush Speed Boost ── When the player rapidly collects
         # COLLECTION_RUSH_THRESHOLD items (tracked via the existing pickup
         # streak), a temporary speed boost activates. rush_timer counts down
@@ -6513,6 +6671,16 @@ class Game:
         self.slayer_text = Text(
             text='', position=(0, -0.04), scale=2.5,
             color=color.rgba(255, 120, 40, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # ── Headhunter Announcement Text ── Displays "🎯 HEADHUNTER!" when the
+        # player kills HEADHUNTER_THRESHOLD distinct enemy types in one combo.
+        # Blue-violet text that pops and fades, positioned slightly above the
+        # slayer text so the two don't overlap when both trigger.
+        self.headhunter_text = Text(
+            text='', position=(0, -0.08), scale=2.3,
+            color=color.rgba(140, 120, 255, 0),
             origin=(0, 0), visible=False,
         )
 
@@ -6993,6 +7161,11 @@ class Game:
 
         # HP bar damage shake — HP bar jitters briefly when player takes damage
         self.hp_bar_shake_timer = 0.0
+        # ── HP Bar Heal Pulse ── When the player heals from any source, the HP
+        # bar briefly pulses brighter green and scales up slightly — a positive
+        # counterpart to the damage shake. Set by game_update when a heal is
+        # detected (via the hp_heal_flag set by Player.heal()), decays smoothly.
+        self.hp_bar_heal_pulse_timer = 0.0
 
         # Dash readiness flash — brief cyan pulse when dash comes off cooldown
         self.dash_ready_flash_timer = 0.0
@@ -7132,6 +7305,11 @@ class Game:
             if enemy.grace_shield.enabled:
                 destroy(enemy.grace_shield)
             enemy.grace_shield = None
+        # Clean up hit slow visual ring if present
+        if hasattr(enemy, 'hit_slow_ring') and enemy.hit_slow_ring is not None:
+            if enemy.hit_slow_ring.enabled:
+                destroy(enemy.hit_slow_ring)
+            enemy.hit_slow_ring = None
 
     def _cleanup(self):
         """Clean up all game entities for a restart. Destroys terrain, enemies,
@@ -7425,7 +7603,7 @@ class Game:
                       'pickup_streak_text', 'pickup_streak_bar_bg', 'pickup_streak_bar',
                       'crit_chain_text', 'flawless_text',
                       'swarm_escape_text',
-                      'collection_rush_text', 'slayer_text',
+                      'collection_rush_text', 'slayer_text', 'headhunter_text',
                       'vengeful_surge_text', 'rapid_chain_text',
                       'ground_reticle', 'facing_arrow',
                       'last_stand_text', 'cornered_beast_text',
@@ -9179,6 +9357,17 @@ class Game:
         b = int(base_b + (bb - base_b) * blend)
         return color.rgba(r, g, b, DASH_AFTERIMAGE_ALPHA)
 
+    def _spawn_kill_score_popup(self, pos, score_amount):
+        """Spawn a floating "+N pts" score popup at a kill location.
+
+        A small cyan-white number shows exactly how many points the kill was
+        worth, complementing the yellow damage/kill number. This makes the
+        score reward tangible — you see the points appear at the kill site,
+        which is especially satisfying at high combo multipliers.
+        """
+        if score_amount > 0:
+            self.damage_numbers.append(DamageNumber(pos, score_amount, is_score=True))
+
     def _spawn_impact_flash(self, pos, col=PROJECTILE_IMPACT_FLASH_COLOR):
         """Spawn a brief bright flash sphere at an impact point.
 
@@ -9912,6 +10101,63 @@ class Game:
                 self.hp_bar_bg.y = 0.46
                 self.hp_bar.y = 0.46
 
+        # ── HP Bar Heal Pulse ── When the player heals, the HP bar briefly
+        # pulses with a bright green glow and scales up slightly — a positive
+        # counterpart to the damage shake. The pulse decays smoothly over
+        # HP_BAR_HEAL_PULSE_DURATION seconds. The green glow is applied to the
+        # HP bar background (which is normally dark gray or red-tinted at low
+        # HP), and the fill bar scales up in Y for a satisfying "swell" effect.
+        # This fires from ALL heal sources (potions, fragments, regen, level-up,
+        # idle regen, shrines) via the centralized Player.heal() method.
+        if self.hp_bar_heal_pulse_timer > 0:
+            self.hp_bar_heal_pulse_timer -= time.dt
+            if self.hp_bar_heal_pulse_timer < 0:
+                self.hp_bar_heal_pulse_timer = 0
+            heal_progress = max(0, self.hp_bar_heal_pulse_timer / HP_BAR_HEAL_PULSE_DURATION)
+            # Ease-out: strong at start, gentle settle
+            heal_ease = heal_progress * heal_progress
+            # Scale the HP bar fill up in Y for a "swell" effect
+            swell = 1.0 + (HP_BAR_HEAL_PULSE_SCALE - 1.0) * heal_ease
+            self.hp_bar.scale_y = 0.03 * swell
+            # Bright green glow on the background — overlays on top of the
+            # normal bg color (dark gray / red / green glow) for a vivid flash
+            glow_alpha = int(HP_BAR_HEAL_PULSE_GLOW_ALPHA * heal_ease)
+            # Blend the existing bg color toward bright green
+            if hp_ratio < 0.25:
+                # At low HP, the bg is pulsing red — overlay green on top
+                self.hp_bar_bg.color = color.rgb(
+                    min(255, int(40 * (1 - heal_ease) + 40 * heal_ease)),
+                    min(255, int(0 * (1 - heal_ease) + 200 * heal_ease)),
+                    min(255, int(0 * (1 - heal_ease) + 60 * heal_ease)),
+                )
+            else:
+                # Normal: blend from current bg toward bright green
+                self.hp_bar_bg.color = color.rgb(
+                    min(255, int(40 + (40 - 40) * heal_ease)),
+                    min(255, int(60 + (200 - 60) * heal_ease)),
+                    min(255, int(40 + (80 - 40) * heal_ease)),
+                )
+            # Brighten the fill bar toward pure green during the pulse
+            if hp_ratio > 0.5:
+                t = (hp_ratio - 0.5) * 2
+                base_r = int(255 * (1 - t))
+                self.hp_bar.color = color.rgb(
+                    int(base_r * (1 - heal_ease * 0.6)),
+                    255,
+                    int(0 * (1 - heal_ease * 0.4)),
+                )
+            elif hp_ratio > 0.25:
+                t = hp_ratio * 2
+                base_g = int(255 * t)
+                self.hp_bar.color = color.rgb(
+                    255,
+                    int(base_g + (255 - base_g) * heal_ease * 0.5),
+                    0,
+                )
+        else:
+            # Reset HP bar Y scale when no heal pulse is active
+            self.hp_bar.scale_y = 0.03
+
         # Low-HP danger vignette — red pulsing overlay at screen edges when health is low
         # Enhanced: adds a sharper "thump" effect with brief bright flash at heartbeat peak
         # when HP is critically low (below 15%), for more urgent danger feedback
@@ -10358,6 +10604,33 @@ class Game:
             self.vengeful_surge_text.color = color.rgba(255, 80, 160, alpha)
         else:
             self.vengeful_surge_text.visible = False
+
+        # ── Headhunter Announcement ── Pop-in/hold/fade display matching the
+        # berserk/vengeful surge pattern, using the blue-violet headhunter
+        # color. Shows the full announcement text set during the trigger,
+        # with a scale pop-in at the start and a fade-out at the end.
+        if self.headhunter_announce_timer > 0:
+            self.headhunter_text.visible = True
+            self.headhunter_text.text = self.headhunter_announce_text
+            announce_progress = 1.0 - (self.headhunter_announce_timer / HEADHUNTER_ANNOUNCE_DURATION)
+            target_scale = self.headhunter_announce_scale
+            if announce_progress < 0.15:
+                pop_t = announce_progress / 0.15
+                scale = target_scale * (0.5 + 0.5 * pop_t) * (1.0 + 0.3 * math.sin(pop_t * math.pi))
+            elif announce_progress < 0.7:
+                scale = target_scale
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                scale = target_scale * (1.0 - fade_t * 0.2)
+            self.headhunter_text.scale = scale
+            if announce_progress < 0.7:
+                alpha = 255
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                alpha = int(255 * (1.0 - fade_t))
+            self.headhunter_text.color = color.rgba(140, 120, 255, alpha)
+        else:
+            self.headhunter_text.visible = False
 
         # ── Rapid Pickup Chain Display ── Shows the current rapid chain count
         # with a growing scale and mint-green color. Displays while the chain
@@ -11602,6 +11875,36 @@ class Game:
             self.slayer_count = 0
             self.slayer_timer = 0.0
 
+        # ── Headhunter Bonus ── Track distinct enemy types killed within the
+        # current combo. When HEADHUNTER_THRESHOLD different types are killed
+        # in one combo, award bonus XP with a blue-violet "🎯 HEADHUNTER!"
+        # announcement. This is the counterpart to the Slayer bonus (which
+        # rewards killing the same type repeatedly) — Headhunter rewards
+        # target diversity, encouraging the player to switch targets and
+        # engage different enemy types rather than farming one. The set
+        # resets when the combo breaks (handled in the combo timer expiry
+        # block of game_update). Only triggers once per combo to prevent
+        # re-firing on every subsequent kill after the threshold is met.
+        if enemy_type is not None:
+            self.headhunter_types.add(enemy_type)
+            if (not self.headhunter_triggered
+                    and len(self.headhunter_types) >= HEADHUNTER_THRESHOLD):
+                self.headhunter_triggered = True
+                distinct_count = len(self.headhunter_types)
+                # XP scales with number of distinct types beyond threshold
+                headhunter_xp = HEADHUNTER_XP_BASE + (distinct_count - HEADHUNTER_THRESHOLD) * HEADHUNTER_XP_PER_TYPE
+                p = self.player
+                monolith_xp_mult_hh = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                headhunter_xp = int(headhunter_xp * monolith_xp_mult_hh)
+                p.gain_xp(headhunter_xp)
+                self.headhunter_announce_text = f"🎯 HEADHUNTER! {distinct_count} types! +{headhunter_xp} XP!"
+                self.headhunter_announce_timer = HEADHUNTER_ANNOUNCE_DURATION
+                self.headhunter_announce_scale = 2.3 + min(distinct_count - HEADHUNTER_THRESHOLD, 5) * 0.15
+                self._spawn_particles(p.position + Vec3(0, 1, 0), HEADHUNTER_COLOR, count=HEADHUNTER_PARTICLE_COUNT)
+                self._spawn_particles(p.position + Vec3(0, 2, 0), color.rgb(180, 160, 255), count=HEADHUNTER_PARTICLE_COUNT // 2)
+                self.screen_shake = max(self.screen_shake, HEADHUNTER_SCREEN_SHAKE)
+                self.add_message(self.headhunter_announce_text)
+
         # Track flawless kill streak (resets on taking damage)
         self._register_flawless_kill()
 
@@ -11623,7 +11926,7 @@ class Game:
                     heal_cap = max(COMBO_SUSTAIN_HEAL_AMOUNT,
                                    int(p.max_hp * COMBO_SUSTAIN_HEAL_MAX_FRACTION))
                     heal_amt = min(heal_cap, p.max_hp - p.hp)
-                    p.hp += heal_amt
+                    p.heal(heal_amt)
                     self.add_message(f"⚔ Combo Sustain! +{heal_amt} HP!")
                     self._spawn_particles(p.position + Vec3(0, 1, 0),
                                           color.rgb(100, 255, 150), count=8)
@@ -11713,29 +12016,87 @@ class Game:
             if struck >= CHAIN_LIGHTNING_MAX_TARGETS:
                 break
             struck += 1
-            # Visual: brief cyan line from source to target
-            mid_pos = (source_pos + enemy.position) / 2
+            # ── Jagged Lightning Bolt Visual ── Instead of a single straight
+            # line, the chain lightning now renders as a multi-segment zigzag
+            # bolt with a perpendicular jitter — a proper "lightning" shape
+            # that looks like an actual electric arc rather than a straight
+            # rod. The bolt is built from CHAIN_LIGHTNING_BOLT_SEGMENTS short
+            # cube segments, each offset perpendicular to the bolt direction
+            # by a random amount (decreasing toward the endpoints so the bolt
+            # connects cleanly at source and target). A brighter core segment
+            # and endpoint flash spheres at both ends make the arc feel like a
+            # real discharge — you see the lightning crackle between enemies.
             direction = enemy.position - source_pos
             line_length = direction.length()
             if line_length < 0.1:
                 continue
-            # Create a thin elongated entity as the lightning visual
-            line_ent = Entity(
+            # Normalize direction in the XZ plane
+            dir_norm = direction.normalized()
+            # Perpendicular vector in the XZ plane
+            perp = Vec3(-dir_norm.z, 0, dir_norm.x)
+            # Build jagged bolt segments
+            num_segs = CHAIN_LIGHTNING_BOLT_SEGMENTS
+            seg_len = line_length / num_segs
+            bolt_entities = []
+            for si in range(num_segs):
+                # Fraction along the bolt (0 at source, 1 at target)
+                frac = (si + 0.5) / num_segs
+                # Perpendicular jitter — sine envelope so endpoints are clean
+                # and the middle has the most displacement (classic lightning shape)
+                envelope = math.sin(frac * math.pi)
+                jitter = random.uniform(-1, 1) * CHAIN_LIGHTNING_BOLT_JITTER * envelope
+                # Segment center position
+                seg_center = source_pos + direction * frac + perp * jitter
+                # Small Y variation for a 3D crackle feel
+                seg_center += Vec3(0, random.uniform(-0.3, 0.3) * envelope, 0)
+                seg_ent = Entity(
+                    model='cube',
+                    color=CHAIN_LIGHTNING_COLOR,
+                    scale=(0.06, 0.06, seg_len * 1.3),
+                    position=seg_center,
+                )
+                # Orient segment along the bolt direction
+                seg_ent.rotation_y = math.degrees(math.atan2(dir_norm.x, dir_norm.z))
+                bolt_entities.append(seg_ent)
+                destroy(seg_ent, delay=0.12)
+            # ── Bolt Core Glow ── A brighter, slightly thicker central segment
+            # runs the full bolt length to give the lightning a bright core
+            # that the jagged segments crackle around — making the arc read as
+            # a single bolt rather than disconnected shards.
+            mid_pos = (source_pos + enemy.position) / 2
+            core_ent = Entity(
                 model='cube',
-                color=CHAIN_LIGHTNING_COLOR,
-                scale=(0.08, 0.08, line_length),
+                color=color.rgba(200, 240, 255, 220),
+                scale=(0.04, 0.04, line_length),
                 position=mid_pos,
             )
-            # Orient the line to point from source to target
-            angle_y = math.degrees(math.atan2(direction.x, direction.z))
-            line_ent.rotation_y = angle_y
-            destroy(line_ent, delay=0.12)
+            core_ent.rotation_y = math.degrees(math.atan2(direction.x, direction.z))
+            destroy(core_ent, delay=0.10)
+            # ── Endpoint Flash Spheres ── Bright flash spheres at both the
+            # source and target endpoints, making the lightning feel like it
+            # discharged from a point and struck a point — a clear "zap!"
+            # visual at each end that's visible even at distance.
+            source_flash = Entity(
+                model='sphere',
+                color=color.rgba(200, 240, 255, 240),
+                scale=0.4,
+                position=source_pos + Vec3(0, 1, 0),
+            )
+            destroy(source_flash, delay=0.10)
+            target_flash = Entity(
+                model='sphere',
+                color=color.rgba(180, 230, 255, 240),
+                scale=0.5,
+                position=enemy.position + Vec3(0, 1, 0),
+            )
+            destroy(target_flash, delay=0.12)
             # Damage the enemy
             killed = enemy.take_damage(dmg)
             # Brief cyan flash on the struck enemy
             enemy.color = color.rgb(180, 220, 255)
             invoke(setattr, enemy, 'color', enemy.original_color, delay=0.1)
-            self._spawn_particles(enemy.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=4)
+            self._spawn_particles(enemy.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=6)
+            self._spawn_particles(source_pos + Vec3(0, 1, 0), color.rgb(120, 210, 255), count=4)
             self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=False))
             # If the lightning killed the enemy, handle the kill
             if killed:
@@ -11792,7 +12153,9 @@ class Game:
                     self.screen_shake = max(self.screen_shake, EXECUTION_SCREEN_SHAKE)
                     self.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                 p.gain_xp(xp_gain)
-                p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                p.score += _kill_score
+                self._spawn_kill_score_popup(enemy.position, _kill_score)
                 # BUG FIX: Chain lightning kills were missing hit-stop, FOV punch,
                 # kill flash, and boss slow-mo — present in all other kill paths.
                 self.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -11962,7 +12325,9 @@ class Game:
                     self.screen_shake = max(self.screen_shake, EXECUTION_SCREEN_SHAKE)
                     self.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                 p.gain_xp(xp_gain)
-                p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                p.score += _kill_score
+                self._spawn_kill_score_popup(enemy.position, _kill_score)
                 # Hit-stop, FOV punch, kill flash, combo-scaled shake — same as
                 # _chain_lightning and primary kill paths.
                 self.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -12367,7 +12732,9 @@ class Game:
                     self.screen_shake = max(self.screen_shake, EXECUTION_SCREEN_SHAKE)
                     self.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                 p.gain_xp(xp_gain)
-                p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                p.score += _kill_score
+                self._spawn_kill_score_popup(enemy.position, _kill_score)
                 # Hit-stop, FOV punch, kill flash
                 self.hit_stop_timer = HIT_STOP_KILL_DURATION
                 self.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
@@ -13202,7 +13569,9 @@ def game_update():
                         game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
-                    p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                    _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                    p.score += _kill_score
+                    game._spawn_kill_score_popup(enemy.position, _kill_score)
                     game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
@@ -13627,7 +13996,7 @@ def game_update():
             p._regen_tick = 0
             heal_amount = min(REGEN_HP_PER_SECOND, p.max_hp - p.hp)
             if heal_amount > 0:
-                p.hp += heal_amount
+                p.heal(heal_amount)
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(50, 255, 120), count=4)
                 # ── Healing Pulse Ring ── Green ring expands from Zorp on regen tick
                 game._spawn_heal_pulse(p.position)
@@ -13870,6 +14239,13 @@ def game_update():
                 # the sustain heal counter so the next combo starts fresh. This
                 # prevents carrying over partial progress from a broken combo.
                 game.combo_sustain_heal_counter = 0
+                # ── Headhunter Reset ── When the combo breaks, reset the
+                # headhunter tracking so the next combo starts with a fresh
+                # set of enemy types. This makes the Headhunter bonus a
+                # per-combo achievement — you must kill HEADHUNTER_THRESHOLD
+                # distinct types within a single combo to trigger it.
+                game.headhunter_types.clear()
+                game.headhunter_triggered = False
     # BUG FIX: combo_display_timer was decremented in both _update_hud() and
     # (implicitly via game global references), causing a double-decrement per frame.
     # Now it's only decremented here in game_update().
@@ -14016,6 +14392,10 @@ def game_update():
             game.slayer_current_type = None
     if game.slayer_announce_timer > 0:
         game.slayer_announce_timer -= time.dt
+    # ── Headhunter Announcement Timer ── Count down the announcement display
+    # duration, matching the slayer pattern.
+    if game.headhunter_announce_timer > 0:
+        game.headhunter_announce_timer -= time.dt
 
     # ── Collection Rush Timer ── Count down the speed boost duration. When it
     # expires, hide the aura and HUD text.
@@ -14071,7 +14451,7 @@ def game_update():
             game.idle_regen_tick = 0.0
             heal_amt = min(IDLE_REGEN_HP_PER_SECOND, p.max_hp - p.hp)
             if heal_amt > 0:
-                p.hp += heal_amt
+                p.heal(heal_amt)
                 game._spawn_particles(p.position + Vec3(0, 1, 0),
                                       color.rgb(100, 255, 150), count=3)
                 # ── Healing Pulse Ring ── Green ring expands from Zorp on idle regen
@@ -14265,7 +14645,7 @@ def game_update():
             p.move_regen_accum += regen_amount
             if p.move_regen_accum >= 1.0:
                 heal_int = int(p.move_regen_accum)
-                p.hp = min(p.max_hp, p.hp + heal_int)
+                p.heal(heal_int)
                 p.move_regen_accum -= heal_int
             # Spawn occasional healing spark particle for visual feedback
             p.move_regen_fx_timer += time.dt
@@ -14434,6 +14814,15 @@ def game_update():
         game.player_damage_rings.append(PlayerDamageRing(
             position=Vec3(p.x, 0, p.z),
         ))
+
+    # ── HP Bar Heal Pulse ── When the player heals from any source (detected
+    # via hp_heal_flag set by Player.heal()), trigger the HP bar heal pulse
+    # timer so _update_hud can apply the bright green glow animation. This is
+    # the positive counterpart to the damage shake above — healing makes the
+    # bar glow, damage makes it shake.
+    if p.hp_heal_flag:
+        p.hp_heal_flag = False
+        game.hp_bar_heal_pulse_timer = HP_BAR_HEAL_PULSE_DURATION
 
     # ── Flawless Kill Streak Reset ── When the player takes damage (that
     # actually reduces HP, not absorbed by shield/overheal), the flawless
@@ -15133,6 +15522,21 @@ def game_update():
                 enemy.hit_slow_timer -= time.dt
                 if enemy.hit_slow_timer < 0:
                     enemy.hit_slow_timer = 0
+                # ── Hit Slow Visual Ring ── Show a pulsing ice-blue ring at
+                # the enemy's feet while the slow is active, giving a
+                # persistent visual indicator that this enemy is slowed.
+                # The ring follows the enemy and pulses in alpha to feel
+                # like a "frozen" energy field.
+                if hasattr(enemy, 'hit_slow_ring') and enemy.hit_slow_ring is not None:
+                    enemy.hit_slow_ring.visible = True
+                    enemy.hit_slow_ring.x = enemy.x
+                    enemy.hit_slow_ring.z = enemy.z
+                    slow_pulse = 0.5 + 0.5 * math.sin(game.t * 8.0 + id(enemy) % 100 * 0.1)
+                    slow_alpha = int(80 + 60 * slow_pulse)
+                    enemy.hit_slow_ring.color = color.rgba(150, 220, 255, slow_alpha)
+                    enemy.hit_slow_ring.scale = enemy.original_scale * 2.0 * (1.0 + 0.06 * slow_pulse)
+            elif hasattr(enemy, 'hit_slow_ring') and enemy.hit_slow_ring is not None and enemy.hit_slow_ring.visible:
+                enemy.hit_slow_ring.visible = False
             # ── Chase Predictive Lead ── Instead of always heading toward the
             # player's current position, enemies aim at a predicted future
             # position based on the player's velocity. This produces a pursuit
@@ -15415,7 +15819,9 @@ def game_update():
                                         game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                                         game.damage_numbers.append(DamageNumber(other_enemy.position, exec_xp, is_execution=True))
                                     p.gain_xp(xp_gain)
-                                    p.score += max(KILL_SCORE_MIN, int(other_enemy.max_hp * combo_score_mult))
+                                    _kill_score = max(KILL_SCORE_MIN, int(other_enemy.max_hp * combo_score_mult))
+                                    p.score += _kill_score
+                                    game._spawn_kill_score_popup(other_enemy.position, _kill_score)
                                     # BUG FIX: Void Bomber friendly-fire kills were missing the kill screen shake.
                                     game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                                     if is_overkill:
@@ -16511,7 +16917,9 @@ def game_update():
                                     game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                                     game.damage_numbers.append(DamageNumber(nearby_enemy.position, exec_xp, is_execution=True))
                                 p.gain_xp(aoe_xp_gain)
-                                p.score += max(KILL_SCORE_MIN, int(nearby_enemy.max_hp * combo_score_mult))
+                                _kill_score = max(KILL_SCORE_MIN, int(nearby_enemy.max_hp * combo_score_mult))
+                                p.score += _kill_score
+                                game._spawn_kill_score_popup(nearby_enemy.position, _kill_score)
                                 # BUG FIX: AOE kills were missing the kill screen shake.
                                 game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                                 if is_overkill:
@@ -16630,7 +17038,9 @@ def game_update():
                             game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                             game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                         p.gain_xp(xp_gain)
-                        p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                        _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                        p.score += _kill_score
+                        game._spawn_kill_score_popup(enemy.position, _kill_score)
                         game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                         game.hit_stop_timer = HIT_STOP_KILL_DURATION
                         game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
@@ -16734,7 +17144,9 @@ def game_update():
                                 game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                                 game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                             p.gain_xp(xp_gain)
-                            p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                            _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                            p.score += _kill_score
+                            game._spawn_kill_score_popup(enemy.position, _kill_score)
                             game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                             # BUG FIX: Subsequent piercing kills were missing hit-stop,
                             # FOV punch, and kill flash — present in all other kill paths.
@@ -16893,7 +17305,9 @@ def game_update():
                         game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
-                    p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                    _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                    p.score += _kill_score
+                    game._spawn_kill_score_popup(enemy.position, _kill_score)
                     game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -17399,7 +17813,9 @@ def game_update():
                     # (projectile, dash, AOE, Void Bomber friendly-fire) multiplies score
                     # by combo_score_mult, but Pulse Wave was awarding raw max_hp, making
                     # Pulse Wave kills worth less score at high combo tiers.
-                    p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                    _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
+                    p.score += _kill_score
+                    game._spawn_kill_score_popup(enemy.position, _kill_score)
                     # BUG FIX: Pulse Wave kills were missing the kill screen shake.
                     game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                     # BUG FIX: Pulse Wave kills were missing hit-stop, FOV punch,
@@ -17731,7 +18147,7 @@ def game_update():
                 hp_room = p.max_hp - p.hp
                 if hp_room > 0:
                     actual_heal = min(heal_remaining, hp_room)
-                    p.hp += actual_heal
+                    p.heal(actual_heal)
                     heal_remaining -= actual_heal
                     # ── Healing Pulse Ring ── Green ring expands from Zorp on heal
                     game._spawn_heal_pulse(p.position)
@@ -18717,7 +19133,7 @@ def game_update():
             # Activate! Instant heal the player
             heal_amt = min(HEALING_SHRINE_HEAL_AMOUNT, p.max_hp - p.hp)
             if heal_amt > 0:
-                p.hp += heal_amt
+                p.heal(heal_amt)
                 shrine.cooldown = HEALING_SHRINE_COOLDOWN
                 game.add_message(f"Healing Shrine! +{heal_amt} HP!")
                 game._spawn_particles(shrine.position + Vec3(0, 3, 0), color.rgb(100, 255, 150), count=25)
@@ -18763,7 +19179,7 @@ def game_update():
             game._spawn_heal_tick = 0
             heal_amt = min(SPAWN_HEAL_HP_PER_SECOND, p.max_hp - p.hp)
             if heal_amt > 0:
-                p.hp += heal_amt
+                p.heal(heal_amt)
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 100), count=3)
                 # ── Healing Pulse Ring ── Green ring expands from Zorp on spawn zone heal
                 game._spawn_heal_pulse(p.position)
