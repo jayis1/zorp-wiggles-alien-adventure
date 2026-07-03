@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.45.0"
+VERSION = "2.45.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -804,6 +804,15 @@ ENEMY_WANDER_TURN_SPEED = 3.0  # How fast the actual wander dir lerps toward tar
 PLAYER_LEVEL_DIFFICULTY_INTERVAL = 5   # Player levels per difficulty tier increase
 ENEMY_HP_SCALE_PER_TIER = 0.15        # +15% enemy HP per difficulty tier above base
 ENEMY_DAMAGE_SCALE_PER_TIER = 0.10    # +10% enemy damage per difficulty tier above base
+# ── Smooth Inter-Tier Difficulty Interpolation ── Instead of stepping difficulty
+# in hard tiers at every 5 levels (which makes enemies suddenly jump in toughness
+# at levels 6, 11, 16...), the scaling now interpolates smoothly between tiers. The
+# fractional portion of the tier calculation is used to blend toward the next
+# tier, producing a continuous difficulty curve. At level 6 you get 20% of the
+# tier-1 bonus; at level 8 you get 60%; at level 10 you get the full tier-1 bonus.
+# This makes progression feel more natural — enemies gradually get tougher rather
+# than abruptly stepping up at milestone levels, reducing the "sudden difficulty
+# spike" frustration and making the power curve feel polished.
 
 # ─── Damage Numbers ──────────────────────────────────────────────────────────
 DMG_NUMBER_LIFETIME = 1.0
@@ -2583,6 +2592,19 @@ ENEMY_ATTACK_SPARK_SPEED = 14.0         # How fast sparks travel toward player
 ENEMY_ATTACK_SPARK_SPREAD = 0.4         # Lateral spread (cone half-angle fraction)
 ENEMY_ATTACK_SPARK_COLOR = color.rgb(255, 80, 40)  # Bright red-orange impact sparks
 ENEMY_ATTACK_SPARK_LIFETIME = 0.30      # How long each spark lives (seconds)
+
+# ─── Enemy Attack Strike Flash ────────────────────────────────────────────────
+# When an enemy's melee attack lands on the player (or is blocked by a shield),
+# the enemy model briefly flashes brighter and snaps to a slightly larger scale
+# — a "strike connection" visual that makes the melee hit feel like real physical
+# contact rather than the enemy just resetting to normal after the lunge. The
+# flash uses a brightened version of the enemy's own color (matching the hit
+# flash system) and the scale snap recovers quickly via the existing hit_scale_punch
+# timer. This complements the existing attack windup, lunge, and impact sparks
+# with an on-model reaction at the exact moment of contact, making melee combat
+# feel more visceral and readable from the third-person camera.
+ENEMY_ATTACK_STRIKE_FLASH_DURATION = 0.15   # How long the strike flash lasts
+ENEMY_ATTACK_STRIKE_SCALE_MULT = 1.15       # Brief scale snap on strike (1.15 = 115%)
 
 # ─── Projectile Impact Shrapnel Cone ─────────────────────────────────────────
 # On projectile hit, a few directional spark particles shoot outward
@@ -7926,14 +7948,33 @@ class Game:
         Higher-level players face tougher variants of the same enemy type,
         keeping early enemies relevant while making the game progressively harder.
 
+        The scaling now interpolates smoothly between tiers instead of stepping
+        in hard jumps. The fractional portion of the tier calculation blends
+        toward the next tier's multiplier, producing a continuous difficulty
+        curve. At level 6 you get 20% of the tier-1 bonus; at level 8 you get
+        60%; at level 10 you get the full tier-1 bonus. This makes progression
+        feel natural — enemies gradually get tougher rather than abruptly
+        stepping up at milestone levels.
+
         Args:
             enemy: The Enemy entity to scale (modified in-place).
         """
         p = self.player
-        tier_above_base = max(0, (p.level - 1) // PLAYER_LEVEL_DIFFICULTY_INTERVAL)
-        if tier_above_base > 0:
-            hp_mult = 1.0 + tier_above_base * ENEMY_HP_SCALE_PER_TIER
-            dmg_mult = 1.0 + tier_above_base * ENEMY_DAMAGE_SCALE_PER_TIER
+        # Continuous tier calculation: tier_floor is the completed tier count,
+        # tier_frac is the progress toward the next tier (0.0 to 1.0).
+        raw_tier = max(0.0, (p.level - 1) / PLAYER_LEVEL_DIFFICULTY_INTERVAL)
+        tier_floor = int(raw_tier)
+        tier_frac = raw_tier - tier_floor
+        if tier_floor > 0 or tier_frac > 0:
+            # Blend between the current tier's multiplier and the next tier's
+            # multiplier using the fractional portion, producing a smooth
+            # interpolation instead of a hard step at each tier boundary.
+            hp_mult_current = 1.0 + tier_floor * ENEMY_HP_SCALE_PER_TIER
+            hp_mult_next = 1.0 + (tier_floor + 1) * ENEMY_HP_SCALE_PER_TIER
+            hp_mult = lerp(hp_mult_current, hp_mult_next, tier_frac)
+            dmg_mult_current = 1.0 + tier_floor * ENEMY_DAMAGE_SCALE_PER_TIER
+            dmg_mult_next = 1.0 + (tier_floor + 1) * ENEMY_DAMAGE_SCALE_PER_TIER
+            dmg_mult = lerp(dmg_mult_current, dmg_mult_next, tier_frac)
             enemy.hp = int(enemy.hp * hp_mult)
             enemy.max_hp = enemy.hp
             enemy.damage = int(enemy.damage * dmg_mult)
@@ -14829,6 +14870,7 @@ def game_update():
                 # enemies look natural regardless of the enemy mix.
                 sep_size_mult = max(0.6, min(2.0, enemy.original_scale / ENEMY_SEPARATION_SIZE_BASE * ENEMY_SEPARATION_SIZE_MULT))
                 sep_radius = ENEMY_SEPARATION_RADIUS * sep_size_mult
+                sep_radius_sq = sep_radius * sep_radius  # Pre-squared for cheap comparison
                 for other in game.enemies:
                     if other is enemy or not other.alive or other.dying:
                         continue
@@ -14837,7 +14879,7 @@ def game_update():
                     sep_dx = enemy.x - other.x
                     sep_dz = enemy.z - other.z
                     sep_dist_sq = sep_dx * sep_dx + sep_dz * sep_dz
-                    if sep_dist_sq < sep_radius * sep_radius and sep_dist_sq > 0.01:
+                    if sep_dist_sq < sep_radius_sq and sep_dist_sq > 0.01:
                         sep_dist = math.sqrt(sep_dist_sq)
                         # Stronger push when closer — inverse distance falloff
                         push_strength = ENEMY_SEPARATION_FORCE * (1.0 - sep_dist / sep_radius)
@@ -15424,6 +15466,37 @@ def game_update():
                 enemy.ambush_hit = True
                 game.add_message("Void Stalker ambush! Ouch!")
                 game._spawn_particles(enemy.position, color.rgb(150, 0, 255), count=8)
+            # ── Enemy Attack Strike Flash ── At the exact moment the enemy's
+            # melee attack connects (whether blocked by shield or dealing
+            # damage), the enemy model briefly flashes a brightened version
+            # of its own color and snaps to a slightly larger scale. This
+            # makes the strike feel like real physical contact — you see
+            # the enemy "connect" with the hit on its model, not just through
+            # screen shake and particles on the player side. The flash uses
+            # the same brightened-own-color system as the hit flash, and the
+            # scale snap recovers via the hit_scale_punch timer so it composes
+            # cleanly with any existing hit reactions.
+            if dist_to_player < VISUAL_CULL_RANGE:
+                er, eg, eb = _c255_color(enemy.original_color)
+                _strike_b = 0.7  # 70% toward white for a bright strike flash
+                enemy.color = color.rgb(
+                    min(255, int(er + (255 - er) * _strike_b)),
+                    min(255, int(eg + (255 - eg) * _strike_b)),
+                    min(255, int(eb + (255 - eb) * _strike_b)),
+                )
+                invoke(setattr, enemy, 'color', enemy.original_color,
+                        delay=ENEMY_ATTACK_STRIKE_FLASH_DURATION)
+                # Set hit_flash so the lunge reset code below (which does
+                # `if enemy.hit_flash <= 0: enemy.color = enemy.original_color`)
+                # doesn't immediately override the strike flash. The hit_flash
+                # timer also prevents other color overrides (enrage tint, etc.)
+                # from fighting the strike flash while it's active.
+                enemy.hit_flash = ENEMY_ATTACK_STRIKE_FLASH_DURATION
+                # Brief scale snap via the existing hit_scale_punch system —
+                # the punch timer (1.0→0.0) drives a quick scale pop that
+                # recovers smoothly, composes with the lunge stretch, and
+                # decays via ENEMY_HIT_SCALE_RECOVERY.
+                enemy.hit_scale_punch = max(enemy.hit_scale_punch, 0.5)
             if p.shield_timer > 0:
                 # Shield absorbs the hit
                 game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 200, 255), count=SHIELD_BLOCK_PARTICLE_COUNT)

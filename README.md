@@ -36,7 +36,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.45.0 — 3D!)
+## Features (v2.45.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -127,7 +127,8 @@ python game.py
 - **Biome-tinted spawn portals** — enemy spawn vortex discs are tinted to match the biome's ground color, making spawns feel like they're drawing energy from the environment (orange in lava, cyan in crystal, green in toxic bog)
 - **Magnetic pull wobble** — collectibles being magnetically pulled vibrate side-to-side perpendicular to the pull direction, making the magnetic attraction feel organic and energetic instead of a dead-straight line
 - **Elastic collectible pop** — items flash white and scale up with a bouncy overshoot before disappearing
-- **Player-level difficulty scaling** — newly spawned enemies gain HP and damage as you level up, keeping the challenge fresh
+- **Player-level difficulty scaling** — newly spawned enemies gain HP and damage as you level up, keeping the challenge fresh. Difficulty now **interpolates smoothly** between tiers instead of stepping in hard jumps — enemies gradually get tougher level by level rather than abruptly spiking at every 5th level
+- **Enemy attack strike flash** — when an enemy's melee attack connects, the enemy model briefly flashes brighter and snaps in scale, making the hit feel like real physical contact on the enemy's body, not just feedback on the player side. Complements the existing windup, lunge, and impact sparks with an on-model "connection" visual
 - **Per-type enemy detection ranges** — Swarm Mites detect from further away (swarm behavior), others tuned for fairer encounters
 - **Weighted collectible spawning** — common items (Space Gloop) drop more often; rare items (Plasma Core) are truly rare finds
 - **Terrain-colored minimap with enemy dots** — see biomes and enemy positions at a glance, refreshes in real time
