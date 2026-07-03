@@ -4073,10 +4073,16 @@ class Enemy(Entity):
         # hit and kite during the slow window.
         if random.random() < ENEMY_HIT_SLOW_CHANCE:
             self.hit_slow_timer = ENEMY_HIT_SLOW_DURATION
-            # Brief blue tint to indicate the slow is active
-            slow_tint = ENEMY_HIT_SLOW_TINT
-            self.color = slow_tint
-            invoke(setattr, self, 'color', self.original_color, delay=ENEMY_HIT_FLASH_DURATION)
+            # BUG FIX: Previously this immediately set self.color = slow_tint,
+            # overriding the hit flash color that was just set above. The hit
+            # flash (a brightened version of the enemy's own color) was never
+            # visible when the slow triggered. Now we schedule the blue slow
+            # tint to appear AFTER the hit flash duration ends, so both effects
+            # are visible in sequence: hit flash → blue slow tint → original.
+            # The slow tint lasts for a brief moment to indicate the slow is
+            # active; the speed reduction itself lasts the full duration.
+            invoke(setattr, self, 'color', ENEMY_HIT_SLOW_TINT, delay=ENEMY_HIT_FLASH_DURATION)
+            invoke(setattr, self, 'color', self.original_color, delay=ENEMY_HIT_FLASH_DURATION + 0.3)
         if self.hp <= 0:
             self.alive = False
             self.dying = True
@@ -12066,9 +12072,12 @@ class Game:
             self.hit_ripples.append(HitRipple(enemy.position, col=color.rgba(180, 240, 255, 180)))
             if killed:
                 # ── Kill handling ── Full kill feedback suite, matching the
-                # pattern used by Pulse Wave and chain lightning kills.
-                # NOTE: _chain_lightning and _overkill_surge are intentionally
-                # NOT called here to prevent infinite recursion.
+                # pattern used by projectile, Pulse Wave, and chain lightning
+                # kills. _chain_lightning and _overkill_surge ARE called here
+                # because Nova Blast is a direct damage source (not a recursive
+                # call from chain lightning or overkill surge), so there is no
+                # recursion risk. Previously these were skipped, causing Nova
+                # Blast kills to miss chain lightning arcs and overkill surges.
                 if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
                     self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
                     self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
@@ -12081,6 +12090,11 @@ class Game:
                 self.combo_timer = _effective_combo_timeout(self.combo_count)
                 self.combo_display_timer = COMBO_DISPLAY_LIFETIME
                 self.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                # BUG FIX: Nova Blast kills were missing _chain_lightning() —
+                # every other primary/secondary kill path (projectile, fireball
+                # AOE, Pulse Wave, piercing) calls it. Without it, Nova Blast
+                # kills at high combo don't arc lightning to nearby enemies.
+                self._chain_lightning(enemy.position, self.combo_count)
                 # Combo milestone fireworks
                 if self.combo_count > 1 and self.combo_count % COMBO_MILESTONE_INTERVAL == 0:
                     milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
@@ -12091,11 +12105,28 @@ class Game:
                         self._spawn_particles(p.position + burst_offset, burst_color, count=1)
                     self.screen_shake = max(self.screen_shake, 0.4)
                     self.add_message(f"COMBO x{self.combo_count} MILESTONE!")
+                    # BUG FIX: Nova Blast kills were missing the Combo Damage Tier
+                    # Aura — the fiery orange aura that pulses around Zorp when
+                    # the combo reaches the damage buff tier (x10) or above.
+                    if self.combo_count >= COMBO_DAMAGE_TIER:
+                        aura_ent = Entity(
+                            model='sphere',
+                            color=COMBO_DAMAGE_AURA_COLOR,
+                            scale=COMBO_DAMAGE_AURA_SCALE,
+                            position=p.position,
+                        )
+                        destroy(aura_ent, delay=COMBO_DAMAGE_AURA_DURATION)
+                        self._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 120, 30), count=10)
+                        if self.combo_count == COMBO_DAMAGE_TIER:
+                            self.add_message("⚡ DAMAGE BUFF ACTIVE! +25% damage!")
                     milestone_tier = self.combo_count // COMBO_MILESTONE_INTERVAL
                     milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
                     monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                     milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
                     p.gain_xp(milestone_xp)
+                    # BUG FIX: Nova Blast kills were missing the combo milestone XP
+                    # message — every other kill path shows this after awarding XP.
+                    self.add_message(f"Combo Milestone! +{milestone_xp} XP!")
                 # Combo shield
                 if self.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
                     p.combo_shield_active = True
@@ -12114,6 +12145,12 @@ class Game:
                     self.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                     self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                     self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    # BUG FIX: Nova Blast kills were missing _overkill_surge() —
+                    # the primary projectile and fireball AOE paths both call it
+                    # when overkill damage exceeds the threshold. Nova Blast is a
+                    # direct damage source, so there's no recursion risk.
+                    if overkill_amount >= OVERKILL_SURGE_THRESHOLD:
+                        self._overkill_surge(enemy.position, overkill_amount)
                 if getattr(enemy, 'enraged', False):
                     exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                     xp_gain += exec_xp
@@ -12144,7 +12181,12 @@ class Game:
                     col=enemy.original_color,
                     enemy_scale=enemy.original_scale,
                 ))
-                self.kill_feed.append((self.t, f"💥 {enemy.name}"))
+                # BUG FIX: Nova Blast kills were missing the "Defeated" message
+                # and used an inconsistent kill feed emoji (💥 instead of the
+                # standard ✦ used by projectile kills). Now matches the primary
+                # kill path's message and kill feed format.
+                self.add_message(f"Nova Blast defeated {enemy.name}!")
+                self.kill_feed.append((self.t, f"✦ {enemy.name}"))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 enemy.alive = False
                 enemy.dying = True
@@ -16837,6 +16879,22 @@ def game_update():
                 # Apply the Monolith damage buff if active
                 if p.monolith_damage_timer > 0:
                     pulse_dmg = int(pulse_dmg * MONOLITH_DAMAGE_MULT)
+                # BUG FIX: Pulse Wave damage was missing the Berserk damage buff
+                # (BERSERK_DAMAGE_MULT). Projectiles and Nova Blast both apply it,
+                # but Pulse Wave didn't — making Pulse Wave weaker than expected
+                # during Berserk.
+                if p.berserk_timer > 0:
+                    pulse_dmg = int(pulse_dmg * BERSERK_DAMAGE_MULT)
+                # BUG FIX: Pulse Wave damage was missing the Cornered Beast damage
+                # buff. Projectiles and Nova Blast both apply it when HP < 30%,
+                # but Pulse Wave didn't — making Pulse Wave less effective as a
+                # last-resort ability at low HP.
+                if p.max_hp > 0:
+                    _pw_hp_ratio = p.hp / p.max_hp
+                    if _pw_hp_ratio < CORNERED_BEAST_HP_THRESHOLD:
+                        _pw_t = 1.0 - (_pw_hp_ratio / CORNERED_BEAST_HP_THRESHOLD)
+                        _pw_cornered_mult = CORNERED_BEAST_MIN_MULT + (CORNERED_BEAST_MAX_MULT - CORNERED_BEAST_MIN_MULT) * _pw_t
+                        pulse_dmg = int(pulse_dmg * _pw_cornered_mult)
                 killed = enemy.take_damage(pulse_dmg)
                 game._spawn_particles(enemy.position, PULSE_WAVE_RING_COLOR, count=4)
                 game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=False))
