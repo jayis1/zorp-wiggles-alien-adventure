@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.45.1"
+VERSION = "2.46.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1371,6 +1371,7 @@ RARITY_TIER = {
     'Photon Boots':   'rare',
     'Cosmic Jelly':   'legendary',
     'Plasma Core':    'mythic',
+    'Combo Orb':      'legendary',
 }
 
 RARITY_GLOW_CONFIG = {
@@ -1688,6 +1689,7 @@ PULSE_READY_FLASH_COLOR = color.rgba(0, 255, 200, 0)   # Teal flash for pulse wa
 VACUUM_READY_FLASH_DURATION = 0.4   # How long the vacuum pulse ready flash lasts
 VACUUM_READY_FLASH_COLOR = color.rgba(255, 220, 80, 0)  # Gold flash for vacuum pulse
 NOVA_READY_FLASH_DURATION = 0.4    # How long the nova blast ready flash lasts
+CHRONO_READY_FLASH_DURATION = 0.4  # How long the chrono field ready flash lasts
 
 # ─── Enemy Death Ground Ring ──────────────────────────────────────────────────
 # When an enemy dies, a brief expanding ground ring radiates outward from the
@@ -2346,6 +2348,57 @@ NOVA_BLAST_FLASH_SCALE = 3.0          # Scale of the central flash sphere
 NOVA_BLAST_FLASH_DURATION = 0.15      # How long the central flash lasts
 NOVA_BLAST_PARTICLE_COUNT = 30        # Radial particle burst on activation
 NOVA_BLAST_SCREEN_SHAKE = 0.3         # Screen shake intensity on activation
+
+# ─── Chrono Field Ability (Z key) ──────────────────────────────────────────────
+# An active ability that creates a localized time-slow bubble around Zorp. Unlike
+# Time Warp (a pickup that slows ALL enemies globally), Chrono Field only slows
+# enemies within a radius around the player — a tactical tool for when you're
+# surrounded but don't want to waste a global slow. The bubble persists for a few
+# seconds, during which affected enemies move at a fraction of their normal speed.
+# A translucent purple-cyan dome visualizes the bubble boundary, and a ground
+# ring shows the area of effect. The cooldown is moderate so it can be used
+# regularly in tough fights but not spammed. Enemy projectiles entering the
+# bubble are also slowed, making ranged enemies easier to dodge while the field
+# is active. The slow stacks multiplicatively with Hit Slow and Enrage.
+CHRONO_FIELD_COOLDOWN = 18.0            # Seconds between Chrono Field uses
+CHRONO_FIELD_RADIUS = 12.0             # How far the slow bubble reaches
+CHRONO_FIELD_DURATION = 4.0            # How long the bubble lasts (seconds)
+CHRONO_FIELD_SLOW_FACTOR = 0.25        # Affected enemies move at 25% speed
+CHRONO_FIELD_PROJECTILE_SLOW = 0.3     # Enemy projectiles in bubble move at 30% speed
+CHRONO_FIELD_RING_COLOR = color.rgb(160, 100, 255)  # Purple — distinct from Time Warp's blue
+CHRONO_FIELD_DOME_ALPHA = 35           # Translucent dome alpha
+CHRONO_FIELD_PARTICLE_COUNT = 24       # Particle burst on activation
+CHRONO_FIELD_SCREEN_SHAKE = 0.2        # Screen shake on activation
+
+# ─── Combo Orb Drops ───────────────────────────────────────────────────────────
+# When the player kills an enemy at a high combo (x10+), there's a chance to drop
+# a special golden "Combo Orb" collectible. This orb grants bonus XP and score
+# proportional to the current combo count — the higher your streak, the more
+# valuable the orb. This rewards sustained combat streaks with a tangible,
+# collectible reward that's visually distinct from regular loot. The orb uses
+# the existing collectible pickup system (magnetic pull, vacuum pulse, etc.)
+# so it integrates naturally. The drop chance scales with combo count so higher
+# combos are more likely to produce an orb.
+COMBO_ORB_COMBO_THRESHOLD = 10         # Minimum combo to potentially drop an orb
+COMBO_ORB_DROP_CHANCE_BASE = 0.08      # 8% base drop chance at threshold
+COMBO_ORB_DROP_CHANCE_PER_TIER = 0.02  # +2% per combo tier above threshold
+COMBO_ORB_DROP_CHANCE_MAX = 0.25       # Capped at 25%
+COMBO_ORB_XP_BASE = 50                 # Base bonus XP from a combo orb
+COMBO_ORB_XP_PER_COMBO = 3             # Additional XP per current combo count
+COMBO_ORB_SCORE_BASE = 100             # Base bonus score from a combo orb
+COMBO_ORB_SCORE_PER_COMBO = 10         # Additional score per current combo count
+COMBO_ORB_COLOR = color.rgb(255, 200, 60)  # Golden-orange — distinct from regular loot
+
+# ─── Adrenaline Overheal Conversion ───────────────────────────────────────────
+# When Adrenaline Rush is active (triggered at low HP), excess healing is
+# converted to overheal at a boosted rate instead of being wasted. Normally,
+# healing beyond max HP is lost. During Adrenaline Rush, the "fight or flight"
+# state channels excess healing into a temporary overheal barrier at 150%
+# efficiency — so a 30 HP heal when you're 10 HP from max gives 10 HP to real
+# health plus 30 HP of overheal (20 excess * 1.5 = 30). This makes clutch
+# adrenaline moments more survivable and rewards the risk of playing at low HP
+# by turning overhealing into a tactical advantage rather than a waste.
+ADRENALINE_OVERHEAL_CONVERSION_RATE = 1.5  # Excess healing → overheal multiplier during adrenaline
 
 # ─── Enemy Hit Slow Chance ────────────────────────────────────────────────────
 # Each projectile hit has a chance to briefly slow the enemy's movement speed,
@@ -4323,6 +4376,7 @@ class Collectible(Entity):
         'Lucky Clover':   {'color': color.rgb(50, 255, 50),   'value': 20,  'model': 'diamond'},
         'Mirror Shard':   {'color': color.rgb(200, 230, 255), 'value': 25, 'model': 'diamond'},
         'Photon Boots':   {'color': color.rgb(100, 220, 255), 'value': 25, 'model': 'diamond'},
+        'Combo Orb':      {'color': color.rgb(255, 200, 60), 'value': 300, 'model': 'diamond'},
     }
 
     def __init__(self, position, item_type=None):
@@ -5115,6 +5169,8 @@ class Achievement:
         {'id': 'score_5000',     'name': 'Galactic Tycoon',   'desc': 'Reach 5000 score',                        'icon': '👑'},
         {'id': 'mission_5',      'name': 'Mission Runner',    'desc': 'Complete 5 missions',                     'icon': '📋'},
         {'id': 'pulse_wave',     'name': 'Shockwave',         'desc': 'Use Pulse Wave for the first time',        'icon': '🌀'},
+        {'id': 'chrono_field',   'name': 'Time Bender',       'desc': 'Use Chrono Field for the first time',      'icon': '⏳'},
+        {'id': 'combo_orb',      'name': 'Combo Collector',   'desc': 'Pick up a Combo Orb',                      'icon': '🔮'},
         {'id': 'trade',          'name': 'Trader',            'desc': 'Complete a trade with a wandering trader', 'icon': '🤝'},
     ]
 
@@ -5869,16 +5925,21 @@ class EnemyProjectile(Entity):
         # Warning ring timer — drops red ground rings when close to the player
         self.warn_ring_timer = 0.0
 
-    def move(self, dt):
+    def move(self, dt, time_scale=1.0):
         """Move the enemy projectile forward. Returns False when lifetime expires.
 
         Also pulses the glow aura's alpha for a living, threatening visual
         that makes the projectile easy to track as it flies toward the player.
         Accumulates a trail timer so the caller can spawn trail dots at a
         regular interval (matching the player projectile trail system).
+
+        The time_scale parameter allows the Chrono Field to slow enemy
+        projectiles that are inside the bubble — making ranged enemies easier
+        to dodge while the field is active.
         """
-        self.position += self.direction * self.speed * dt
-        self.lifetime -= dt
+        effective_dt = dt * time_scale
+        self.position += self.direction * self.speed * effective_dt
+        self.lifetime -= effective_dt
         # Pulse the aura brightness so the projectile visibly glows
         self._aura_phase += dt * ENEMY_PROJECTILE_AURA_PULSE_SPEED
         pulse = 0.5 + 0.5 * math.sin(self._aura_phase)
@@ -6338,6 +6399,41 @@ class Game:
         self.nova_blast_cooldown = 0.0
         self.nova_blast_rings = []  # Active Nova Blast ring entities
 
+        # ── Chrono Field (Z key) ── A localized time-slow bubble around the
+        # player. Unlike Time Warp (which slows ALL enemies globally), Chrono
+        # Field only affects enemies within a radius. chrono_field_timer counts
+        # down while the bubble is active; chrono_field_cooldown tracks the
+        # ability cooldown. The dome and ring entities are lazily created on
+        # first activation and made visible/invisible as the field toggles.
+        # Affected enemy tracking is done per-frame by distance check in the
+        # enemy update loop, so no separate enemy list is needed.
+        self.chrono_field_timer = 0.0       # >0 while the bubble is active
+        self.chrono_field_cooldown = 0.0    # Cooldown before next use
+        self.chrono_field_dome = None       # Lazily created dome visual
+        self.chrono_field_ring = None       # Lazily created ground ring visual
+        self._chrono_was_on_cooldown = False  # Track cooldown transition for ready flash
+        self.chrono_ready_flash_timer = 0.0   # Flash when Chrono Field becomes ready
+        self.chrono_field_text = Text(
+            text='CHRONO READY [Z]', position=(-0.75, 0.13), scale=0.85,
+            color=color.rgb(160, 100, 255),
+            origin=(-0.5, 0),
+        )
+        self.chrono_cd_bar_bg = Entity(
+            parent=camera.ui, model='quad', color=color.dark_gray,
+            scale=(0.22, 0.012, 1), position=(-0.65, 0.115, 0),
+            origin=(-0.5, 0), visible=False,
+        )
+        self.chrono_cd_bar = Entity(
+            parent=camera.ui, model='quad', color=color.rgb(160, 100, 255),
+            scale=(0, 0.012, 1), position=(-0.65, 0.115, 0),
+            origin=(-0.5, 0), visible=False,
+        )
+        self.chrono_ready_flash = Entity(
+            parent=camera.ui, model='quad', color=color.rgba(160, 100, 255, 0),
+            scale=(0.28, 0.04, 1), position=(-0.65, 0.127, 0),
+            origin=(-0.5, 0), visible=False,
+        )
+
         # ── Speed Boost Energy Trail ── Tracks accumulators for the vibrant
         # green trail and upward sparkles that appear when the Speed Boost
         # power-up is active. The trail_timer counts down between trail particle
@@ -6429,6 +6525,11 @@ class Game:
         self.pulse_ready_flash_timer = 0.0
         self._vacuum_was_on_cooldown = False
         self.vacuum_ready_flash_timer = 0.0
+        # BUG FIX: _nova_was_on_cooldown was missing from __init__ — the readiness
+        # flash used getattr(game, '_nova_was_on_cooldown', False) as a workaround,
+        # but the first cooldown cycle's ready flash was silently skipped because
+        # the attribute didn't exist yet. Now initialized like the other trackers.
+        self._nova_was_on_cooldown = False
 
         # ── Biome Entry Banner ── Tracks the current biome entry banner
         # animation state. When the player crosses into a new biome, the
@@ -7113,6 +7214,16 @@ class Game:
                 destroy(nr)
         self.nova_blast_rings.clear()
 
+        # Destroy Chrono Field visuals
+        if self.chrono_field_dome is not None:
+            if self.chrono_field_dome.enabled:
+                destroy(self.chrono_field_dome)
+            self.chrono_field_dome = None
+        if self.chrono_field_ring is not None:
+            if self.chrono_field_ring.enabled:
+                destroy(self.chrono_field_ring)
+            self.chrono_field_ring = None
+
         # Destroy spawn warning rings
         for sw in self.spawn_warnings:
             if sw and hasattr(sw, 'enabled') and sw.enabled:
@@ -7307,6 +7418,7 @@ class Game:
                       'vacuum_pulse_text', 'vacuum_cd_bar_bg', 'vacuum_cd_bar',
                       'auto_fire_text', 'pulse_ready_flash', 'vacuum_ready_flash',
                       'nova_blast_text', 'nova_cd_bar_bg', 'nova_cd_bar', 'nova_ready_flash',
+                      'chrono_field_text', 'chrono_cd_bar_bg', 'chrono_cd_bar', 'chrono_ready_flash',
                       'radar_bg',
                       'biome_banner_text_ent', 'biome_banner_flash',
                       'boss_spawn_warning_text', 'boss_spawn_flash',
@@ -9432,7 +9544,11 @@ class Game:
             lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
             lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
             if self._is_walkable(lx, lz):
-                drop_pos = Vec3(enemy_pos.x, 1, enemy_pos.z)
+                # BUG FIX: Spawn collectible at the walkability-checked position
+                # (lx, lz), not at enemy_pos — the old code spawned at the enemy's
+                # death position even if that tile is unwalkable (water/lava),
+                # causing collectibles to appear on inaccessible terrain.
+                drop_pos = Vec3(lx, 1, lz)
                 c = Collectible(position=drop_pos)
                 # ── Loot Burst Velocity ── Set outward burst velocity so the
                 # collectible flies from the kill point to its final position.
@@ -9496,12 +9612,15 @@ class Game:
         Args:
             enemy: The dying Plasma Serpent Enemy entity.
         """
-        game.add_message("Plasma Serpent splits!")
-        game._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
-        game.screen_shake = max(game.screen_shake, 0.5)
+        # BUG FIX: This is a Game method but was using the global `game` variable
+        # instead of `self`. If `game` is stale (e.g., during restart transition),
+        # this would operate on the wrong instance. Changed to `self.` for safety.
+        self.add_message("Plasma Serpent splits!")
+        self._spawn_particles(enemy.position, color.rgb(0, 255, 200), count=15)
+        self.screen_shake = max(self.screen_shake, 0.5)
         for seg in enemy.segment_entities:
             seg_pos = Vec3(seg.x, 1, seg.z)
-            if game._is_walkable(seg_pos.x, seg_pos.z):
+            if self._is_walkable(seg_pos.x, seg_pos.z):
                 mini = Enemy(position=seg_pos, enemy_type='Swarm Mite')
                 mini.hp = PLASMA_SERPENT_SCATTER_HP
                 mini.max_hp = PLASMA_SERPENT_SCATTER_HP
@@ -9509,8 +9628,8 @@ class Game:
                 mini.speed = PLASMA_SERPENT_SCATTER_SPEED
                 mini.original_color = color.rgb(0, 200, 160)
                 mini.color = color.rgb(0, 200, 160)
-                game._scale_enemy_to_player_level(mini)
-                game.enemies.append(mini)
+                self._scale_enemy_to_player_level(mini)
+                self.enemies.append(mini)
         # Destroy segment visual entities since they've been replaced by real enemies
         for seg in enemy.segment_entities:
             for child in seg.children:
@@ -10653,6 +10772,50 @@ class Game:
         else:
             self.nova_ready_flash.color = color.rgba(180, 240, 255, 0)
 
+        # ── Chrono Field Cooldown Indicator ── Shows the time-slow bubble ability
+        # cooldown with a progress bar, matching the dash/pulse/vacuum/nova style.
+        if self.chrono_field_cooldown > 0:
+            self.chrono_field_text.text = f'CHRONO: {self.chrono_field_cooldown:.1f}s'
+            self.chrono_field_text.color = color.gray
+            cd_ratio = max(0, 1.0 - (self.chrono_field_cooldown / CHRONO_FIELD_COOLDOWN))
+            self.chrono_cd_bar_bg.visible = True
+            self.chrono_cd_bar.visible = True
+            self.chrono_cd_bar.scale_x = max(0.001, ABILITY_BAR_WIDTH * cd_ratio)
+            fill_r = int(80 + 80 * cd_ratio)
+            fill_g = int(50 + 50 * cd_ratio)
+            fill_b = int(120 + 135 * cd_ratio)
+            if cd_ratio > ABILITY_BAR_ANTICIPATION_THRESHOLD:
+                antic_t = (cd_ratio - ABILITY_BAR_ANTICIPATION_THRESHOLD) / (1.0 - ABILITY_BAR_ANTICIPATION_THRESHOLD)
+                pulse_speed = lerp(ABILITY_BAR_ANTICIPATION_PULSE_MIN, ABILITY_BAR_ANTICIPATION_PULSE_MAX, antic_t)
+                pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+                glow = int(ABILITY_BAR_ANTICIPATION_GLOW * antic_t * pulse)
+                fill_r = min(255, fill_r + glow)
+                fill_g = min(255, fill_g + glow)
+                fill_b = min(255, fill_b + glow)
+            self.chrono_cd_bar.color = color.rgb(fill_r, fill_g, fill_b)
+        elif self.chrono_field_timer > 0:
+            self.chrono_field_text.text = f'CHRONO ACTIVE {self.chrono_field_timer:.1f}s'
+            self.chrono_field_text.color = color.rgb(180, 130, 255)
+            self.chrono_cd_bar_bg.visible = False
+            self.chrono_cd_bar.visible = False
+        else:
+            self.chrono_field_text.text = 'CHRONO READY [Z]'
+            self.chrono_field_text.color = color.rgb(160, 100, 255)
+            self.chrono_cd_bar_bg.visible = False
+            self.chrono_cd_bar.visible = False
+
+        # ── Chrono Field Ready Flash ── Brief purple pulse behind the text when
+        # the cooldown ends, matching the Dash/Pulse/Vacuum/Nova pattern.
+        if self.chrono_ready_flash_timer > 0:
+            self.chrono_ready_flash_timer -= time.dt
+            flash_ratio = max(0, self.chrono_ready_flash_timer / CHRONO_READY_FLASH_DURATION)
+            flash_alpha = int(120 * flash_ratio)
+            self.chrono_ready_flash.color = color.rgba(160, 100, 255, flash_alpha)
+            scale_pulse = 1.0 + 0.15 * flash_ratio
+            self.chrono_ready_flash.scale = (0.28 * scale_pulse, 0.04 * scale_pulse)
+        else:
+            self.chrono_ready_flash.color = color.rgba(160, 100, 255, 0)
+
         # ── Auto-Fire Indicator ── Shows [AUTO] in magenta when auto-fire is on
         if self.auto_fire_enabled:
             self.auto_fire_text.text = '⚡ AUTO-FIRE [X]'
@@ -11637,7 +11800,7 @@ class Game:
                 camera.fov = CAMERA_KILL_ZOOM_FOV
                 self.kill_flash_timer = KILL_FLASH_DURATION
                 self.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
-                self.screen_shake = self._combo_scaled_kill_shake()
+                self.screen_shake = max(self.screen_shake, self._combo_scaled_kill_shake())
                 if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
                     self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
                     self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
@@ -11656,6 +11819,7 @@ class Game:
                 ))
                 self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
@@ -11806,7 +11970,7 @@ class Game:
                 camera.fov = CAMERA_KILL_ZOOM_FOV
                 self.kill_flash_timer = KILL_FLASH_DURATION
                 self.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
-                self.screen_shake = self._combo_scaled_kill_shake()
+                self.screen_shake = max(self.screen_shake, self._combo_scaled_kill_shake())
                 if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
                     self.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
                     self.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
@@ -11825,6 +11989,7 @@ class Game:
                 ))
                 self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
@@ -11885,6 +12050,8 @@ class Game:
             'score_5000':     p.score >= 5000,
             'mission_5':      p.completed_missions >= 5,
             'pulse_wave':     any(a.id == 'pulse_wave' and a.unlocked for a in self.achievements) or self.pulse_wave_cooldown > 0 or bool(self.pulse_wave_rings),
+            'chrono_field':   any(a.id == 'chrono_field' and a.unlocked for a in self.achievements) or self.chrono_field_cooldown > 0 or self.chrono_field_timer > 0,
+            'combo_orb':      any(a.id == 'combo_orb' and a.unlocked for a in self.achievements) or any(c.name == 'Combo Orb' for c in self.collectibles),
             'trade':          self.traded_once,
         }
         for ach in self.achievements:
@@ -12229,11 +12396,115 @@ class Game:
                 self.add_message(f"Nova Blast defeated {enemy.name}!")
                 self.kill_feed.append((self.t, f"✦ {enemy.name}"))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
                 if enemy.is_plasma_serpent:
                     self._handle_plasma_serpent_split(enemy)
+
+    def _activate_chrono_field(self):
+        """Activate the Chrono Field — a localized time-slow bubble around Zorp.
+
+        Unlike Time Warp (which slows ALL enemies globally), Chrono Field only
+        affects enemies within CHRONO_FIELD_RADIUS of the player. This makes it
+        a tactical tool for when you're surrounded but don't want to waste a
+        global slow on distant enemies that aren't a threat. The bubble persists
+        for CHRONO_FIELD_DURATION seconds, during which affected enemies move at
+        CHRONO_FIELD_SLOW_FACTOR of their normal speed. Enemy projectiles
+        entering the bubble are also slowed. A translucent purple dome and
+        ground ring visualize the bubble boundary.
+        """
+        if self.chrono_field_cooldown > 0:
+            return
+        p = self.player
+        self.chrono_field_timer = CHRONO_FIELD_DURATION
+        self.chrono_field_cooldown = CHRONO_FIELD_COOLDOWN
+
+        # ── Create the dome visual ── A translucent purple hemisphere that
+        # visualizes the bubble boundary. Created lazily on first activation
+        # and reused on subsequent uses. The dome pulses gently while active
+        # to feel like a living energy field.
+        if self.chrono_field_dome is None:
+            self.chrono_field_dome = Entity(
+                model='sphere',
+                color=color.rgba(160, 100, 255, CHRONO_FIELD_DOME_ALPHA),
+                scale=CHRONO_FIELD_RADIUS,
+                position=p.position,
+            )
+        self.chrono_field_dome.visible = True
+        self.chrono_field_dome.position = p.position
+        self.chrono_field_dome.scale = CHRONO_FIELD_RADIUS
+
+        # ── Create the ground ring ── A flat purple ring on the ground showing
+        # the area of effect, matching the visual language of all other ground
+        # rings (dash cooldown, threat, combo timer, etc.).
+        if self.chrono_field_ring is None:
+            self.chrono_field_ring = Entity(
+                model='quad',
+                color=color.rgba(160, 100, 255, 100),
+                scale=CHRONO_FIELD_RADIUS * 2,
+                position=(p.x, 0.03, p.z),
+                rotation_x=90,
+            )
+        self.chrono_field_ring.visible = True
+        self.chrono_field_ring.position = (p.x, 0.03, p.z)
+        self.chrono_field_ring.scale = (CHRONO_FIELD_RADIUS * 2, 1, CHRONO_FIELD_RADIUS * 2)
+
+        # Particle burst — purple particles radiate outward on activation
+        for i in range(CHRONO_FIELD_PARTICLE_COUNT):
+            angle = (i / CHRONO_FIELD_PARTICLE_COUNT) * math.pi * 2
+            spread = random.uniform(3, 6)
+            vel = Vec3(
+                math.cos(angle) * spread,
+                random.uniform(1, 4),
+                math.sin(angle) * spread,
+            )
+            cp = Entity(
+                model='sphere',
+                color=color.rgb(
+                    max(0, min(255, int(160 + random.uniform(-30, 40)))),
+                    max(0, min(255, int(100 + random.uniform(-20, 50)))),
+                    255,
+                ),
+                scale=random.uniform(0.12, 0.3),
+                position=p.position + Vec3(0, 1, 0),
+            )
+            self.particles.append((cp, vel, random.uniform(0.4, 0.7)))
+
+        self.add_message("CHRONO FIELD!")
+        self.screen_shake = max(self.screen_shake, CHRONO_FIELD_SCREEN_SHAKE)
+
+    def _maybe_drop_combo_orb(self, kill_pos, combo_count):
+        """Chance to drop a Combo Orb when killing an enemy at a high combo.
+
+        The drop chance scales with the combo count: at the threshold (x10)
+        there's a base 8% chance, increasing by 2% per tier above the threshold,
+        capped at 25%. The orb is a regular Collectible with a special 'Combo Orb'
+        item type that grants bonus XP and score proportional to the combo count.
+        Only called from kill paths when the combo is at or above the threshold.
+        """
+        if combo_count < COMBO_ORB_COMBO_THRESHOLD:
+            return
+        tiers_above = combo_count - COMBO_ORB_COMBO_THRESHOLD
+        drop_chance = min(
+            COMBO_ORB_DROP_CHANCE_MAX,
+            COMBO_ORB_DROP_CHANCE_BASE + tiers_above * COMBO_ORB_DROP_CHANCE_PER_TIER,
+        )
+        if random.random() > drop_chance:
+            return
+        # Drop the Combo Orb at the kill position — uses the existing collectible
+        # system so it integrates with magnetic pull, vacuum pulse, etc.
+        orb = Collectible(position=kill_pos + Vec3(0, 0, 0), item_type='Combo Orb')
+        orb.burst_vel = Vec3(
+            random.uniform(-3, 3),
+            LOOT_BURST_UPWARD,
+            random.uniform(-3, 3),
+        )
+        orb.burst_active = True
+        self.collectibles.append(orb)
+        # Golden sparkle burst to make the orb drop feel special
+        self._spawn_particles(kill_pos + Vec3(0, 1, 0), COMBO_ORB_COLOR, count=8)
 
 
 def game_update():
@@ -12932,7 +13203,7 @@ def game_update():
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                    game.screen_shake = game._combo_scaled_kill_shake()
+                    game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
                     camera.fov = CAMERA_KILL_ZOOM_FOV
@@ -12953,6 +13224,7 @@ def game_update():
                     game._drop_loot(enemy.position, enemy.name)
                     # ── Health fragment drop ──
                     game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                    game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                     # ── Plasma Serpent: Split into mini-enemies on death (dash strike) ──
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
@@ -13475,10 +13747,48 @@ def game_update():
         if game.nova_blast_cooldown < 0:
             game.nova_blast_cooldown = 0
         game._nova_was_on_cooldown = True
-    elif getattr(game, '_nova_was_on_cooldown', False):
+    elif game._nova_was_on_cooldown:  # BUG FIX: now initialized in __init__ — no getattr needed
         # Nova Blast just came off cooldown — trigger readiness flash
         game._nova_was_on_cooldown = False
         game.nova_ready_flash_timer = NOVA_READY_FLASH_DURATION
+
+    # ── Chrono Field cooldown & active timer ── The cooldown counts down like
+    # all other ability cooldowns. The active timer counts down while the time-
+    # slow bubble is active; while > 0, the dome and ring visuals follow the
+    # player and affected enemies are slowed in the enemy update loop. When the
+    # active timer reaches 0, the dome and ring are hidden.
+    if game.chrono_field_cooldown > 0:
+        game.chrono_field_cooldown -= time.dt
+        if game.chrono_field_cooldown < 0:
+            game.chrono_field_cooldown = 0
+        game._chrono_was_on_cooldown = True
+    elif game._chrono_was_on_cooldown:  # already initialized in __init__ — no getattr needed
+        game._chrono_was_on_cooldown = False
+        game.chrono_ready_flash_timer = CHRONO_READY_FLASH_DURATION
+
+    if game.chrono_field_timer > 0:
+        game.chrono_field_timer -= time.dt
+        if game.chrono_field_timer <= 0:
+            game.chrono_field_timer = 0
+            # Hide the dome and ring when the field expires
+            if game.chrono_field_dome is not None:
+                game.chrono_field_dome.visible = False
+            if game.chrono_field_ring is not None:
+                game.chrono_field_ring.visible = False
+        else:
+            # Update dome and ring to follow the player
+            if game.chrono_field_dome is not None and game.chrono_field_dome.visible:
+                game.chrono_field_dome.position = p.position
+                # Gentle pulse for a living energy field feel
+                pulse = 0.5 + 0.5 * math.sin(game.t * 4.0)
+                dome_alpha = int(CHRONO_FIELD_DOME_ALPHA * (0.7 + 0.3 * pulse))
+                game.chrono_field_dome.color = color.rgba(160, 100, 255, dome_alpha)
+                game.chrono_field_dome.scale = CHRONO_FIELD_RADIUS * (1.0 + 0.02 * pulse)
+            if game.chrono_field_ring is not None and game.chrono_field_ring.visible:
+                game.chrono_field_ring.position = (p.x, 0.03, p.z)
+                ring_pulse = 0.5 + 0.5 * math.sin(game.t * 3.0)
+                ring_alpha = int(100 * (0.6 + 0.4 * ring_pulse))
+                game.chrono_field_ring.color = color.rgba(160, 100, 255, ring_alpha)
 
     # ── Vacuum Pulse Active ── While the vacuum pulse is active, pull ALL
     # collectibles within range toward the player at high speed.
@@ -14725,8 +15035,20 @@ def game_update():
             if enemy.pack_aggro_cd > 0:
                 enemy.pack_aggro_cd -= time.dt
             # Chase player
-            # Time Warp slows all enemies
+            # Time Warp slows all enemies globally
             speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
+            # ── Chrono Field ── A localized time-slow bubble around the player.
+            # Unlike Time Warp (global), Chrono Field only affects enemies within
+            # CHRONO_FIELD_RADIUS of the player. The slow stacks multiplicatively
+            # with Time Warp (both can be active simultaneously), Hit Slow, and
+            # Enrage. This makes Chrono Field a tactical precision tool — slow
+            # the enemies right next to you without wasting the effect on distant
+            # threats that aren't an immediate danger.
+            if game.chrono_field_timer > 0:
+                cf_dx = enemy.x - p.x
+                cf_dz = enemy.z - p.z
+                if cf_dx * cf_dx + cf_dz * cf_dz < CHRONO_FIELD_RADIUS * CHRONO_FIELD_RADIUS:
+                    speed_mult *= CHRONO_FIELD_SLOW_FACTOR
             # ── Chase Acceleration Ramp ── While the ramp timer is active,
             # interpolate the chase speed multiplier from ENEMY_CHASE_RAMP_START
             # to 1.0 so the enemy "winds up" into the chase. This makes the
@@ -14988,7 +15310,11 @@ def game_update():
                 if enemy.fuse_active:
                     enemy.fuse_timer -= time.dt
                     # Pulsing red glow as fuse counts down
-                    pulse = 1.0 - (enemy.fuse_timer / VOID_BOMBER_FUSE_TIME)
+                    # BUG FIX: Clamp pulse to [0, 1] — when fuse_timer briefly goes
+                    # negative (dt overshoot before the <= 0 check fires), pulse
+                    # exceeds 1.0 and 50 * (1 - pulse) produces a negative green
+                    # channel, which Ursina clamps to 0 but can cause visual artifacts.
+                    pulse = max(0.0, min(1.0, 1.0 - (enemy.fuse_timer / VOID_BOMBER_FUSE_TIME)))
                     # BUG FIX: pulse_speed used += which accumulated forever, causing
                     # the pulsing to become so fast it appeared constant. Now use game.t
                     # directly for a smooth, time-based pulse effect.
@@ -15091,7 +15417,7 @@ def game_update():
                                     p.gain_xp(xp_gain)
                                     p.score += max(KILL_SCORE_MIN, int(other_enemy.max_hp * combo_score_mult))
                                     # BUG FIX: Void Bomber friendly-fire kills were missing the kill screen shake.
-                                    game.screen_shake = game._combo_scaled_kill_shake()
+                                    game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                                     if is_overkill:
                                         game.damage_numbers.append(DamageNumber(other_enemy.position, VOID_BOMBER_EXPLOSION_DAMAGE // 2, is_kill=True, is_overkill=True))
                                     else:
@@ -15333,10 +15659,13 @@ def game_update():
                     enemy.pull_ring.color = color.rgba(180, 0, 255, ring_alpha)
                     enemy.pull_ring.scale = GRAVITON_PULL_RADIUS * (0.8 + 0.2 * math.sin(game.t * 5))
                     # Pulsing enemy glow
+                    # BUG FIX: Blue channel was min(255, int(255)) — a constant
+                    # no-op. Changed to a pulsing expression matching the red
+                    # channel's dynamic glow, using a sine wave for visual life.
                     enemy.color = color.rgb(
                         min(255, int(180 + 75 * math.sin(game.t * 10))),
                         0,
-                        min(255, int(255))
+                        min(255, int(180 + 75 * math.sin(game.t * 10 + 2.0)))
                     )
                     if enemy.graviton_pull_timer <= 0:
                         enemy.graviton_pull_active = False
@@ -15401,6 +15730,12 @@ def game_update():
                 enemy.wander_dir = enemy.wander_dir / wd_len
             # Time Warp slow factor applies to wander too
             wander_speed_mult = TIME_WARP_SLOW_FACTOR if game.time_warp_timer > 0 else 1.0
+            # ── Chrono Field ── Also slows wandering enemies within the bubble.
+            if game.chrono_field_timer > 0:
+                cf_wdx = enemy.x - p.x
+                cf_wdz = enemy.z - p.z
+                if cf_wdx * cf_wdx + cf_wdz * cf_wdz < CHRONO_FIELD_RADIUS * CHRONO_FIELD_RADIUS:
+                    wander_speed_mult *= CHRONO_FIELD_SLOW_FACTOR
             # ── Hit Slow ── Also applies while wandering so a slowed enemy
             # moves slowly even when not chasing the player.
             if enemy.hit_slow_timer > 0:
@@ -15904,6 +16239,7 @@ def game_update():
 
     # ── Update Projectiles ──
     for proj in game.projectiles[:]:
+        proj_destroyed = False  # BUG FIX: Track if projectile was destroyed by enemy hit — prevents fall-through to interception/out-of-world checks on a dead entity
         alive = proj.move(time.dt, combo_count=game.combo_count)
         if not alive:
             # ── Projectile Expiry Fizz ── When a shot's lifetime expires without
@@ -16177,7 +16513,7 @@ def game_update():
                                 p.gain_xp(aoe_xp_gain)
                                 p.score += max(KILL_SCORE_MIN, int(nearby_enemy.max_hp * combo_score_mult))
                                 # BUG FIX: AOE kills were missing the kill screen shake.
-                                game.screen_shake = game._combo_scaled_kill_shake()
+                                game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                                 if is_overkill:
                                     game.damage_numbers.append(DamageNumber(nearby_enemy.position, aoe_dmg, is_kill=True, is_overkill=True))
                                 else:
@@ -16295,7 +16631,7 @@ def game_update():
                             game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                         p.gain_xp(xp_gain)
                         p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                        game.screen_shake = game._combo_scaled_kill_shake()
+                        game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                         game.hit_stop_timer = HIT_STOP_KILL_DURATION
                         game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
                         camera.fov = CAMERA_KILL_ZOOM_FOV
@@ -16326,6 +16662,7 @@ def game_update():
                         destroy(proj)
                         if proj in game.projectiles:
                             game.projectiles.remove(proj)
+                        proj_destroyed = True  # BUG FIX: prevent fall-through to interception/out-of-world checks
                         # BUG FIX: Must break here to exit the enemy loop.
                         # Without this, execution falls through to the
                         # out-of-world check (line ~12976) which accesses
@@ -16398,7 +16735,7 @@ def game_update():
                                 game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                             p.gain_xp(xp_gain)
                             p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                            game.screen_shake = game._combo_scaled_kill_shake()
+                            game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                             # BUG FIX: Subsequent piercing kills were missing hit-stop,
                             # FOV punch, and kill flash — present in all other kill paths.
                             game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -16424,7 +16761,9 @@ def game_update():
                             if enemy.is_plasma_serpent:
                                 game._handle_plasma_serpent_split(enemy)
                         break  # Exit enemy loop — projectile continues
-                    break  # Exit enemy loop (projectile destroyed)
+                # BUG FIX: Line below was dead code — both the max-pierce and
+                # continue-piercing branches above already break out of the enemy
+                # loop, so this second break was unreachable. Removed for clarity.
                 # BUG FIX: If this is a piercing projectile hitting an ALREADY-pierced
                 # enemy (still overlapping from a previous frame), skip it — don't
                 # fall through to the normal hit code which would destroy the projectile
@@ -16437,6 +16776,7 @@ def game_update():
                 destroy(proj)
                 if proj in game.projectiles:
                     game.projectiles.remove(proj)
+                proj_destroyed = True  # BUG FIX: prevent fall-through to interception/out-of-world checks
                 if killed:
                     # ── Boss Death Slow-Motion ── If the killed enemy is a
                     # boss-tier (max_hp >= BOSS_DEATH_HP_THRESHOLD), trigger
@@ -16554,7 +16894,7 @@ def game_update():
                         game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                     p.gain_xp(xp_gain)
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
-                    game.screen_shake = game._combo_scaled_kill_shake()
+                    game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                     # Hit-stop: brief freeze on kills for satisfying impact
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
                     # Camera FOV punch: brief zoom-in on kill for cinematic impact
@@ -16572,6 +16912,7 @@ def game_update():
                     # Drop loot — count scales with enemy toughness
                     game._drop_loot(enemy.position, enemy.name)
                     game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                    game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                     # Kill burst: radial ring of particles for satisfying, explosive kill feedback
                     # Scaled with enemy max HP — tougher enemies produce bigger death explosions
@@ -16594,6 +16935,13 @@ def game_update():
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
                 break
+
+        # BUG FIX: If the projectile was destroyed by an enemy hit (normal or
+        # max-pierce), skip the interception and out-of-world checks below.
+        # Without this, the code reads proj.position/.x/.z on an already-destroyed
+        # entity, potentially causing a double-destroy and stale-position reads.
+        if proj_destroyed:
+            continue
 
         # ── Projectile Interception ── Check if this player bolt passes close
         # enough to any enemy projectile to shoot it down. This gives the player
@@ -16639,7 +16987,17 @@ def game_update():
 
     # ── Update Enemy Projectiles ──
     for eproj in game.enemy_projectiles[:]:
-        alive = eproj.move(time.dt)
+        # ── Chrono Field Projectile Slow ── Enemy projectiles within the
+        # Chrono Field bubble are slowed, making ranged attacks easier to
+        # dodge while the time-slow field is active. The slow only applies
+        # if the projectile is currently inside the bubble radius.
+        eproj_time_scale = 1.0
+        if game.chrono_field_timer > 0:
+            ep_dx = eproj.x - p.x
+            ep_dz = eproj.z - p.z
+            if ep_dx * ep_dx + ep_dz * ep_dz < CHRONO_FIELD_RADIUS * CHRONO_FIELD_RADIUS:
+                eproj_time_scale = CHRONO_FIELD_PROJECTILE_SLOW
+        alive = eproj.move(time.dt, time_scale=eproj_time_scale)
         if not alive:
             # ── Enemy Projectile Expiry Fizz ── When an enemy shot's lifetime
             # expires without hitting the player, emit a small orange fizz
@@ -17043,7 +17401,7 @@ def game_update():
                     # Pulse Wave kills worth less score at high combo tiers.
                     p.score += max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                     # BUG FIX: Pulse Wave kills were missing the kill screen shake.
-                    game.screen_shake = game._combo_scaled_kill_shake()
+                    game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                     # BUG FIX: Pulse Wave kills were missing hit-stop, FOV punch,
                     # and kill flash — present in all other primary kill paths.
                     game.hit_stop_timer = HIT_STOP_KILL_DURATION
@@ -17380,9 +17738,23 @@ def game_update():
                 else:
                     actual_heal = 0
                 # Convert excess healing to overheal (capped at OVERHEAL_MAX)
+                # ── Adrenaline Overheal Conversion ── When Adrenaline Rush is
+                # active (triggered at low HP), excess healing is converted to
+                # overheal at ADRENALINE_OVERHEAL_CONVERSION_RATE (1.5x) instead
+                # of the normal 1:1 rate. This means a 30 HP heal when 10 HP
+                # from max gives 10 HP to real health + 30 HP overheal (20
+                # excess * 1.5 = 30) instead of just 20 overheal. This rewards
+                # the risk of playing at low HP by making clutch adrenaline
+                # moments more survivable — overhealing becomes a tactical
+                # advantage rather than a waste.
                 overheal_gained = 0
                 if heal_remaining > 0 and p.overheal < OVERHEAL_MAX:
-                    overheal_gained = min(heal_remaining, OVERHEAL_MAX - p.overheal)
+                    if p.adrenaline_timer > 0:
+                        # Boosted conversion during adrenaline
+                        boosted_heal = int(heal_remaining * ADRENALINE_OVERHEAL_CONVERSION_RATE)
+                        overheal_gained = min(boosted_heal, OVERHEAL_MAX - p.overheal)
+                    else:
+                        overheal_gained = min(heal_remaining, OVERHEAL_MAX - p.overheal)
                     p.overheal += overheal_gained
                     p.overheal_decay_delay = OVERHEAL_DECAY_DELAY
                 # Build the message describing what happened
@@ -17391,6 +17763,8 @@ def game_update():
                     msg_parts.append(f"+{actual_heal} HP")
                 if overheal_gained > 0:
                     msg_parts.append(f"+{overheal_gained} Overheal")
+                    if p.adrenaline_timer > 0:
+                        msg_parts.append("⚡ Adrenaline Boost!")
                 if msg_parts:
                     game.add_message(f"Health Potion! {' | '.join(msg_parts)}")
                 else:
@@ -17470,6 +17844,26 @@ def game_update():
                 game.add_message(f"Photon Boots! Double-dash for {PHOTON_BOOTS_DURATION:.0f}s!")
                 game._spawn_particles(col.position, color.rgb(100, 220, 255), count=16)
                 game.screen_shake = max(game.screen_shake, 0.2)
+            elif col.name == 'Combo Orb':
+                # ── Combo Orb ── Grants bonus XP and score proportional to the
+                # current combo count. The higher your combo when you pick it
+                # up, the more valuable the orb — rewarding sustained combat
+                # streaks with a tangible collectible payoff. The orb is only
+                # dropped at combo x10+, so picking one up means you were on
+                # a roll. XP and score are also multiplied by the monolith XP
+                # buff if active, for consistency with other XP sources.
+                current_combo = max(1, game.combo_count)
+                combo_xp = COMBO_ORB_XP_BASE + current_combo * COMBO_ORB_XP_PER_COMBO
+                combo_score = COMBO_ORB_SCORE_BASE + current_combo * COMBO_ORB_SCORE_PER_COMBO
+                xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                combo_xp = int(combo_xp * xp_mult)
+                p.gain_xp(combo_xp)
+                p.score += combo_score
+                game.add_message(f"⚡ COMBO ORB! +{combo_xp} XP | +{combo_score} Score! (Combo x{current_combo})")
+                game._spawn_particles(col.position, COMBO_ORB_COLOR, count=20)
+                game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 220, 100), count=12)
+                game.damage_numbers.append(DamageNumber(p.position, combo_xp, is_kill=False))
+                game.screen_shake = max(game.screen_shake, 0.25)
             else:
                 p.add_item(col.name)
                 # ── Pickup Streak Score Multiplier ── When on a pickup streak of
@@ -18240,6 +18634,18 @@ def game_update():
         game._activate_nova_blast()
     elif not held_keys['c']:
         game._c_held = False
+
+    # ── Chrono Field (Z key) ── Press Z to create a localized time-slow bubble
+    # around Zorp. Unlike Time Warp (a pickup that slows ALL enemies globally),
+    # Chrono Field only affects enemies within a radius — a tactical tool for
+    # when you're surrounded but don't want to waste a global slow. The bubble
+    # persists for 4 seconds, during which affected enemies move at 25% speed.
+    # 18-second cooldown makes it a regular but not spammy tactical option.
+    if held_keys['z'] and not getattr(game, '_z_held', False):
+        game._z_held = True
+        game._activate_chrono_field()
+    elif not held_keys['z']:
+        game._z_held = False
 
     # ── Trader respawn timer ──
     game.trader_spawn_timer -= time.dt
