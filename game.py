@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.48.0"
+VERSION = "2.48.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -18646,26 +18646,32 @@ def game_update():
                 p.speed_boost_timer = SPEED_BOOST_DURATION
                 game.add_message(f"Speed Boost! {SPEED_BOOST_DURATION}s of speed!")
                 game._spawn_particles(col.position, color.rgb(50, 255, 50), count=12)
+                game.screen_shake = max(game.screen_shake, 0.15)
             elif col.name == 'Shield Crystal':
                 p.shield_timer = SHIELD_DURATION
                 game.add_message(f"Shield Crystal! {SHIELD_DURATION}s of protection!")
                 game._spawn_particles(col.position, color.rgb(100, 200, 255), count=12)
+                game.screen_shake = max(game.screen_shake, 0.15)
             elif col.name == 'Weapon Upgrade':
                 p.weapon_upgrade_timer = WEAPON_UPGRADE_DURATION
                 game.add_message(f"Weapon Upgrade! Spread shot for {WEAPON_UPGRADE_DURATION}s!")
                 game._spawn_particles(col.position, color.rgb(255, 150, 0), count=12)
+                game.screen_shake = max(game.screen_shake, 0.18)
             elif col.name == 'Magnet Core':
                 p.magnet_timer = MAGNET_DURATION
                 game.add_message(f"Magnet Core! Item pull boosted for {MAGNET_DURATION}s!")
                 game._spawn_particles(col.position, color.rgb(200, 50, 255), count=12)
+                game.screen_shake = max(game.screen_shake, 0.15)
             elif col.name == 'Time Warp':
                 game.time_warp_timer = TIME_WARP_DURATION
                 game.add_message(f"Time Warp! All enemies slowed for {TIME_WARP_DURATION}s!")
                 game._spawn_particles(col.position, color.rgb(150, 220, 255), count=15)
+                game.screen_shake = max(game.screen_shake, 0.2)
             elif col.name == 'Star Fruit':
                 p.float_timer = STAR_FRUIT_FLOAT_DURATION
                 game.add_message(f"Star Fruit! Walk over water/lava for {STAR_FRUIT_FLOAT_DURATION:.0f}s!")
                 game._spawn_particles(col.position, color.rgb(255, 255, 100), count=15)
+                game.screen_shake = max(game.screen_shake, 0.15)
             elif col.name == 'XP Orb':
                 # XP Orb grants bonus XP that scales with distance from spawn center
                 spawn_center = WORLD_SIZE // 2 * TILE_SCALE
@@ -18788,6 +18794,23 @@ def game_update():
                     p_score_mult = PICKUP_STREAK_SCORE_MULT_TIER1
                 p.score += int(col.value * p_score_mult)
                 p.gain_xp(max(1, col.value // 10 + int(p.level * COLLECT_XP_LEVEL_BONUS_PER_LEVEL)))
+                # ── Power-Up Activation Burst ── When a power-up is grabbed, a
+                # brief burst of the power-up's own color spawns at Zorp's
+                # position (in addition to the item-position burst above), so
+                # the power-up feels like it's "infusing" Zorp rather than just
+                # disappearing at the pickup location. The burst count scales
+                # with the power-up's rarity tier, matching the regular
+                # collectible rarity-scaled burst — so a rare Shield Crystal
+                # produces a bigger activation burst than an uncommon Speed
+                # Boost. This makes rare power-ups feel more rewarding to grab
+                # and gives every power-up pickup a clear body-level visual.
+                pu_rarity = RARITY_TIER.get(col.name, 'common')
+                pu_particle_mult = RARITY_PICKUP_PARTICLE_MULT.get(pu_rarity, 1.0)
+                pu_burst_count = min(int(10 * pu_particle_mult), MAX_PARTICLES - len(game.particles))
+                if pu_burst_count > 0:
+                    ir, ig, ib = _c255_color(col.item_color)
+                    game._spawn_particles(p.position + Vec3(0, 1, 0),
+                                          color.rgb(ir, ig, ib), count=pu_burst_count)
             # ── Floating Score Popup ── A small "+N" number in the item's
             # color floats up from the pickup location, making the score gain
             # feel tangible and immediate instead of just silently rolling up
