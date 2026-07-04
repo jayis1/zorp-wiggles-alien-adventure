@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.47.1"
+VERSION = "2.48.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -2997,6 +2997,62 @@ COLLECTION_RUSH_DURATION = 4.0    # How long the speed boost lasts
 COLLECTION_RUSH_AURA_COLOR = color.rgba(100, 255, 200, 50)  # Mint-cyan aura
 COLLECTION_RUSH_AURA_SCALE = 1.6  # Scale of the rush aura sphere
 
+# ─── Golden Elite Enemies ─────────────────────────────────────────────────────
+# A small fraction of spawned enemies are "elite" variants — golden-tinted
+# versions with significantly increased HP, damage, and loot drops. Elites are
+# visually distinct (golden shimmer aura + brighter color) and reward the
+# player with bonus XP and score for the extra effort of taking them down.
+# This adds variety and excitement to combat — occasionally you spot a shiny
+# golden enemy in the distance and know it's worth prioritizing for the bonus
+# rewards, similar to the existing bounty mark but as an intrinsic enemy
+# property rather than a temporary marker.
+ELITE_SPAWN_CHANCE = 0.06        # 6% of spawned enemies become elite
+ELITE_HP_MULT = 2.5              # Elite HP multiplier (2.5x normal HP)
+ELITE_DAMAGE_MULT = 1.5         # Elite damage multiplier (1.5x normal damage)
+ELITE_LOOT_BONUS = 2             # Extra loot drops on elite death
+ELITE_XP_BONUS = 60              # Bonus XP for killing an elite
+ELITE_SCORE_BONUS = 150          # Bonus score for killing an elite
+ELITE_PARTICLE_COUNT = 20        # Golden particles on elite death
+ELITE_SCREEN_SHAKE = 0.35        # Screen shake on elite death
+ELITE_AURA_COLOR = color.rgba(255, 215, 0, 60)  # Golden aura
+ELITE_AURA_SCALE = 1.5            # Elite aura sphere scale multiplier
+ELITE_TINT_COLOR = color.rgb(255, 220, 100)     # Golden tint mixed into enemy color
+
+# ─── Enemy Wave Events ────────────────────────────────────────────────────────
+# Periodically, a "wave" of 4-7 enemies spawns simultaneously from multiple
+# directions around the player, creating dynamic combat encounters instead
+# of the steady trickle of one-at-a-time spawns. The wave is announced with
+# a HUD message and screen shake, making it feel like an ambush or coordinated
+# attack. Waves spawn on a timer (every WAVE_INTERVAL_MIN to MAX seconds)
+# and are separate from the normal spawn timer — they're an additional
+# combat pressure source that breaks up the monotony of trickle spawning.
+WAVE_INTERVAL_MIN = 50.0         # Min seconds between wave events
+WAVE_INTERVAL_MAX = 90.0          # Max seconds between wave events
+WAVE_SIZE_MIN = 4                 # Min enemies per wave
+WAVE_SIZE_MAX = 7                 # Max enemies per wave
+WAVE_SPAWN_RADIUS_MIN = 28        # Min distance from player for wave spawns
+WAVE_SPAWN_RADIUS_MAX = 45        # Max distance from player for wave spawns
+WAVE_ANNOUNCE_DURATION = 2.5      # How long the wave announcement stays visible
+WAVE_SCREEN_SHAKE = 0.3           # Screen shake on wave start
+WAVE_PARTICLE_COUNT = 15          # Red particles per wave spawn point
+WAVE_COLOR = color.rgb(255, 80, 80)  # Red for the announcement
+
+# ─── XP Surge ──────────────────────────────────────────────────────────────────
+# When the player gains XP rapidly from multiple sources (kills, collectibles,
+# milestones) within a short window, an "XP SURGE" multiplier activates —
+# granting bonus XP on each gain while the surge is active. The surge builds
+# with each XP gain and decays over time, so sustained rapid progression
+# keeps the multiplier high. This rewards diverse playstyles — mixing kills,
+# collection, and exploration — since any XP source contributes to the surge.
+# A HUD indicator shows the current surge multiplier and timer bar.
+XP_SURGE_WINDOW = 3.0            # Seconds between XP gains to maintain surge
+XP_SURGE_THRESHOLD = 3           # XP gains needed to activate the surge
+XP_SURGE_MULT_BASE = 1.1         # Base multiplier (10% bonus XP per surge step)
+XP_SURGE_MULT_PER_STEP = 0.05    # Multiplier increase per additional XP gain
+XP_SURGE_MULT_MAX = 2.0          # Max XP surge multiplier (2x XP)
+XP_SURGE_DISPLAY_LIFETIME = 3.0  # How long the HUD indicator stays visible
+XP_SURGE_COLOR = color.rgb(180, 255, 100)  # Bright lime-green for the indicator
+
 # ─── Last Stand ────────────────────────────────────────────────────────────────
 # When a lethal hit would kill the player while at a high combo (x10+), the hit
 # is absorbed and the player is left at 1 HP with brief invulnerability — a
@@ -3448,7 +3504,20 @@ class Player(Entity):
         self.last_stand_trigger_flag = False  # Set by take_damage, checked by game_update
 
     def gain_xp(self, amount):
-        """Add XP and level up if threshold reached. Sets level_up_pending flag."""
+        """Add XP and level up if threshold reached. Sets level_up_pending flag.
+
+        ── XP Surge ── The amount is first passed through the game's XP surge
+        system (_register_xp_gain), which tracks rapid XP gains and applies a
+        multiplier when the player is earning XP quickly from multiple sources.
+        The boosted amount is what actually gets added to the XP bar.
+        """
+        # ── XP Surge ── Apply the surge multiplier if the game is tracking
+        # rapid XP gains. We access the module-level 'game' global since Player
+        # doesn't hold a Game reference. On the very first frame before Game()
+        # is initialized, the global won't exist yet — guard with getattr.
+        _g = globals().get('game', None)
+        if _g is not None and hasattr(_g, '_register_xp_gain'):
+            amount = _g._register_xp_gain(amount)
         self.xp += amount
         self.xp_gained_flag = True  # Signal HUD to flash the XP bar
         while self.xp >= self.xp_to_next:
@@ -3901,6 +3970,17 @@ class Enemy(Entity):
         self.alert_indicator_timer = 0.0      # How long the alert "!" stays visible
         self.spawn_time = 0.0                  # Set by game_update when spawned — tracks spawn age for grace period
         self._attack_windup_active = False    # True while attack windup telegraph is visually applying
+
+        # ── Golden Elite ── When True, this enemy is a golden elite variant
+        # with increased HP, damage, and loot. Set by game_update after
+        # spawning (ELITE_SPAWN_CHANCE). The elite aura entity is created
+        # lazily on first frame of the enemy update loop. Elite enemies get
+        # a golden tint mixed into their original color and a shimmering
+        # golden aura sphere, making them visually distinct from normal
+        # enemies at a glance — you can spot an elite across the map and
+        # know it's worth the extra effort for the bonus rewards.
+        self.is_elite = False
+        self.elite_aura = None                 # Lazily created golden aura sphere
 
         # ── Pack Aggro Cooldown ── Cooldown before this enemy can chain-aggro
         # nearby idle enemies when it detects the player. Prevents every frame
@@ -6630,6 +6710,32 @@ class Game:
         # List of active meteor ground ring entities (expanding impact rings)
         self.meteor_rings = []
 
+        # ── Enemy Wave Event Timer ── Tracks the countdown to the next wave
+        # spawn. When it reaches 0, a group of 4-7 enemies spawns
+        # simultaneously from multiple directions around the player,
+        # creating dynamic combat encounters. The wave_announce_timer
+        # controls the HUD warning text display.
+        self.wave_timer = random.uniform(WAVE_INTERVAL_MIN, WAVE_INTERVAL_MAX)
+        self.wave_announce_timer = 0.0
+        self.wave_announce_text = ''
+
+        # ── XP Surge ── Tracks rapid XP gains within a time window. When
+        # XP_SURGE_THRESHOLD XP gains happen within XP_SURGE_WINDOW seconds,
+        # an XP surge multiplier activates — granting bonus XP on each gain.
+        # The surge builds with each gain (higher multiplier) and decays
+        # when gains stop. xp_surge_count tracks gains in the current window,
+        # xp_surge_timer counts down the window, and xp_surge_display_timer
+        # controls the HUD indicator visibility.
+        self.xp_surge_count = 0
+        self.xp_surge_timer = 0.0
+        self.xp_surge_display_timer = 0.0
+        self.xp_surge_mult = 1.0             # Current effective XP multiplier
+
+        # ── Elite Kill Counter ── Tracks total golden elite enemies killed
+        # this run, displayed on the death screen for a satisfying "how many
+        # rare enemies did I take down?" stat.
+        self.elite_kills = 0
+
         # ── Enemy Slayer Tracking ── Tracks consecutive kills of the same
         # enemy type within a time window. When SLAYER_THRESHOLD same-type
         # kills happen within SLAYER_WINDOW seconds, a "SLAYER!" bonus is
@@ -7314,6 +7420,11 @@ class Game:
             if enemy.hit_slow_ring.enabled:
                 destroy(enemy.hit_slow_ring)
             enemy.hit_slow_ring = None
+        # Clean up elite golden aura if present
+        if hasattr(enemy, 'elite_aura') and enemy.elite_aura is not None:
+            if enemy.elite_aura.enabled:
+                destroy(enemy.elite_aura)
+            enemy.elite_aura = None
 
     def _cleanup(self):
         """Clean up all game entities for a restart. Destroys terrain, enemies,
@@ -8169,6 +8280,7 @@ class Game:
             f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
             f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
             f'Best Flawless Streak: x{self.max_flawless}   Best Rapid Chain: x{self.max_rapid_chain}',
+            f'Golden Elites Slain: {self.elite_kills}',
             f'Last Stand Used: {"Yes" if p.last_stand_used else "No"}',
             f'Missions Completed: {p.completed_missions}   Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
@@ -8217,6 +8329,9 @@ class Game:
                     # Distance-based difficulty scaling for initial spawn
                     enemy_type = self._pick_enemy_type(dist)
                     e = Enemy(position=Vec3(x, 1, z), enemy_type=enemy_type)
+                    # Apply elite status to some initial enemies too
+                    if random.random() < ELITE_SPAWN_CHANCE:
+                        self._apply_elite_to_enemy(e)
                     self.enemies.append(e)
 
     def _pick_enemy_type(self, distance_from_spawn: float) -> str:
@@ -8961,6 +9076,32 @@ class Game:
             z=0.7,  # Above other overlays for maximum visibility
         )
 
+        # ── Enemy Wave Announcement ── Large red text that appears when a
+        # wave of enemies spawns simultaneously around the player. Pops in
+        # with a scale animation and fades out over the announcement duration.
+        self.wave_announce_text_ent = Text(
+            text='', position=(0, -0.08), origin=(0, 0),
+            scale=2.8, color=color.rgba(255, 80, 80, 0),
+            visible=False,
+        )
+
+        # ── XP Surge HUD ── Displays the current XP surge multiplier when
+        # the player is gaining XP rapidly. Shows "XP SURGE xN.N" in
+        # lime-green with a timer bar showing time remaining before the
+        # surge resets. Positioned below the flawless streak indicator.
+        self.xp_surge_text = Text(
+            text='', position=(0.35, 0.04), scale=1.3, color=XP_SURGE_COLOR,
+            visible=False, origin=(0, 0),
+        )
+        self.xp_surge_bar_bg = Entity(
+            model='quad', color=color.rgba(80, 80, 80, 180), scale=(0.18, 0.01),
+            position=(0.35, 0.005), parent=camera.ui, origin=(0, 0), visible=False,
+        )
+        self.xp_surge_bar = Entity(
+            model='quad', color=XP_SURGE_COLOR, scale=(0.18, 0.01),
+            position=(0.35, 0.005), parent=camera.ui, origin=(0, 0), visible=False, z=-0.01,
+        )
+
         # ── HP Bar Segment Tick Marks ── Thin dark vertical lines at 25%,
         # 50%, and 75% positions on the HP bar, giving the player a quick
         # visual gauge for reading health at a glance. Positioned relative
@@ -9700,6 +9841,180 @@ class Game:
         """
         ring = HealPulseRing(position=position)
         self.heal_pulse_rings.append(ring)
+
+    def _apply_elite_to_enemy(self, enemy):
+        """Convert a newly spawned enemy into a golden elite variant.
+
+        Elite enemies have increased HP (2.5x), damage (1.5x), and drop
+        extra loot. They get a golden tint mixed into their original color
+        and a shimmering golden aura sphere. The elite aura entity is created
+        here so it's ready for the update loop to animate.
+
+        Args:
+            enemy: The Enemy entity to convert to elite (modified in-place).
+        """
+        enemy.is_elite = True
+        enemy.hp = int(enemy.hp * ELITE_HP_MULT)
+        enemy.max_hp = enemy.hp
+        enemy.damage = int(enemy.damage * ELITE_DAMAGE_MULT)
+        # Mix golden tint into the enemy's original color
+        orig_r, orig_g, orig_b = _c255_color(enemy.original_color)
+        gold_r, gold_g, gold_b = _c255_color(ELITE_TINT_COLOR)
+        # 50% blend toward gold
+        tinted = color.rgb(
+            int(orig_r * 0.5 + gold_r * 0.5),
+            int(orig_g * 0.5 + gold_g * 0.5),
+            int(orig_b * 0.5 + gold_b * 0.5),
+        )
+        enemy.color = tinted
+        enemy.original_color = tinted
+        # Create the golden aura sphere (pulsing animation handled in update loop)
+        enemy.elite_aura = Entity(
+            model='sphere', color=ELITE_AURA_COLOR,
+            scale=enemy.original_scale * ELITE_AURA_SCALE,
+            parent=enemy, visible=True,
+        )
+
+    def _trigger_enemy_wave(self):
+        """Spawn a wave of enemies simultaneously from multiple directions.
+
+        A group of WAVE_SIZE_MIN to WAVE_SIZE_MAX enemies spawns at evenly
+        spaced angles around the player at WAVE_SPAWN_RADIUS_MIN to MAX
+        distance. Each spawn point gets a warning ring (matching the normal
+        spawn system) so the player has time to react. The wave is announced
+        with a HUD message and screen shake, making it feel like a coordinated
+        ambush — dramatically different from the normal trickle of one-at-a-time
+        spawns.
+        """
+        p = self.player
+        wave_size = random.randint(WAVE_SIZE_MIN, WAVE_SIZE_MAX)
+        base_angle = random.uniform(0, math.pi * 2)
+        spawned = 0
+        for i in range(wave_size):
+            # Evenly space enemies around the player with slight randomization
+            angle = base_angle + (i / wave_size) * math.pi * 2 + random.uniform(-0.2, 0.2)
+            dist = random.uniform(WAVE_SPAWN_RADIUS_MIN, WAVE_SPAWN_RADIUS_MAX)
+            ex = p.x + math.cos(angle) * dist
+            ez = p.z + math.sin(angle) * dist
+            ex = max(5, min(ex, (WORLD_SIZE - 5) * TILE_SCALE))
+            ez = max(5, min(ez, (WORLD_SIZE - 5) * TILE_SCALE))
+            if not self._is_walkable(ex, ez):
+                continue
+            # Check max active enemies
+            alive_count = len([e for e in self.enemies if e.alive or e.dying])
+            pending_count = len(self.spawn_warnings)
+            if alive_count + pending_count >= MAX_ACTIVE_ENEMIES:
+                break
+            # Spawn warning ring (same system as normal spawns)
+            warning = SpawnWarningRing(position=Vec3(ex, 0, ez))
+            warning.spawn_x = ex
+            warning.spawn_z = ez
+            self.spawn_warnings.append(warning)
+            # Spawn portal vortex
+            spawn_biome = self._get_biome_at(ex, ez)
+            spawn_biome_color = BIOME_COLORS.get(spawn_biome, C_GRASS)
+            vortex = SpawnPortalVortex(position=Vec3(ex, 0, ez), biome_color=spawn_biome_color)
+            self.spawn_vortices.append(vortex)
+            # Red particles at each spawn point
+            self._spawn_particles(Vec3(ex, 1, ez), WAVE_COLOR, count=WAVE_PARTICLE_COUNT)
+            spawned += 1
+        # Announce the wave
+        if spawned > 0:
+            self.wave_announce_timer = WAVE_ANNOUNCE_DURATION
+            self.wave_announce_text = f"⚠ ENEMY WAVE! {spawned} enemies incoming!"
+            self.wave_announce_text_ent.text = self.wave_announce_text
+            self.wave_announce_text_ent.visible = True
+            self.wave_announce_text_ent.color = color.rgba(255, 80, 80, 255)
+            self.wave_announce_text_ent.scale = 2.8
+            self.screen_shake = max(self.screen_shake, WAVE_SCREEN_SHAKE)
+            self.add_message(f"⚠ ENEMY WAVE! {spawned} enemies spawning around you!")
+
+    def _register_xp_gain(self, base_xp_amount):
+        """Track an XP gain for the XP Surge system and return the boosted amount.
+
+        When XP is gained rapidly from multiple sources (kills, collectibles,
+        milestones), an XP Surge multiplier activates — granting bonus XP on
+        each gain. The surge builds with each gain and decays over time.
+
+        This method is called from gain_xp() and returns the multiplied XP
+        amount. It tracks the count of XP gains within the surge window and
+        computes the multiplier. When the surge is active (count >=
+        XP_SURGE_THRESHOLD), the multiplier is applied and the HUD indicator
+        is shown.
+
+        Args:
+            base_xp_amount: The base XP amount before surge multiplication.
+
+        Returns:
+            The XP amount after applying the surge multiplier (if active).
+        """
+        # Reset window if expired
+        if self.xp_surge_timer <= 0:
+            self.xp_surge_count = 0
+        # Increment count and refresh window
+        self.xp_surge_count += 1
+        self.xp_surge_timer = XP_SURGE_WINDOW
+        # Compute multiplier if threshold is met
+        if self.xp_surge_count >= XP_SURGE_THRESHOLD:
+            steps_above = self.xp_surge_count - XP_SURGE_THRESHOLD
+            mult = min(
+                XP_SURGE_MULT_MAX,
+                XP_SURGE_MULT_BASE + steps_above * XP_SURGE_MULT_PER_STEP,
+            )
+            self.xp_surge_mult = mult
+            self.xp_surge_display_timer = XP_SURGE_DISPLAY_LIFETIME
+            return int(base_xp_amount * mult)
+        return base_xp_amount
+
+    def _apply_elite_kill_bonus(self, enemy):
+        """Award bonus XP, score, and particles for killing a golden elite enemy.
+
+        Called at every kill site after the normal kill rewards are applied.
+        If the killed enemy was an elite (is_elite == True), awards bonus XP
+        and score, spawns golden particles, triggers screen shake, and shows
+        a floating "ELITE SLAIN!" damage number. Also drops extra loot.
+
+        Args:
+            enemy: The enemy that was just killed. If not elite, this is a no-op.
+        """
+        if not getattr(enemy, 'is_elite', False):
+            return
+        p = self.player
+        self.elite_kills += 1
+        monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+        elite_xp = int(ELITE_XP_BONUS * monolith_xp_mult)
+        p.gain_xp(elite_xp)
+        p.score += ELITE_SCORE_BONUS
+        self._spawn_particles(enemy.position + Vec3(0, 1, 0),
+                              color.rgb(255, 215, 0), count=ELITE_PARTICLE_COUNT)
+        self._spawn_particles(enemy.position + Vec3(0, 2, 0),
+                              color.rgb(255, 240, 100), count=10)
+        self.screen_shake = max(self.screen_shake, ELITE_SCREEN_SHAKE)
+        self.add_message(f"★ ELITE SLAIN! +{elite_xp} XP +{ELITE_SCORE_BONUS} score!")
+        self.damage_numbers.append(
+            DamageNumber(enemy.position, elite_xp, is_flawless=True)
+        )
+        # Drop extra loot from elite
+        loot_range = ENEMY_LOOT_DROPS.get(enemy.name, (2, 4))
+        extra_drops = random.randint(loot_range[0], loot_range[1])
+        for _ in range(extra_drops):
+            angle = random.uniform(0, math.pi * 2)
+            spread = LOOT_DROP_FAN_SPREAD * random.uniform(0.7, 1.2)
+            lx = enemy.position.x + math.cos(angle) * spread
+            lz = enemy.position.z + math.sin(angle) * spread
+            lx = max(1, min(lx, (WORLD_SIZE - 1) * TILE_SCALE))
+            lz = max(1, min(lz, (WORLD_SIZE - 1) * TILE_SCALE))
+            if self._is_walkable(lx, lz):
+                c = Collectible(position=Vec3(lx, 1, lz))
+                burst_dir = Vec3(math.cos(angle), 0, math.sin(angle))
+                burst_speed = LOOT_BURST_SPEED * random.uniform(0.7, 1.3)
+                c.burst_vel = Vec3(
+                    burst_dir.x * burst_speed,
+                    LOOT_BURST_UPWARD * random.uniform(0.7, 1.2),
+                    burst_dir.z * burst_speed,
+                )
+                c.burst_active = True
+                self.collectibles.append(c)
 
     def _drop_loot(self, enemy_pos, enemy_name):
         """Drop loot collectibles in a fanned arc around the enemy's death position.
@@ -10795,6 +11110,38 @@ class Game:
             self.flawless_display_timer -= time.dt
         else:
             self.flawless_text.visible = False
+
+        # ── XP Surge HUD ── Display the XP surge multiplier when the player
+        # is gaining XP rapidly. Shows "XP SURGE xN.N" in lime-green with a
+        # timer bar showing time remaining before the surge window resets.
+        if self.xp_surge_count >= XP_SURGE_THRESHOLD and self.xp_surge_display_timer > 0:
+            self.xp_surge_text.visible = True
+            self.xp_surge_bar_bg.visible = True
+            self.xp_surge_bar.visible = True
+            # Pulse for visual energy
+            surge_pulse = 0.85 + 0.15 * math.sin(self.t * 8)
+            surge_alpha = min(1.0, self.xp_surge_display_timer / 0.5)
+            self.xp_surge_text.color = color.rgba(
+                180, 255, 100, int(255 * surge_alpha * surge_pulse)
+            )
+            # Scale slightly with surge count
+            surge_scale = 1.3 + min(self.xp_surge_count * 0.02, 0.3)
+            self.xp_surge_text.scale = surge_scale
+            self.xp_surge_text.text = f'⚡ XP SURGE x{self.xp_surge_mult:.1f}'
+            # Timer bar shows the surge window remaining
+            surge_bar_frac = max(0, self.xp_surge_timer / XP_SURGE_WINDOW)
+            self.xp_surge_bar.scale_x = 0.18 * surge_bar_frac
+            # Color shifts from green (full) to yellow (low) to red (almost empty)
+            if surge_bar_frac > 0.5:
+                self.xp_surge_bar.color = XP_SURGE_COLOR
+            elif surge_bar_frac > 0.25:
+                self.xp_surge_bar.color = color.rgb(255, 255, 100)
+            else:
+                self.xp_surge_bar.color = color.rgb(255, 100, 100)
+        else:
+            self.xp_surge_text.visible = False
+            self.xp_surge_bar_bg.visible = False
+            self.xp_surge_bar.visible = False
 
         # Weapon upgrade indicator
         if p.weapon_upgrade_timer > 0:
@@ -12177,6 +12524,7 @@ class Game:
                 else:
                     self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True))
                 self._drop_loot(enemy.position, enemy.name)
+                self._apply_elite_kill_bonus(enemy)
                 self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                 self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                 self.enemy_death_rings.append(EnemyDeathRing(
@@ -12349,6 +12697,7 @@ class Game:
                 else:
                     self.damage_numbers.append(DamageNumber(enemy.position, dmg, is_kill=True))
                 self._drop_loot(enemy.position, enemy.name)
+                self._apply_elite_kill_bonus(enemy)
                 self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                 self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                 self.enemy_death_rings.append(EnemyDeathRing(
@@ -12753,6 +13102,7 @@ class Game:
                     self.damage_numbers.append(DamageNumber(enemy.position, nova_dmg, is_kill=True))
                 # Loot drop, particles, death ring, kill feed
                 self._drop_loot(enemy.position, enemy.name)
+                self._apply_elite_kill_bonus(enemy)
                 self._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
                 self._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                 self.enemy_death_rings.append(EnemyDeathRing(
@@ -13595,6 +13945,7 @@ def game_update():
                     game.add_message(f"Dash Strike! Defeated {enemy.name}!")
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
+                    game._apply_elite_kill_bonus(enemy)
                     # ── Health fragment drop ──
                     game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                     game._maybe_drop_combo_orb(enemy.position, game.combo_count)
@@ -15838,6 +16189,7 @@ def game_update():
                                     # Without them, Void Bomber chain kills give no rewards
                                     # beyond XP/score and no visual death feedback.
                                     game._drop_loot(other_enemy.position, other_enemy.name)
+                                    game._apply_elite_kill_bonus(other_enemy)
                                     game._spawn_particles(other_enemy.position, other_enemy.original_color, count=PARTICLE_KILL_COUNT)
                                     game._spawn_kill_burst(other_enemy.position, other_enemy.original_color, enemy_max_hp=other_enemy.max_hp, shatter_model=getattr(other_enemy, 'model_name', 'sphere'))
                                     game.enemy_death_rings.append(EnemyDeathRing(
@@ -16357,6 +16709,19 @@ def game_update():
             enemy.hit_flash -= time.dt
             if enemy.hit_flash < 0:
                 enemy.hit_flash = 0
+
+        # ── Golden Elite Aura Pulse ── Elite enemies have a shimmering
+        # golden aura sphere that pulses in alpha and scale, making them
+        # instantly identifiable at a glance — you can spot an elite across
+        # the map and know it's worth the extra effort for bonus rewards.
+        if enemy.is_elite and enemy.elite_aura is not None and enemy.elite_aura.enabled:
+            elite_pulse = 0.5 + 0.5 * math.sin(game.t * 5.0 + (id(enemy) % 628) / 100.0)
+            enemy.elite_aura.color = color.rgba(
+                255, 215, 0,
+                int(60 * (0.5 + 0.5 * elite_pulse))
+            )
+            elite_scale = enemy.original_scale * ELITE_AURA_SCALE * (1.0 + 0.06 * elite_pulse)
+            enemy.elite_aura.scale = elite_scale
 
         # ── Enraged Color Tint ── When the enemy is enraged (below 25% HP),
         # apply a red color shift on top of its original color. This only
@@ -16970,6 +17335,7 @@ def game_update():
                                 game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                                 game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
                                 game._drop_loot(nearby_enemy.position, nearby_enemy.name)
+                                game._apply_elite_kill_bonus(nearby_enemy)
                                 game._maybe_drop_health_fragment(nearby_enemy.position, nearby_enemy.max_hp)
                                 # BUG FIX: AOE kills were missing _maybe_drop_combo_orb —
                                 # every other primary kill path (projectile, dash, chain
@@ -17082,6 +17448,7 @@ def game_update():
                         else:
                             game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                         game._drop_loot(enemy.position, enemy.name)
+                        game._apply_elite_kill_bonus(enemy)
                         game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                         # BUG FIX: First piercing crit kill was missing
                         # _maybe_drop_combo_orb — every other primary kill path
@@ -17198,6 +17565,7 @@ def game_update():
                             else:
                                 game.damage_numbers.append(DamageNumber(enemy.position, damage, is_kill=True))
                             game._drop_loot(enemy.position, enemy.name)
+                            game._apply_elite_kill_bonus(enemy)
                             game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                             # BUG FIX: Subsequent piercing kills were missing
                             # _maybe_drop_combo_orb — every other primary kill
@@ -17368,6 +17736,7 @@ def game_update():
                     # spawn in unreachable water/lava tiles.
                     # Drop loot — count scales with enemy toughness
                     game._drop_loot(enemy.position, enemy.name)
+                    game._apply_elite_kill_bonus(enemy)
                     game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                     game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                     game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
@@ -17887,6 +18256,7 @@ def game_update():
                         game.damage_numbers.append(DamageNumber(enemy.position, pulse_dmg, is_kill=True))
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
+                    game._apply_elite_kill_bonus(enemy)
                     game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                     # BUG FIX: Pulse Wave kills were missing _maybe_drop_combo_orb —
                     # every other primary kill path (projectile, dash, chain lightning,
@@ -18774,6 +19144,44 @@ def game_update():
         game.meteor_timer = random.uniform(METEOR_SHOWER_INTERVAL_MIN, METEOR_SHOWER_INTERVAL_MAX)
         game._trigger_meteor_shower()
 
+    # ── Enemy Wave Event Timer ── Periodically spawns a group of enemies
+    # simultaneously from multiple directions around the player, creating
+    # dynamic combat encounters that break up the steady trickle of
+    # one-at-a-time spawns. The wave is announced with a HUD message and
+    # screen shake, making it feel like a coordinated ambush.
+    game.wave_timer -= time.dt
+    if game.wave_timer <= 0:
+        game.wave_timer = random.uniform(WAVE_INTERVAL_MIN, WAVE_INTERVAL_MAX)
+        game._trigger_enemy_wave()
+    # Wave announcement fade-out
+    if game.wave_announce_timer > 0:
+        game.wave_announce_timer -= time.dt
+        # Pop-in scale animation: start at 3.2x scale, shrink to 2.8x over duration
+        pop_progress = 1.0 - (game.wave_announce_timer / WAVE_ANNOUNCE_DURATION)
+        if pop_progress < 0.15:
+            # Quick scale-up pop
+            game.wave_announce_text_ent.scale = 2.8 + (0.15 - pop_progress) * 3.0
+        else:
+            game.wave_announce_text_ent.scale = 2.8
+        # Fade out in the last 0.5 seconds
+        alpha = max(0, min(1.0, game.wave_announce_timer / 0.5))
+        game.wave_announce_text_ent.color = color.rgba(255, 80, 80, int(255 * alpha))
+        if game.wave_announce_timer <= 0:
+            game.wave_announce_text_ent.visible = False
+
+    # ── XP Surge Timer & Display ── The surge timer counts down; when it
+    # expires, the surge count resets. The display timer controls how long
+    # the HUD indicator stays visible after the last XP gain.
+    if game.xp_surge_timer > 0:
+        game.xp_surge_timer -= time.dt
+        if game.xp_surge_timer <= 0:
+            game.xp_surge_timer = 0
+            game.xp_surge_count = 0
+    if game.xp_surge_display_timer > 0:
+        game.xp_surge_display_timer -= time.dt
+        if game.xp_surge_display_timer <= 0:
+            game.xp_surge_display_timer = 0
+
     # ── Spawn Timer ──
     game.spawn_timer += time.dt
     # Dynamic spawn interval: gets faster as player levels up (min 3s)
@@ -18833,6 +19241,13 @@ def game_update():
             e = Enemy(position=Vec3(ex, 1, ez), enemy_type=enemy_type)
             game._scale_enemy_to_player_level(e)
             e.spawn_time = game.t  # Track spawn time for grace period
+            # ── Golden Elite ── A small fraction of spawned enemies become
+            # golden elite variants with increased HP, damage, and loot. The
+            # elite check happens after level scaling so the elite multiplier
+            # stacks on top of the level-scaled stats, making elite enemies
+            # genuinely tough regardless of player level.
+            if random.random() < ELITE_SPAWN_CHANCE:
+                game._apply_elite_to_enemy(e)
             game.enemies.append(e)
             # ── Boss Spawn Warning ── When a boss-tier enemy (Plasma Drake)
             # materializes, trigger a dramatic full-screen warning so the
