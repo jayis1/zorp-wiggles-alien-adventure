@@ -6808,6 +6808,14 @@ class Game:
         # but the first cooldown cycle's ready flash was silently skipped because
         # the attribute didn't exist yet. Now initialized like the other trackers.
         self._nova_was_on_cooldown = False
+        # BUG FIX: nova_ready_flash_timer was missing from __init__ — unlike
+        # pulse_ready_flash_timer and vacuum_ready_flash_timer (both initialized
+        # above), this one was only ever set via game.nova_ready_flash_timer =
+        # NOVA_READY_FLASH_DURATION at line 14477. The _update_hud code used
+        # getattr(self, 'nova_ready_flash_timer', 0) as a workaround, but the
+        # first-frame transition logic was inconsistent. Now initialized like
+        # the other ability ready flash timers.
+        self.nova_ready_flash_timer = 0.0
 
         # ── Biome Entry Banner ── Tracks the current biome entry banner
         # animation state. When the player crosses into a new biome, the
@@ -11386,7 +11394,10 @@ class Game:
 
         # ── Nova Blast Ready Flash ── Brief white-cyan pulse behind the nova
         # text when the cooldown ends, matching the Dash/Pulse/Vacuum pattern.
-        if getattr(self, 'nova_ready_flash_timer', 0) > 0:
+        # BUG FIX: Now that nova_ready_flash_timer is initialized in __init__,
+        # the getattr fallback is no longer needed — use direct access like the
+        # other ability ready flash timers (pulse, vacuum, chrono).
+        if self.nova_ready_flash_timer > 0:
             self.nova_ready_flash_timer -= time.dt
             flash_ratio = max(0, self.nova_ready_flash_timer / NOVA_READY_FLASH_DURATION)
             flash_alpha = int(120 * flash_ratio)
@@ -15096,7 +15107,11 @@ def game_update():
     # the smooth rotation already used by enemies. This makes Zorp feel more
     # organic and alive as he turns, rather than snapping like a turret.
     hit = mouse.world_point
-    if hit:
+    # BUG FIX: Use `is not None` instead of truthiness check — a Vec3(0,0,0)
+    # (world origin) is falsy in Ursina's Vec3 implementation but is a valid
+    # hit point. The old `if hit:` would skip facing updates when the mouse
+    # ray hits exactly at world origin (unlikely but technically a bug).
+    if hit is not None:
         face_dir = Vec3(hit.x - p.x, 0, hit.z - p.z)
         if face_dir.length() > 0.1:
             p.facing = face_dir.normalized()
@@ -18812,8 +18827,12 @@ def game_update():
             # ── Crosshair Pickup Pulse ── The crosshair briefly contracts inward
             # and tints to the item's color — a "got it!" squeeze on the HUD that
             # complements the shooting recoil expansion with a rewarding contraction.
-            self.crosshair_pickup_pulse = 1.0
-            self.crosshair_pickup_pulse_color = _c255_color(col.item_color)
+            # BUG FIX: Was `self.` but game_update() is a module-level function
+            # with no `self` parameter — this would raise NameError on every
+            # collectible pickup, crashing the game. Changed to `game.` which
+            # is the global Game instance used throughout game_update().
+            game.crosshair_pickup_pulse = 1.0
+            game.crosshair_pickup_pulse_color = _c255_color(col.item_color)
             # ── Pickup Scale Punch ── Trigger a brief character-model pop so
             # pickups feel tactile on Zorp himself, not just via particles and
             # ground rings. The punch composes cleanly with other scale
