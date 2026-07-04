@@ -1328,6 +1328,21 @@ PHOTON_BOOTS_COLOR = color.rgb(100, 220, 255)
 # the intended behavior. The threshold constant described gating logic that
 # was never implemented.
 
+# ── Photon Boots Dash Energy Trail ── While Photon Boots are active and the
+# player is dashing (which happens almost continuously since the boots reset
+# the dash cooldown every frame), a vibrant cyan-blue energy trail with
+# upward sparkles follows Zorp — making continuous dashing visually spectacular
+# and distinct from the normal dash afterimage. The trail spawns more
+# frequently and with brighter colors than the normal movement trail, and
+# occasional upward sparkles give the impression of Zorp's boots leaving
+# energy contrails as he blinks across the world at high speed.
+PHOTON_BOOTS_TRAIL_INTERVAL = 0.03       # Seconds between trail particles while photon-dashing
+PHOTON_BOOTS_TRAIL_SCALE = 0.35          # Size of trail particles
+PHOTON_BOOTS_TRAIL_LIFETIME = 0.45        # How long each trail particle lives
+PHOTON_BOOTS_SPARKLE_INTERVAL = 0.08      # Seconds between upward sparkle bursts
+PHOTON_BOOTS_SPARKLE_COUNT = 2            # Sparkles per burst
+PHOTON_BOOTS_SPARKLE_RISE_SPEED = 3.5     # How fast upward sparkles rise
+
 # ─── Shard Golem (New Enemy) ──────────────────────────────────────────────────
 # A slow, tanky enemy that periodically raises a crystal shield, becoming
 # temporarily invulnerable to frontal shots. Players must either dash through
@@ -1559,6 +1574,16 @@ OVERKILL_DAMAGE_THRESHOLD = 25  # Minimum excess damage to trigger Overkill
 OVERKILL_XP_BONUS = 20            # Bonus XP for overkill
 OVERKILL_SCREEN_SHAKE = 0.3      # Screen shake on overkill
 OVERKILL_PARTICLE_COUNT = 15     # Particle burst on overkill
+# ── Overkill Screen Edge Glow ── When an overkill triggers (25+ excess
+# damage), a dedicated orange screen edge flash overlay pulses briefly,
+# making massive overkill hits feel explosively satisfying at the screen
+# level — complementing the existing screen shake, orange particles, and
+# "OVERKILL!" announcement with a visceral full-screen visual. The flash
+# is orange (distinct from the white kill flash and red berserk flash) so
+# the player can instantly tell that the hit was an overkill, not just a
+# normal kill. The flash fades smoothly over the duration.
+OVERKILL_FLASH_DURATION = 0.25          # How long the orange flash stays visible
+OVERKILL_FLASH_MAX_ALPHA = 65           # Max alpha of the overkill flash overlay
 # ── Overkill Surge ── When the overkill damage exceeds OVERKILL_SURGE_THRESHOLD
 # (50+ excess damage), a guaranteed chain lightning arcs from the killed enemy
 # to nearby enemies — bypassing the normal combo requirement and chance roll.
@@ -2788,6 +2813,24 @@ BOSS_SPAWN_WARNING_SCALE = 3.5          # Scale of the boss warning text
 BOSS_SPAWN_FLASH_DURATION = 0.6         # How long the red screen flash lasts
 BOSS_SPAWN_FLASH_MAX_ALPHA = 80         # Peak alpha of the boss spawn flash
 BOSS_SPAWN_SCREEN_SHAKE = 0.4           # Screen shake intensity on boss spawn
+
+# ─── Enemy Proximity Warning Ring ──────────────────────────────────────────────
+# When an enemy is within close melee range of the player (ENEMY_ATTACK_RANGE
+# plus a small buffer), a small pulsing red ring appears at the enemy's base,
+# making adjacent threats immediately readable. This gives the player instant
+# at-a-glance awareness of which enemies are close enough to hit them — you
+# don't need to study each enemy's distance or wait for the attack windup
+# telegraph; the red ring is a persistent "this one is RIGHT NEXT TO YOU"
+# indicator. The ring is subtle (low alpha) and only appears for enemies
+# within the danger zone, so it doesn't clutter the screen during normal
+# ranged combat — it's specifically for when enemies are in melee range and
+# about to strike. The ring pulses to draw the eye and composes cleanly with
+# the existing enemy HP bar and alert systems.
+ENEMY_PROXIMITY_RING_RANGE = 3.5        # Distance threshold for showing the ring
+ENEMY_PROXIMITY_RING_RADIUS = 1.2       # Base radius of the ring (world units)
+ENEMY_PROXIMITY_RING_ALPHA = 90          # Base alpha of the ring
+ENEMY_PROXIMITY_RING_PULSE_SPEED = 6.0   # Pulse speed of the ring
+ENEMY_PROXIMITY_RING_PULSE_AMOUNT = 0.15  # Scale pulse amount (fraction of base)
 
 # ─── HP Bar Segment Tick Marks ────────────────────────────────────────────────
 # Subtle vertical tick marks on the HP bar at 25%, 50%, and 75% positions,
@@ -4132,6 +4175,23 @@ class Enemy(Entity):
         eye_y = 0.3 if info['model'] == 'sphere' else 0.4
         self.eye_l = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(-0.25, eye_y, -0.5))
         self.eye_r = Entity(model='sphere', color=color.red, scale=0.3, parent=self, position=(0.25, eye_y, -0.5))
+
+        # ── Proximity Warning Ring ── A small red ring at the enemy's base
+        # that becomes visible when the enemy is within close melee range of
+        # the player. This makes adjacent threats immediately readable — you
+        # can see at a glance which enemies are close enough to hit you
+        # without needing to study distances. The ring is a flat quad (like
+        # the ground shadow and glow ring) positioned just above the ground
+        # and hidden by default. It's toggled visible/hidden by the enemy
+        # update loop based on distance to the player.
+        self.proximity_ring = Entity(
+            model='quad',
+            color=color.rgba(255, 30, 30, 0),
+            scale=ENEMY_PROXIMITY_RING_RADIUS * 2,
+            position=(self.x, 0.08, self.z),
+            rotation_x=90,
+            visible=False,
+        )
 
         # Type-specific decorations
         decor = info['decor']
@@ -6671,6 +6731,15 @@ class Game:
         self._speed_boost_trail_timer = 0.0
         self._speed_boost_sparkle_timer = 0.0
 
+        # ── Photon Boots Dash Energy Trail ── Accumulators for the vibrant
+        # cyan-blue trail and upward sparkles that appear while Photon Boots
+        # are active and the player is dashing. Since Photon Boots reset the
+        # dash cooldown every frame, the player can dash continuously — this
+        # trail makes that continuous dashing visually spectacular, distinct
+        # from the normal dash afterimage and the Speed Boost trail.
+        self._photon_boots_trail_timer = 0.0
+        self._photon_boots_sparkle_timer = 0.0
+
         # Auto-fire toggle (X key) — continuous shooting without holding mouse
         self.auto_fire_enabled = False
 
@@ -7314,6 +7383,21 @@ class Game:
         )
         self.heal_flash_timer = 0.0
 
+        # ── Overkill Screen Edge Glow ── A dedicated orange screen flash
+        # overlay that pulses when an overkill triggers (25+ excess damage).
+        # Distinct from the white kill flash and red berserk flash — the
+        # orange color instantly communicates "massive hit!" at the screen
+        # level, complementing the existing screen shake and particles.
+        self.overkill_flash = Entity(
+            parent=camera.ui,
+            model='quad',
+            color=color.rgba(255, 100, 0, 0),
+            scale=2.0,
+            position=(0, 0),
+            z=0.5,
+        )
+        self.overkill_flash_timer = 0.0
+
         # Crosshair recoil — expands briefly on each shot for a dynamic aim feel
         self.crosshair_recoil = 0.0  # 1.0 = just fired, decays to 0
         # Camera shoot recoil kick — decays from 1.0 to 0; applied as a backward
@@ -7433,6 +7517,15 @@ class Game:
             if enemy.elite_aura.enabled:
                 destroy(enemy.elite_aura)
             enemy.elite_aura = None
+        # BUG FIX: Clean up proximity warning ring — it's a standalone entity
+        # (no parent=self) created in Enemy.__init__, so it does NOT auto-destroy
+        # when the enemy is destroyed. Without this, every enemy death/restart
+        # leaked a quad entity into the scene, accumulating over time and
+        # degrading performance in long sessions.
+        if hasattr(enemy, 'proximity_ring') and enemy.proximity_ring is not None:
+            if enemy.proximity_ring.enabled:
+                destroy(enemy.proximity_ring)
+            enemy.proximity_ring = None
 
     def _cleanup(self):
         """Clean up all game entities for a restart. Destroys terrain, enemies,
@@ -7731,7 +7824,7 @@ class Game:
                       'ground_reticle', 'facing_arrow',
                       'last_stand_text', 'cornered_beast_text',
                       'bounty_announce_text',
-                      'berserk_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
+                      'berserk_flash', 'overkill_flash'):  # BUG FIX: berserk_flash was missing from cleanup — it's a standalone camera.ui overlay (not parented to player), so it leaked on restart.
             ent = getattr(self, attr, None)
             if ent and hasattr(ent, 'enabled'):
                 destroy(ent)
@@ -10536,6 +10629,22 @@ class Game:
         else:
             self.heal_flash.color = color.rgba(80, 255, 120, 0)
 
+        # ── Overkill Screen Edge Glow ── When an overkill triggers (25+
+        # excess damage), a dedicated orange screen flash overlay pulses
+        # briefly, making massive overkill hits feel explosively satisfying
+        # at the screen level. The orange color is distinct from the white
+        # kill flash and red berserk flash, so the player can instantly tell
+        # that the hit was an overkill. The flash decays smoothly over the
+        # duration using an ease-out curve for a punchy flash-then-fade feel.
+        if self.overkill_flash_timer > 0:
+            self.overkill_flash_timer -= time.dt
+            flash_ratio = max(0, self.overkill_flash_timer / OVERKILL_FLASH_DURATION)
+            # Ease-out: brighter at the start, quick fade
+            flash_alpha = int(OVERKILL_FLASH_MAX_ALPHA * flash_ratio ** 1.5)
+            self.overkill_flash.color = color.rgba(255, 100, 0, flash_alpha)
+        else:
+            self.overkill_flash.color = color.rgba(255, 100, 0, 0)
+
         # XP bar — defensive: guard against division by zero
         xp_ratio = p.xp / p.xp_to_next if p.xp_to_next > 0 else 0
         self.xp_bar.scale_x = 0.4 * xp_ratio
@@ -12507,6 +12616,10 @@ class Game:
                     self.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                     self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                     self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                    # orange screen flash for a visceral "massive hit!" cue.
+                    self.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                    self.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                 if getattr(enemy, 'enraged', False):
                     exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                     xp_gain += exec_xp
@@ -12680,6 +12793,10 @@ class Game:
                     self.add_message(f"OVERKILL! +{ok_xp} bonus XP!")
                     self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                     self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                    # orange screen flash for a visceral "massive hit!" cue.
+                    self.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                    self.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                 if getattr(enemy, 'enraged', False):
                     exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                     xp_gain += exec_xp
@@ -13082,6 +13199,10 @@ class Game:
                     self.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                     self._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                     self.screen_shake = max(self.screen_shake, OVERKILL_SCREEN_SHAKE)
+                    # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                    # orange screen flash for a visceral "massive hit!" cue.
+                    self.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                    self.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                     # BUG FIX: Nova Blast kills were missing _overkill_surge() —
                     # the primary projectile and fireball AOE paths both call it
                     # when overkill damage exceeds the threshold. Nova Blast is a
@@ -13923,6 +14044,10 @@ def game_update():
                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                         game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                        # orange screen flash for a visceral "massive hit!" cue.
+                        game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                        game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                         # ── Overkill Surge ── Massive overkill triggers guaranteed chain lightning
                         if overkill_amount >= OVERKILL_SURGE_THRESHOLD:
                             game._overkill_surge(enemy.position, overkill_amount)
@@ -15100,6 +15225,57 @@ def game_update():
                     )
                     game.particles.append((sparkle, vel, 0.5))
 
+    # ── Photon Boots Dash Energy Trail ── While Photon Boots are active and
+    # the player is dashing, a vibrant cyan-blue energy trail with upward
+    # sparkles follows Zorp — making continuous dashing visually spectacular.
+    # Since Photon Boots reset the dash cooldown every frame, the player can
+    # chain dashes back-to-back. This trail is distinct from the normal dash
+    # afterimage (which is a faint sphere) and the Speed Boost trail (which
+    # is green) — the cyan-blue color matches the Photon Boots aura, making
+    # it immediately clear that the trail is from the boots, not from a
+    # normal dash or speed boost. The trail spawns more frequently and with
+    # brighter, larger particles than the normal movement trail, and upward
+    # sparkles give the impression of Zorp's boots leaving energy contrails.
+    if p.photon_boots_timer > 0 and p.dash_timer > 0:
+        # Trail particles — bright cyan-blue, larger than normal trail
+        game._photon_boots_trail_timer -= time.dt
+        if game._photon_boots_trail_timer <= 0 and len(game.particles) < MAX_PARTICLES:
+            game._photon_boots_trail_timer = PHOTON_BOOTS_TRAIL_INTERVAL
+            trail_particle = Entity(
+                model='sphere',
+                color=color.rgba(100, 220, 255, 200),
+                scale=PHOTON_BOOTS_TRAIL_SCALE,
+                position=Vec3(p.x, p.y - 0.2, p.z),
+            )
+            game.particles.append((trail_particle, Vec3(0, 0, 0), PHOTON_BOOTS_TRAIL_LIFETIME))
+        # Upward sparkles — occasional cyan-blue sparkles rising from Zorp
+        game._photon_boots_sparkle_timer -= time.dt
+        if game._photon_boots_sparkle_timer <= 0 and len(game.particles) < MAX_PARTICLES:
+            game._photon_boots_sparkle_timer = PHOTON_BOOTS_SPARKLE_INTERVAL
+            for _ in range(PHOTON_BOOTS_SPARKLE_COUNT):
+                if len(game.particles) >= MAX_PARTICLES:
+                    break
+                sparkle = Entity(
+                    model='sphere',
+                    color=color.rgb(
+                        max(0, min(255, int(100 + random.uniform(-30, 50)))),
+                        max(0, min(255, int(220 + random.uniform(-30, 30)))),
+                        255,
+                    ),
+                    scale=random.uniform(0.08, 0.16),
+                    position=Vec3(
+                        p.x + random.uniform(-0.5, 0.5),
+                        p.y + random.uniform(-0.2, 0.3),
+                        p.z + random.uniform(-0.5, 0.5),
+                    ),
+                )
+                vel = Vec3(
+                    random.uniform(-0.5, 0.5),
+                    PHOTON_BOOTS_SPARKLE_RISE_SPEED + random.uniform(-0.5, 1.0),
+                    random.uniform(-0.5, 0.5),
+                )
+                game.particles.append((sparkle, vel, 0.5))
+
     # Face mouse
     # ── Smooth Player Facing ── The facing *vector* updates instantly (so
     # shooting direction is always accurate to the cursor), but the model's
@@ -16181,6 +16357,10 @@ def game_update():
                                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                                         game._spawn_particles(other_enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                                        # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                                        # orange screen flash for a visceral "massive hit!" cue.
+                                        game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                                        game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                                     if getattr(other_enemy, 'enraged', False):
                                         exec_xp = int((EXECUTION_XP_BONUS_BASE + other_enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                                         xp_gain += exec_xp
@@ -17049,6 +17229,29 @@ def game_update():
                 enemy.ground_shadow.scale = max(0.01, enemy.original_scale * 2.0 * shadow_scale_ratio)
             enemy.update_hp_bar()
 
+            # ── Enemy Proximity Warning Ring ── When the enemy is within close
+            # melee range of the player, show a pulsing red ring at its base
+            # for instant "this one is right next to you!" awareness. The ring
+            # only appears for enemies within ENEMY_PROXIMITY_RING_RANGE, so it
+            # doesn't clutter the screen during ranged combat. The ring pulses
+            # in scale and alpha to draw the eye, composes cleanly with the
+            # existing ground shadow and HP bar, and is hidden during the spawn
+            # grace period (enemies that just materialized shouldn't show a
+            # proximity ring until they're "awake"). The ring position tracks
+            # the enemy's XZ position each frame.
+            if spawn_age >= ENEMY_SPAWN_GRACE_PERIOD and dist_to_player < ENEMY_PROXIMITY_RING_RANGE:
+                enemy.proximity_ring.visible = True
+                enemy.proximity_ring.x = enemy.x
+                enemy.proximity_ring.z = enemy.z
+                # Pulsing animation — scale and alpha pulse in sync
+                pulse = 0.5 + 0.5 * math.sin(game.t * ENEMY_PROXIMITY_RING_PULSE_SPEED)
+                ring_scale = ENEMY_PROXIMITY_RING_RADIUS * 2 * (1.0 + ENEMY_PROXIMITY_RING_PULSE_AMOUNT * pulse)
+                enemy.proximity_ring.scale = (ring_scale, 1, ring_scale)
+                ring_alpha = int(ENEMY_PROXIMITY_RING_ALPHA * (0.6 + 0.4 * pulse))
+                enemy.proximity_ring.color = color.rgba(255, 30, 30, ring_alpha)
+            else:
+                enemy.proximity_ring.visible = False
+
     # ── Update Projectiles ──
     for proj in game.projectiles[:]:
         proj_destroyed = False  # BUG FIX: Track if projectile was destroyed by enemy hit — prevents fall-through to interception/out-of-world checks on a dead entity
@@ -17315,6 +17518,10 @@ def game_update():
                                     game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                                     game._spawn_particles(nearby_enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                                     game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                                    # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                                    # orange screen flash for a visceral "massive hit!" cue.
+                                    game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                                    game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                                 if getattr(nearby_enemy, 'enraged', False):
                                     exec_xp = int((EXECUTION_XP_BONUS_BASE + nearby_enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                                     aoe_xp_gain += exec_xp
@@ -17443,6 +17650,10 @@ def game_update():
                             game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                             game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                             game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                        # orange screen flash for a visceral "massive hit!" cue.
+                        game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                        game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                         if getattr(enemy, 'enraged', False):
                             exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                             xp_gain += exec_xp
@@ -17556,6 +17767,10 @@ def game_update():
                                 game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                                 game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                                 game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                                # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                                # orange screen flash for a visceral "massive hit!" cue.
+                                game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                                game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                             if getattr(enemy, 'enraged', False):
                                 exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                                 xp_gain += exec_xp
@@ -17710,6 +17925,10 @@ def game_update():
                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                         game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                        # orange screen flash for a visceral "massive hit!" cue.
+                        game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                        game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                         # ── Overkill Surge ── If the overkill damage exceeds the
                         # surge threshold (50+), trigger a guaranteed chain
                         # lightning surge from the killed enemy to nearby enemies.
@@ -18241,6 +18460,10 @@ def game_update():
                         game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
                         game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
                         game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                        # ── Overkill Screen Edge Glow ── Trigger the dedicated
+                        # orange screen flash for a visceral "massive hit!" cue.
+                        game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                        game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
                     if getattr(enemy, 'enraged', False):
                         exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
                         xp_gain += exec_xp
