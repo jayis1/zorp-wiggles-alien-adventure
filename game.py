@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.48.1"
+VERSION = "2.49.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -544,6 +544,13 @@ PROJECTILE_COMBO_WARM_MAX = 0.55      # Max lerp toward gold (0=none, 1=full gol
 
 # ─── Projectile Trail ────────────────────────────────────────────────────────
 PROJECTILE_TRAIL_INTERVAL = 0.03  # Seconds between trail dot spawns
+# ── Projectile Trail Distance LOD ── Trail dots are only spawned for
+# projectiles within this distance (in world units) of the player. Beyond
+# this range the trail dots are too small to see and just create unnecessary
+# entity overhead. Stored as a squared value for cheap distance comparison
+# without sqrt. Matches the AI_CULL_RANGE for enemy behavior culling.
+PROJECTILE_TRAIL_LOD_RANGE = 50.0  # Max distance for trail spawning
+PROJECTILE_TRAIL_LOD_RANGE_SQ = PROJECTILE_TRAIL_LOD_RANGE ** 2  # Pre-squared
 PROJECTILE_TRAIL_LIFETIME = 0.25  # How long each trail dot lives
 PROJECTILE_TRAIL_START_SCALE = 0.22  # Initial scale of trail dot
 PROJECTILE_TRAIL_END_SCALE = 0.02   # Scale at end of trail dot life (shrinks away)
@@ -1108,6 +1115,18 @@ COMBO_BREAK_MIN_TIER = 3          # Minimum combo count to trigger the break eff
 COMBO_BREAK_ANNOUNCE_DURATION = 1.2  # How long the "COMBO BROKEN!" text stays visible
 COMBO_BREAK_PARTICLE_COUNT = 14   # Red shatter particles on combo break
 COMBO_BREAK_SCREEN_SHAKE = 0.25   # Screen shake intensity on combo break
+# ── Combo Break Recovery Window ── When a combo of x5+ breaks (timer expires),
+# instead of immediately resetting to 0, a brief "recovery window" opens. If the
+# player gets a kill within this window, the combo is restored to most of its
+# previous value (minus 1) instead of starting from 1. This makes high-combo
+# play less punishing — a single missed timing doesn't destroy a 15-kill streak.
+# The window is short (1.5s) so it doesn't trivialize combo management; the
+# player must find a kill quickly. Only triggers for combos x5+ so low combos
+# still reset cleanly (no recovery for trivially small streaks). The restored
+# combo is (broken_count - 1) so there's still a small penalty for the break.
+COMBO_RECOVERY_MIN_COMBO = 5       # Minimum combo count to trigger recovery window
+COMBO_RECOVERY_WINDOW = 1.5        # Seconds after break to allow combo restoration
+COMBO_RECOVERY_PENALTY = 1        # Combo count reduced by this on recovery (broken - penalty)
 
 # ─── Enemy Pack Aggro ──────────────────────────────────────────────────────────
 # When an enemy detects the player, nearby idle (non-alerted) enemies within
@@ -6588,6 +6607,17 @@ class Game:
         self.combo_break_announce_timer = 0.0
         self.combo_break_count = 0  # The combo count that was lost
 
+        # ── Combo Break Recovery Window ── When a combo of x5+ breaks, a brief
+        # window opens where the next kill restores the combo to (broken_count -
+        # penalty) instead of starting from 1. recovery_timer counts down; when
+        # > 0, the next combo_count increment restores the combo. recovery_count
+        # stores the broken combo value. This makes high-combo play less
+        # punishing — a single missed timing doesn't destroy a 15-kill streak,
+        # giving skilled players a small safety net that rewards maintaining
+        # high combos. Only triggers for combos x5+.
+        self.combo_recovery_timer = 0.0   # >0 while recovery window is active
+        self.combo_recovery_count = 0     # The broken combo count to restore
+
         # ── Flawless Kill Streak ── Tracks consecutive kills made without
         # taking any damage. At milestones (every FLAWLESS_MILESTONE kills),
         # bonus XP is awarded with a golden "FLAWLESS!" announcement. Taking
@@ -7818,9 +7848,9 @@ class Game:
                       'boss_spawn_warning_text', 'boss_spawn_flash',
                       'pickup_streak_text', 'pickup_streak_bar_bg', 'pickup_streak_bar',
                       'crit_chain_text', 'flawless_text',
-                      'swarm_escape_text',
-                      'collection_rush_text', 'slayer_text', 'headhunter_text',
+                      'swarm_escape_text', 'collection_rush_text', 'slayer_text', 'headhunter_text',
                       'vengeful_surge_text', 'rapid_chain_text',
+                      'combo_recovery_text', 'combo_recovery_bar_bg', 'combo_recovery_bar',
                       'ground_reticle', 'facing_arrow',
                       'last_stand_text', 'cornered_beast_text',
                       'bounty_announce_text',
@@ -8901,6 +8931,25 @@ class Game:
         # text so they don't overlap if both happen to be showing.
         self.combo_break_text = Text(
             text='', position=(0, 0.04), scale=2.5, color=color.rgba(255, 50, 50, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # ── Combo Recovery Window HUD ── A pulsing gold "RECOVER!" text and
+        # timer bar that appears when the combo break recovery window is
+        # active. Shows the player they have a brief window to get a kill and
+        # restore their combo. Positioned just below the combo break text.
+        self.combo_recovery_text = Text(
+            text='', position=(0, -0.02), scale=1.6, color=color.rgba(255, 200, 50, 0),
+            origin=(0, 0), visible=False,
+        )
+        self.combo_recovery_bar_bg = Entity(
+            parent=camera.ui, model='quad', color=color.dark_gray,
+            scale=(0.12, 0.008, 1), position=(0, -0.06, 0),
+            origin=(0, 0), visible=False,
+        )
+        self.combo_recovery_bar = Entity(
+            parent=camera.ui, model='quad', color=color.rgb(255, 200, 50),
+            scale=(0.12, 0.008, 1), position=(0, -0.06, 0),
             origin=(0, 0), visible=False,
         )
 
@@ -11151,6 +11200,38 @@ class Game:
         else:
             self.combo_break_text.visible = False
 
+        # ── Combo Recovery Window HUD ── When the recovery window is active
+        # (combo_recovery_timer > 0), show a pulsing gold "RECOVER! Get a kill!"
+        # text and a depleting timer bar. The text pulses with urgency and the
+        # bar shrinks from full to empty as the window counts down, giving the
+        # player a clear visual cue that they have a brief opportunity to
+        # restore their broken combo.
+        if self.combo_recovery_timer > 0:
+            self.combo_recovery_text.visible = True
+            self.combo_recovery_bar_bg.visible = True
+            self.combo_recovery_bar.visible = True
+            # Pulsing urgency — faster pulse as the window shrinks
+            progress = 1.0 - (self.combo_recovery_timer / COMBO_RECOVERY_WINDOW)
+            pulse_speed = 6.0 + progress * 10.0
+            pulse = 0.5 + 0.5 * math.sin(self.t * pulse_speed)
+            alpha = int(180 + 75 * pulse)
+            self.combo_recovery_text.color = color.rgba(255, 200, 50, alpha)
+            self.combo_recovery_text.text = f'⚡ RECOVER! Get a kill! (x{self.combo_recovery_count - COMBO_RECOVERY_PENALTY})'
+            # Scale pops in slightly with the pulse
+            self.combo_recovery_text.scale = 1.4 + 0.15 * pulse
+            # Timer bar depletes from full to empty
+            bar_progress = max(0, self.combo_recovery_timer / COMBO_RECOVERY_WINDOW)
+            self.combo_recovery_bar.scale_x = 0.12 * bar_progress
+            # Bar shifts from gold to red as time runs out
+            bar_r = 255
+            bar_g = int(200 + (50 - 200) * (1.0 - bar_progress))
+            bar_b = int(50 + (50 - 50) * (1.0 - bar_progress))
+            self.combo_recovery_bar.color = color.rgb(bar_r, bar_g, bar_b)
+        else:
+            self.combo_recovery_text.visible = False
+            self.combo_recovery_bar_bg.visible = False
+            self.combo_recovery_bar.visible = False
+
         # ── Pickup Streak HUD ── Display the current consecutive pickup streak
         # count and a timer bar showing time remaining before the streak resets.
         # Shows when the streak is 2+ and the display timer is still active.
@@ -12197,6 +12278,57 @@ class Game:
         bonus = min(tier * COMBO_SHAKE_PER_TIER, COMBO_SHAKE_MAX_BONUS)
         return SCREEN_SHAKE_KILL * (1.0 + bonus)
 
+    def _check_combo_recovery(self):
+        """Check if a combo recovery window is active and restore the combo.
+
+        Called from every kill site BEFORE combo_count is incremented. If the
+        recovery window is active (combo_recovery_timer > 0), the combo is
+        restored to (recovery_count - penalty) instead of starting from 0.
+        This makes high-combo play less punishing — a single missed timing
+        doesn't destroy a 15-kill streak. The recovery window is short (1.5s)
+        so the player must find a kill quickly. After recovery, the window is
+        consumed (timer set to 0) so it can only fire once per break.
+
+        Returns True if recovery was applied, False otherwise.
+        """
+        if self.combo_recovery_timer > 0 and self.combo_recovery_count >= COMBO_RECOVERY_MIN_COMBO:
+            restored = max(1, self.combo_recovery_count - COMBO_RECOVERY_PENALTY)
+            self.combo_count = restored
+            self.combo_recovery_timer = 0
+            self.combo_recovery_count = 0
+            # Celebrate the recovery with a golden flash and message
+            self.add_message(f"⚡ COMBO RECOVERED! x{restored}!")
+            self._spawn_particles(self.player.position + Vec3(0, 1, 0),
+                                  color.rgb(255, 220, 80), count=10)
+            return True
+        return False
+
+    def _spawn_enrage_death_burst(self, enemy):
+        """Spawn a special red vengeance burst when an enraged enemy dies.
+
+        When an enemy in its enraged state (below 25% HP) is killed, it explodes
+        with a dramatic red shockwave ring and extra rage particles in addition
+        to the normal death effects. This makes executing enraged enemies more
+        visually rewarding — the enemy's built-up rage energy erupts outward in
+        a final burst of fury, complementing the existing execution bonus XP and
+        gold particle burst with a visceral red death explosion. The ring uses
+        the enemy's own scale for sizing so a Plasma Drake produces a massive
+        vengeance ring while a Swarm Mite produces a small pop.
+
+        Args:
+            enemy: The Enemy entity that was killed while enraged.
+        """
+        # Extra red rage particle burst — more than the normal kill particles
+        self._spawn_particles(enemy.position + Vec3(0, 1, 0),
+                               color.rgb(255, 30, 30), count=15)
+        # Red vengeance shockwave ring — larger and brighter than the normal
+        # death ring, with a red color distinct from the enemy's original color
+        self.enemy_death_rings.append(EnemyDeathRing(
+            position=Vec3(enemy.x, 0, enemy.z),
+            col=color.rgb(255, 40, 40),
+            enemy_scale=enemy.original_scale * 1.5,
+        ))
+
     def _register_kill(self, enemy_type=None):
         """Track a kill for the Multi-Kill announcement system.
 
@@ -12575,6 +12707,7 @@ class Game:
                 p.add_kill(enemy.name)
                 self.total_kills += 1
                 self._register_kill(enemy.name)
+                self._check_combo_recovery()  # Combo Break Recovery Window
                 self.combo_count += 1
                 self.max_combo = max(self.max_combo, self.combo_count)
                 self.combo_timer = _effective_combo_timeout(self.combo_count)
@@ -12660,6 +12793,8 @@ class Game:
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
+                if getattr(enemy, 'enraged', False):
+                    self._spawn_enrage_death_burst(enemy)
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
                 if enemy.is_plasma_serpent:
@@ -12738,6 +12873,7 @@ class Game:
                 p.add_kill(enemy.name)
                 self.total_kills += 1
                 self._register_kill(enemy.name)
+                self._check_combo_recovery()  # Combo Break Recovery Window
                 self.combo_count += 1
                 self.max_combo = max(self.max_combo, self.combo_count)
                 self.combo_timer = _effective_combo_timeout(self.combo_count)
@@ -12837,6 +12973,8 @@ class Game:
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
+                if getattr(enemy, 'enraged', False):
+                    self._spawn_enrage_death_burst(enemy)
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
                 if enemy.is_plasma_serpent:
@@ -13139,6 +13277,7 @@ class Game:
                 p.add_kill(enemy.name)
                 self.total_kills += 1
                 self._register_kill(enemy.name)
+                self._check_combo_recovery()  # Combo Break Recovery Window
                 self.combo_count += 1
                 self.max_combo = max(self.max_combo, self.combo_count)
                 self.combo_timer = _effective_combo_timeout(self.combo_count)
@@ -13251,6 +13390,8 @@ class Game:
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
+                if getattr(enemy, 'enraged', False):
+                    self._spawn_enrage_death_burst(enemy)
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
                 if enemy.is_plasma_serpent:
@@ -13995,6 +14136,7 @@ def game_update():
                     game._register_kill(enemy.name)
                     game.kill_flash_timer = KILL_FLASH_DURATION
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                    game._check_combo_recovery()  # Combo Break Recovery Window
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = _effective_combo_timeout(game.combo_count)
@@ -14089,6 +14231,8 @@ def game_update():
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
                     enemy.alive = False
+                    if getattr(enemy, 'enraged', False):
+                        game._spawn_enrage_death_burst(enemy)
                     enemy.dying = True
                     enemy.death_timer = DEATH_ANIM_DURATION
         # FOV zoom during dash for speed feel (frame-rate-independent)
@@ -14725,6 +14869,17 @@ def game_update():
                                           color.rgb(255, 50, 50),
                                           count=COMBO_BREAK_PARTICLE_COUNT)
                     game.screen_shake = max(game.screen_shake, COMBO_BREAK_SCREEN_SHAKE)
+                # ── Combo Break Recovery Window ── For combos x5+, start a brief
+                # recovery window instead of immediately resetting to 0. If the
+                # player gets a kill within this window, the combo is restored to
+                # (broken_count - penalty) instead of starting from 1. This makes
+                # high-combo play less punishing — a single missed timing doesn't
+                # destroy a 15-kill streak, giving skilled players a small safety
+                # net. The window is short so it doesn't trivialize combo
+                # management. Combos below x5 still reset to 0 immediately.
+                if game.combo_count >= COMBO_RECOVERY_MIN_COMBO:
+                    game.combo_recovery_timer = COMBO_RECOVERY_WINDOW
+                    game.combo_recovery_count = game.combo_count
                 game.combo_count = 0
                 # ── Combo Sustain Heal Reset ── When the combo breaks, reset
                 # the sustain heal counter so the next combo starts fresh. This
@@ -14846,6 +15001,15 @@ def game_update():
     # Combo break announcement timer — counts down the display duration
     if game.combo_break_announce_timer > 0:
         game.combo_break_announce_timer -= time.dt
+
+    # ── Combo Recovery Window Timer ── Count down the recovery window. When
+    # it expires without a kill, the recovery opportunity is lost — the combo
+    # stays at 0. The recovery is checked at each combo_count increment site.
+    if game.combo_recovery_timer > 0:
+        game.combo_recovery_timer -= time.dt
+        if game.combo_recovery_timer < 0:
+            game.combo_recovery_timer = 0
+            game.combo_recovery_count = 0  # Clear the recovery opportunity
 
     # ── Pickup Streak Timer ── Count down the window between pickups. If it
     # expires, the streak resets to 0. The display timer fades independently
@@ -16315,6 +16479,7 @@ def game_update():
                                     # combo_count first makes effective_combo off by one,
                                     # causing the Combo Sustain Heal to trigger too early.
                                     game._register_kill(other_enemy.name)
+                                    game._check_combo_recovery()  # Combo Break Recovery Window
                                     game.combo_count += 1
                                     game.max_combo = max(game.max_combo, game.combo_count)
                                     game.combo_timer = _effective_combo_timeout(game.combo_count)
@@ -16422,6 +16587,8 @@ def game_update():
                                     # a Void Bomber explosion didn't produce mini-enemies.
                                     if other_enemy.is_plasma_serpent:
                                         game._handle_plasma_serpent_split(other_enemy)
+                                    if getattr(other_enemy, 'enraged', False):
+                                        game._spawn_enrage_death_burst(other_enemy)
                         # Kill the bomber
                         enemy.alive = False
                         enemy.dying = True
@@ -17285,11 +17452,22 @@ def game_update():
             continue
 
         # Spawn trail dot behind projectile for visual flair
+        # ── Projectile Trail Distance LOD ── Skip trail dot spawning for
+        # projectiles that are far from the player/camera. At long range the
+        # trail dots are too small to see and just create unnecessary entity
+        # overhead (each trail dot is an Entity that must be created, tracked,
+        # and destroyed). Skipping distant trails saves entity creation cost
+        # during rapid-fire ranged combat where multiple projectiles fly far
+        # before hitting enemies or expiring. The cutoff distance is generous
+        # (50 units) so trails still appear for any projectile the player can
+        # reasonably see, matching the AI_CULL_RANGE for enemy behavior.
         proj.trail_timer += time.dt
         if proj.trail_timer >= PROJECTILE_TRAIL_INTERVAL:
-            proj.trail_timer = 0.0
-            trail = ProjectileTrail(position=Vec3(proj.x, proj.y, proj.z), col=C_LASER)
-            game.projectile_trails.append(trail)
+            proj_dist_sq = (proj.x - p.x) ** 2 + (proj.z - p.z) ** 2
+            if proj_dist_sq < PROJECTILE_TRAIL_LOD_RANGE_SQ:
+                proj.trail_timer = 0.0
+                trail = ProjectileTrail(position=Vec3(proj.x, proj.y, proj.z), col=C_LASER)
+                game.projectile_trails.append(trail)
 
         # Check collision with enemies
         # PERFORMANCE: pre-check squared distance to skip expensive sqrt for far enemies
@@ -17468,6 +17646,7 @@ def game_update():
                                 # Combo Sustain Heal threshold/counter to be off
                                 # by one for fireball splash kills.
                                 game._register_kill(nearby_enemy.name)
+                                game._check_combo_recovery()  # Combo Break Recovery Window
                                 game.combo_count += 1
                                 game.max_combo = max(game.max_combo, game.combo_count)
                                 game.combo_timer = _effective_combo_timeout(game.combo_count)
@@ -17574,6 +17753,8 @@ def game_update():
                                 # BUG FIX: Plasma Serpent split was missing for AOE kills.
                                 if nearby_enemy.is_plasma_serpent:
                                     game._handle_plasma_serpent_split(nearby_enemy)
+                                if getattr(nearby_enemy, 'enraged', False):
+                                    game._spawn_enrage_death_burst(nearby_enemy)
                     # Explosion visual at impact point
                     game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=20)
                     game.screen_shake = max(game.screen_shake, 0.3)
@@ -17613,6 +17794,7 @@ def game_update():
                         game._register_kill(enemy.name)
                         game.kill_flash_timer = KILL_FLASH_DURATION
                         game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                        game._check_combo_recovery()  # Combo Break Recovery Window
                         game.combo_count += 1
                         game.max_combo = max(game.max_combo, game.combo_count)
                         game.combo_timer = _effective_combo_timeout(game.combo_count)
@@ -17693,6 +17875,8 @@ def game_update():
                         game.kill_feed.append((game.t, f"✦ {enemy.name}"))
                         if enemy.is_plasma_serpent:
                             game._handle_plasma_serpent_split(enemy)
+                        if getattr(enemy, 'enraged', False):
+                            game._spawn_enrage_death_burst(enemy)
                     break  # Exit the enemy loop — projectile continues flying
                 # Check if this is a piercing projectile hitting a new enemy
                 if proj.is_piercing and id(enemy) not in proj._pierced_enemies:
@@ -17727,6 +17911,7 @@ def game_update():
                             game._register_kill(enemy.name)
                             game.kill_flash_timer = KILL_FLASH_DURATION
                             game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                            game._check_combo_recovery()  # Combo Break Recovery Window
                             game.combo_count += 1
                             game.max_combo = max(game.max_combo, game.combo_count)
                             game.combo_timer = _effective_combo_timeout(game.combo_count)
@@ -17813,6 +17998,8 @@ def game_update():
                             game.kill_feed.append((game.t, f"✦ {enemy.name}"))
                             if enemy.is_plasma_serpent:
                                 game._handle_plasma_serpent_split(enemy)
+                            if getattr(enemy, 'enraged', False):
+                                game._spawn_enrage_death_burst(enemy)
                         break  # Exit enemy loop — projectile continues
                 # BUG FIX: Line below was dead code — both the max-pierce and
                 # continue-piercing branches above already break out of the enemy
@@ -17854,6 +18041,7 @@ def game_update():
                     game.kill_flash_timer = KILL_FLASH_DURATION
                     game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
                     # Combo system: increment combo and apply bonus
+                    game._check_combo_recovery()  # Combo Break Recovery Window
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = _effective_combo_timeout(game.combo_count)
@@ -17994,6 +18182,8 @@ def game_update():
                     # ── Plasma Serpent: Split into mini-enemies on death ──
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
+                    if getattr(enemy, 'enraged', False):
+                        game._spawn_enrage_death_burst(enemy)
                 break
 
         # BUG FIX: If the projectile was destroyed by an enemy hit (normal or
@@ -18418,6 +18608,7 @@ def game_update():
                     # This pulse-wave kill site had the order reversed, causing
                     # the Combo Sustain Heal to use an off-by-one effective combo.
                     game._register_kill(enemy.name)
+                    game._check_combo_recovery()  # Combo Break Recovery Window
                     game.combo_count += 1
                     game.max_combo = max(game.max_combo, game.combo_count)
                     game.combo_timer = _effective_combo_timeout(game.combo_count)

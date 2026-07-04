@@ -36,7 +36,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.48.1 — 3D!)
+## Features (v2.49.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -287,6 +287,9 @@ python game.py
 - **XP Surge** — when you gain XP rapidly from multiple sources (kills, collectibles, milestones, level-ups), an "⚡ XP SURGE" multiplier activates — granting up to 2x bonus XP on each gain while the surge is active! The surge builds with each XP gain (starting at 1.1x after 3 rapid gains and growing +5% per additional gain) and decays over a 3-second window, so sustained rapid progression keeps the multiplier high. A lime-green HUD indicator shows the current multiplier with a pulsing animation, and a timer bar shows time remaining before the surge window resets (green → yellow → red as it depletes). This rewards diverse playstyles — mixing kills, collection, and exploration keeps the surge active, since any XP source contributes. The surge composes with the existing combo XP multiplier and monolith XP buff for exponential XP gains during peak performance
 - **Power-up pickup screen shake consistency** — all 13 power-up types now trigger a screen shake on pickup! Previously, Speed Boost, Shield Crystal, Weapon Upgrade, Magnet Core, Time Warp, and Star Fruit had no explicit screen shake — they only got the subtle rarity-scaled shake. Now each has a tailored shake (0.15–0.2) matching its power level, making every power-up pickup feel consistently impactful. Weapon Upgrade and Time Warp get slightly stronger shakes (0.18–0.2) reflecting their higher rarity and game-changing effects
 - **Power-up activation burst** — when you grab a power-up, a burst of the power-up's own color now erupts at Zorp's position in addition to the item-position particle burst! This makes the power-up feel like it's "infusing" Zorp rather than just disappearing at the pickup location. The burst count scales with the power-up's rarity tier — a rare Shield Crystal produces a bigger activation burst than an uncommon Speed Boost — matching the regular collectible rarity-scaled burst system so rare power-ups feel more rewarding to grab
+- **Combo Break Recovery Window** — when a combo of x5+ breaks (timer expires), a brief 1.5-second recovery window opens! If you get a kill within this window, the combo is restored to (broken_count - 1) instead of starting from 1 — a small safety net that makes high-combo play less punishing without trivializing combo management. A pulsing gold "⚡ RECOVER! Get a kill!" HUD text and depleting timer bar show you have a brief opportunity to save your streak. Only triggers for combos x5+ so low combos still reset cleanly. The restored combo is reduced by 1 as a small penalty for the break
+- **Enraged Enemy Death Vengeance Burst** — when an enemy in its enraged state (below 25% HP) is killed, it now explodes with a dramatic red shockwave ring and extra rage particles in addition to the normal death effects! The enemy's built-up rage energy erupts outward in a final burst of fury, making executing enraged enemies more visually rewarding. The vengeance ring is 50% larger than the normal death ring and uses a distinct red color, scaling with enemy size so a Plasma Drake produces a massive vengeance explosion while a Swarm Mite produces a small pop
+- **Projectile Trail Distance LOD** — tentacle laser trail dots are now only spawned for projectiles within 50 units of the player, saving entity creation cost during rapid-fire ranged combat. At longer ranges the trail dots are too small to see, so skipping them improves performance in sustained combat without any visible difference
 
 ## The Self-Improving Game
 
@@ -483,6 +486,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.49.0 — Combo Break Recovery, Enraged Death Burst & Trail LOD
+
+- **Combo Break Recovery Window**: When a combo of x5+ breaks (timer expires), a brief 1.5-second recovery window opens. If the player gets a kill within this window, the combo is restored to (broken_count - 1) instead of starting from 1 — a small safety net that makes high-combo play less punishing without trivializing combo management. A pulsing gold "⚡ RECOVER! Get a kill!" HUD text and depleting timer bar show the player they have a brief opportunity to save their streak. Only triggers for combos x5+ so low combos still reset cleanly. The restored combo is reduced by 1 as a small penalty for the break
+- **Enraged Enemy Death Vengeance Burst**: When an enemy in its enraged state (below 25% HP) is killed, it now explodes with a dramatic red shockwave ring and 15 extra rage particles in addition to the normal death effects. The enemy's built-up rage energy erupts outward in a final burst of fury, making executing enraged enemies more visually rewarding. The vengeance ring is 50% larger than the normal death ring and uses a distinct red color, scaling with enemy size so a Plasma Drake produces a massive vengeance explosion
+- **Projectile Trail Distance LOD**: Tentacle laser trail dots are now only spawned for projectiles within 50 units of the player. At longer ranges the trail dots are too small to see and just create unnecessary entity overhead (each is an Entity that must be created, tracked, and destroyed). This saves entity creation cost during rapid-fire ranged combat where multiple projectiles fly far before hitting enemies or expiring, improving performance in sustained combat without any visible difference
 
 ### v2.48.0 — Golden Elite Enemies, Enemy Wave Events & XP Surge
 
