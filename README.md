@@ -36,7 +36,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.49.0 — 3D!)
+## Features (v2.50.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -58,6 +58,9 @@ python game.py
 - **Last Stand** — when a lethal hit would kill you while at a high combo (x10+), the hit is absorbed and you're left at 1 HP with extended invulnerability! A dramatic golden "⚡ LAST STAND!" announcement, particle burst, expanding ground ring, and screen shake celebrate the save. This triggers only once per run, making it a precious safety net that rewards sustained combat streaks — your combo literally keeps you alive! The death screen reports whether Last Stand was used
 - **Cornered Beast** — when your HP drops below 30%, your projectile damage increases up to +50% at near-zero HP! A pulsing red-orange "🔥 CORNERED BEAST +N% DMG" HUD indicator shows the current multiplier. This synergizes with Adrenaline Rush (which grants speed + fire rate at low HP) to make low-HP play a calculated aggressive strategy — you're fragile but hit much harder, rewarding bold counterplay over running away
 - **Bounty Mark** — every 25 seconds, a random enemy is marked as a bounty target with a golden pulsing ring above its head! Killing the bounty target grants +80 bonus XP and +200 bonus score with a golden particle burst. A "🎯 BOUNTY MARKED!" announcement names the target so you can hunt it down. If the target dies from any cause or despawns, a new bounty is assigned on the next cycle. This adds a light "priority target" objective to the open-world gameplay, giving you a reason to seek out and hunt specific enemies rather than just fighting whatever's nearest
+- **Survival Bonus XP** — every 30 seconds you stay alive, you receive scaling bonus XP with a "★ Survival Bonus!" HUD message! The XP grows with each interval so longer survival runs are progressively more rewarding — a 10-minute run gives substantially more survival XP than a 1-minute run. This rewards the core survival loop and makes long runs feel progression-rich even during lulls in combat. The death screen reports total survival bonuses earned
+- **Milestone Level Overheal Barrier** — at milestone levels (5, 10, 15...), in addition to the existing cooldown reset and golden celebration, you receive a temporary Overheal Barrier that scales with the milestone tier (30 HP at first milestone, +10 per tier). This makes milestone levels a well-rounded power surge — fresh abilities AND a protective buffer — enhancing both offense and defense at each 5-level mark
+- **Enemy Death Proximity Shock** — when an enemy dies, nearby enemies of the SAME type within 6 units briefly flash in the dying enemy's color — a visual "domino shock" effect that makes clustered kills feel physically connected! Mowing down a group of Slime Blobs sends a color ripple through nearby survivors, creating a satisfying chain-reaction visual during multi-kills and AoE combat. Only affects same-type enemies so mixed groups don't create confusing color cross-contamination
 - **Emergency Health Potion Magnet** — when your HP drops below 25%, all Health Potions within 18 units are magnetically pulled toward you at accelerated speed — a survival instinct that prevents frustrating deaths where a potion was just out of reach!
 - **Pickup Streak Score Multiplier** — when on a pickup streak of 10+, each collectible is worth 1.5x score! At 20+ streak, 2x score! The bonus is shown in the pickup message with ★1.5x or ✦x2 indicators, rewarding sustained item-gathering runs! When a streak of 5+ ends, a brief "Streak ended xN" message gives gentle closure
 - **Enemy Pack Aggro** — aggroing one enemy can cascade to nearby idle enemies within 12 units, creating dynamic pack behavior! Dense enemy clusters are more dangerous than isolated foes, making positioning and target selection tactical
@@ -109,7 +112,7 @@ python game.py
 - **Critical hit damage numbers** — gold text with ★ prefix for crits
 - Floating damage numbers on enemy hits and kills
 - **Cinematic death screen** with staggered fade-in animation and score roll-up! The title, score, stats, and restart prompt cascade in sequence (ease-out cubic, 0.25s stagger) instead of snapping visible — death feels weighty and cinematic. The final score counts up from 0 to the real value, making the final tally feel earned
-- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak, best flawless streak, best rapid chain)
+- Detailed death screen with survival stats (time, KPM, inventory breakdown, best combo, best pickup streak, best flawless streak, best rapid chain, survival bonuses)
 - **Crosshair enemy-proximity tint** — the crosshair subtly tints warm red-orange when hovering near an enemy, giving target-acquisition feedback before you fire! Smoothly interpolates from white to red-orange based on cursor-to-enemy distance, making target prioritization in crowded combat faster and more intuitive
 - Distinct enemy shapes and decorations (wings, auras, spikes, shards)
 - Invincibility frames on damage

@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.49.0"
+VERSION = "2.50.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -2961,6 +2961,45 @@ LEVEL_MILESTONE_SCREEN_FLASH_ALPHA = 70   # Peak alpha of golden flash
 LEVEL_MILESTONE_SCREEN_FLASH_DURATION = 0.6  # How long the golden flash lasts
 LEVEL_MILESTONE_PARTICLE_COUNT = 25  # Golden particle burst count
 LEVEL_MILESTONE_SCREEN_SHAKE = 0.35  # Screen shake intensity
+# ── Milestone Level Overheal Grant ── At milestone levels (5, 10, 15...), in
+# addition to the existing cooldown reset and golden celebration, the player
+# receives a temporary Overheal Barrier that scales with the milestone tier.
+# This makes milestone levels also a survivability boost — you get a fresh
+# cooldown reset AND a protective buffer, making each 5-level mark a
+# well-rounded power surge that enhances both offense (abilities) and defense
+# (overheal). The overheal follows the same decay rules as normal overheal
+# (delayed start, gradual decay) so it's a temporary bonus, not permanent HP.
+LEVEL_MILESTONE_OVERHEAL_BASE = 30    # Base overheal amount at first milestone
+LEVEL_MILESTONE_OVERHEAL_PER_TIER = 10  # Additional overheal per milestone tier
+
+# ─── Survival Bonus XP ────────────────────────────────────────────────────────
+# Periodically awards bonus XP simply for staying alive. Every
+# SURVIVAL_BONUS_INTERVAL seconds, the player receives a scaling XP reward
+# with a HUD message. The bonus grows with each interval so longer survival
+# is progressively more rewarding — early intervals give a small trickle,
+# while late-game survival intervals provide a meaningful XP boost. This
+# rewards the core gameplay loop (don't die!) and makes long runs feel
+# progression-rich even during lulls in combat. The bonus scales with the
+# interval count so a 10-minute run gives substantially more survival XP
+# than a 1-minute run. The message is subtle so it doesn't clutter the feed.
+SURVIVAL_BONUS_INTERVAL = 30.0       # Seconds between survival bonus awards
+SURVIVAL_BONUS_XP_BASE = 15          # Base XP per survival bonus
+SURVIVAL_BONUS_XP_PER_INTERVAL = 2   # Additional XP per interval completed (scaling)
+
+# ─── Enemy Death Proximity Shock ──────────────────────────────────────────────
+# When an enemy dies, nearby enemies of the SAME type within a small radius
+# briefly flash in the dying enemy's color — a visual "domino shock" effect
+# that makes clustered kills feel physically connected. When you mow down a
+# group of Slime Blobs, each death sends a color ripple through the nearby
+# survivors, creating a satisfying chain-reaction visual during multi-kills
+# and AoE combat. The flash is brief and subtle so it doesn't clutter the
+# screen, and only affects same-type enemies so mixed groups don't create
+# confusing color cross-contamination. This complements the existing
+# multi-kill and combo systems with a world-level visual that reinforces
+# the feeling of mowing through a cluster of enemies.
+ENEMY_DEATH_SHOCK_RADIUS = 6.0      # How far the death shock reaches
+ENEMY_DEATH_SHOCK_FLASH_DURATION = 0.15  # How long the flash lasts on nearby enemies
+ENEMY_DEATH_SHOCK_MAX_ENEMIES = 8   # Max enemies affected (performance cap)
 
 BIOME_COLORS = {
     'grass':   C_GRASS,
@@ -6589,6 +6628,15 @@ class Game:
         self.boss_slowmo_time_scale = 1.0  # Current effective time scale (lerps back to 1.0)
         self.kill_fov_timer = 0.0  # Camera FOV punch on kill — brief zoom-in effect
         self.level_up_fov_timer = 0.0  # Camera FOV punch on level-up — cinematic zoom
+
+        # ── Survival Bonus XP ── Tracks time toward the next survival bonus
+        # award. Every SURVIVAL_BONUS_INTERVAL seconds, the player receives
+        # scaling XP for staying alive. survival_timer accumulates each frame;
+        # survival_interval_count tracks how many intervals have been awarded
+        # so the XP can scale with total survival time. This makes long runs
+        # progressively more rewarding even during combat lulls.
+        self.survival_timer = 0.0
+        self.survival_interval_count = 0
         self.current_biome = 'grass'
         # Smoothly-interpolated biome indicator color (r,g,b floats in 0-255 range)
         self.biome_color_current = (10.0, 180.0, 80.0)
@@ -8412,6 +8460,7 @@ class Game:
             f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
             f'Best Flawless Streak: x{self.max_flawless}   Best Rapid Chain: x{self.max_rapid_chain}',
             f'Golden Elites Slain: {self.elite_kills}',
+            f'Survival Bonuses: {self.survival_interval_count}',
             f'Last Stand Used: {"Yes" if p.last_stand_used else "No"}',
             f'Missions Completed: {p.completed_missions}   Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
@@ -12329,6 +12378,43 @@ class Game:
             enemy_scale=enemy.original_scale * 1.5,
         ))
 
+    def _trigger_death_shock(self, enemy):
+        """Trigger a visual "domino shock" flash on nearby same-type enemies.
+
+        When an enemy dies, nearby enemies of the SAME type within
+        ENEMY_DEATH_SHOCK_RADIUS briefly flash in the dying enemy's original
+        color — a visual chain-reaction effect that makes clustered kills
+        feel physically connected. When you mow down a group of Slime Blobs,
+        each death sends a color ripple through nearby survivors, creating
+        a satisfying domino effect during multi-kills and AoE combat.
+
+        Only affects same-type enemies so mixed groups don't create confusing
+        color cross-contamination. The flash is brief and uses the existing
+        enemy color assignment + invoke() pattern for recovery, composing
+        cleanly with other color effects (hit flash, slow tint, enrage).
+
+        Args:
+            enemy: The Enemy entity that just died (shock origin).
+        """
+        affected = 0
+        shock_col = enemy.original_color
+        for other in self.enemies:
+            if affected >= ENEMY_DEATH_SHOCK_MAX_ENEMIES:
+                break
+            if not other.alive or other.dying or other is enemy:
+                continue
+            # Only affect same-type enemies
+            if other.name != enemy.name:
+                continue
+            dx = other.position.x - enemy.position.x
+            dz = other.position.z - enemy.position.z
+            if dx * dx + dz * dz < ENEMY_DEATH_SHOCK_RADIUS * ENEMY_DEATH_SHOCK_RADIUS:
+                # Brief flash in the dying enemy's color (brightened)
+                other.color = shock_col
+                invoke(setattr, other, 'color', other.original_color,
+                       delay=ENEMY_DEATH_SHOCK_FLASH_DURATION)
+                affected += 1
+
     def _register_kill(self, enemy_type=None):
         """Track a kill for the Multi-Kill announcement system.
 
@@ -12795,6 +12881,8 @@ class Game:
                 enemy.alive = False
                 if getattr(enemy, 'enraged', False):
                     self._spawn_enrage_death_burst(enemy)
+                # ── Enemy Death Proximity Shock ──
+                self._trigger_death_shock(enemy)
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
                 if enemy.is_plasma_serpent:
@@ -13392,6 +13480,8 @@ class Game:
                 enemy.alive = False
                 if getattr(enemy, 'enraged', False):
                     self._spawn_enrage_death_burst(enemy)
+                # ── Enemy Death Proximity Shock ──
+                self._trigger_death_shock(enemy)
                 enemy.dying = True
                 enemy.death_timer = DEATH_ANIM_DURATION
                 if enemy.is_plasma_serpent:
@@ -14233,6 +14323,8 @@ def game_update():
                     enemy.alive = False
                     if getattr(enemy, 'enraged', False):
                         game._spawn_enrage_death_burst(enemy)
+                    # ── Enemy Death Proximity Shock ──
+                    game._trigger_death_shock(enemy)
                     enemy.dying = True
                     enemy.death_timer = DEATH_ANIM_DURATION
         # FOV zoom during dash for speed feel (frame-rate-independent)
@@ -15819,6 +15911,18 @@ def game_update():
         p.dash_cooldown = 0
         game.pulse_wave_cooldown = 0
         game.vacuum_pulse_cooldown = 0
+        # ── Milestone Overheal Grant ── Award a temporary Overheal Barrier
+        # that scales with the milestone tier, so milestone levels also
+        # provide a survivability boost alongside the cooldown reset. The
+        # overheal follows normal decay rules (delayed start, gradual decay)
+        # so it's a temporary bonus that protects during the post-milestone
+        # power surge window, not a permanent HP increase.
+        milestone_tier = p.level // LEVEL_MILESTONE_INTERVAL
+        overheal_amount = LEVEL_MILESTONE_OVERHEAL_BASE + (milestone_tier - 1) * LEVEL_MILESTONE_OVERHEAL_PER_TIER
+        p.overheal += overheal_amount
+        p.overheal_decay_delay = max(p.overheal_decay_delay, OVERHEAL_DECAY_DELAY)
+        # Golden absorption-style particle burst to telegraph the barrier
+        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 220, 80), count=12)
         # Golden flash overlay
         game.level_up_flash_timer = max(game.level_up_flash_timer, LEVEL_MILESTONE_SCREEN_FLASH_DURATION)
         game.level_up_flash.color = color.rgba(255, 220, 50, LEVEL_MILESTONE_SCREEN_FLASH_ALPHA)
@@ -15828,7 +15932,7 @@ def game_update():
         # Screen shake
         game.screen_shake = max(game.screen_shake, LEVEL_MILESTONE_SCREEN_SHAKE)
         # Announcement
-        game.add_message(f"★ MILESTONE Lv.{p.level}! All cooldowns reset!")
+        game.add_message(f"★ MILESTONE Lv.{p.level}! Cooldowns reset +{overheal_amount} barrier!")
         # Bonus: also trigger a vacuum pulse-style pull of nearby collectibles
         # so the milestone feels like a power surge that gathers resources too
         magnet_range = LEVEL_UP_MAGNET_RADIUS
@@ -15846,6 +15950,26 @@ def game_update():
         game.level_up_timer -= time.dt
         if game.level_up_timer <= 0:
             game.level_up_text.visible = False
+
+    # ── Survival Bonus XP ── Periodically award scaling XP simply for staying
+    # alive. Every SURVIVAL_BONUS_INTERVAL seconds, the player receives bonus
+    # XP that grows with each interval completed. This rewards the core
+    # survival loop and makes long runs feel progression-rich even during
+    # combat lulls — you're always earning something just by being alive.
+    # The bonus scales with the interval count so a 10-minute run gives
+    # substantially more survival XP than a 1-minute run.
+    game.survival_timer += time.dt
+    if game.survival_timer >= SURVIVAL_BONUS_INTERVAL:
+        game.survival_timer -= SURVIVAL_BONUS_INTERVAL
+        game.survival_interval_count += 1
+        survival_xp = SURVIVAL_BONUS_XP_BASE + (game.survival_interval_count - 1) * SURVIVAL_BONUS_XP_PER_INTERVAL
+        # Apply monolith XP multiplier if active
+        _monolith_surv_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+        survival_xp = int(survival_xp * _monolith_surv_mult)
+        p.gain_xp(survival_xp)
+        game.add_message(f"★ Survival Bonus! +{survival_xp} XP ({game.survival_interval_count * int(SURVIVAL_BONUS_INTERVAL)}s alive!)")
+        # Subtle green particle burst to telegraph the bonus
+        game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 150), count=6)
 
     # ── Camera Follow with Screen Shake ──
     # During dash, use a tighter lerp so the camera keeps up with Zorp's burst
@@ -16589,6 +16713,8 @@ def game_update():
                                         game._handle_plasma_serpent_split(other_enemy)
                                     if getattr(other_enemy, 'enraged', False):
                                         game._spawn_enrage_death_burst(other_enemy)
+                                    # ── Enemy Death Proximity Shock ──
+                                    game._trigger_death_shock(other_enemy)
                         # Kill the bomber
                         enemy.alive = False
                         enemy.dying = True
@@ -17755,6 +17881,8 @@ def game_update():
                                     game._handle_plasma_serpent_split(nearby_enemy)
                                 if getattr(nearby_enemy, 'enraged', False):
                                     game._spawn_enrage_death_burst(nearby_enemy)
+                                # ── Enemy Death Proximity Shock ──
+                                game._trigger_death_shock(nearby_enemy)
                     # Explosion visual at impact point
                     game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=20)
                     game.screen_shake = max(game.screen_shake, 0.3)
@@ -17877,6 +18005,8 @@ def game_update():
                             game._handle_plasma_serpent_split(enemy)
                         if getattr(enemy, 'enraged', False):
                             game._spawn_enrage_death_burst(enemy)
+                        # ── Enemy Death Proximity Shock ──
+                        game._trigger_death_shock(enemy)
                     break  # Exit the enemy loop — projectile continues flying
                 # Check if this is a piercing projectile hitting a new enemy
                 if proj.is_piercing and id(enemy) not in proj._pierced_enemies:
@@ -18000,6 +18130,8 @@ def game_update():
                                 game._handle_plasma_serpent_split(enemy)
                             if getattr(enemy, 'enraged', False):
                                 game._spawn_enrage_death_burst(enemy)
+                            # ── Enemy Death Proximity Shock ──
+                            game._trigger_death_shock(enemy)
                         break  # Exit enemy loop — projectile continues
                 # BUG FIX: Line below was dead code — both the max-pierce and
                 # continue-piercing branches above already break out of the enemy
@@ -18184,6 +18316,10 @@ def game_update():
                         game._handle_plasma_serpent_split(enemy)
                     if getattr(enemy, 'enraged', False):
                         game._spawn_enrage_death_burst(enemy)
+                    # ── Enemy Death Proximity Shock ── Flash nearby same-type
+                    # enemies in the dying enemy's color for a domino effect
+                    # that makes clustered kills feel physically connected.
+                    game._trigger_death_shock(enemy)
                 break
 
         # BUG FIX: If the projectile was destroyed by an enemy hit (normal or
@@ -18706,6 +18842,8 @@ def game_update():
                     # killing a serpent with Pulse Wave didn't produce mini-enemies.
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
+                    # ── Enemy Death Proximity Shock ──
+                    game._trigger_death_shock(enemy)
 
     # ── Update Collectibles ──
     # PERFORMANCE: cache player position once so we avoid repeated .position
