@@ -36,7 +36,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.50.0 — 3D!)
+## Features (v2.50.1 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -293,6 +293,9 @@ python game.py
 - **Combo Break Recovery Window** — when a combo of x5+ breaks (timer expires), a brief 1.5-second recovery window opens! If you get a kill within this window, the combo is restored to (broken_count - 1) instead of starting from 1 — a small safety net that makes high-combo play less punishing without trivializing combo management. A pulsing gold "⚡ RECOVER! Get a kill!" HUD text and depleting timer bar show you have a brief opportunity to save your streak. Only triggers for combos x5+ so low combos still reset cleanly. The restored combo is reduced by 1 as a small penalty for the break
 - **Enraged Enemy Death Vengeance Burst** — when an enemy in its enraged state (below 25% HP) is killed, it now explodes with a dramatic red shockwave ring and extra rage particles in addition to the normal death effects! The enemy's built-up rage energy erupts outward in a final burst of fury, making executing enraged enemies more visually rewarding. The vengeance ring is 50% larger than the normal death ring and uses a distinct red color, scaling with enemy size so a Plasma Drake produces a massive vengeance explosion while a Swarm Mite produces a small pop
 - **Projectile Trail Distance LOD** — tentacle laser trail dots are now only spawned for projectiles within 50 units of the player, saving entity creation cost during rapid-fire ranged combat. At longer ranges the trail dots are too small to see, so skipping them improves performance in sustained combat without any visible difference
+- **Player movement trail scale-in** — trail ghosts now start at 30% scale and smoothly grow to full size before shrinking, instead of popping in at full size instantly. Each ghost emerges from Zorp's position and fades organically, making the movement trail look like a flowing energy streak rather than a series of snapshot copies
+- **Overheal barrier decay warning shimmer** — when the overheal barrier's decay delay enters its final second, the golden HP bar extension pulses much faster and brighter, warning the player that the temporary buffer is about to start depleting — a clear visual cue to seek healing or play defensively before the barrier fades
+- **Collectible XP floating number distinct color** — picking up collectibles now shows a cyan-blue "+N XP" floating number, visually distinct from the green heal numbers they previously reused. The cyan-blue color matches the XP bar aesthetic so you instantly read it as an XP gain, not a heal
 
 ## The Self-Improving Game
 
@@ -489,6 +492,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.50.1 — Trail Scale-In, Overheal Decay Warning & XP Number Polish
+
+- **Player movement trail scale-in**: Trail ghosts now start at 30% scale and smoothly grow to full size before shrinking, instead of popping in at full size instantly. Each ghost emerges from Zorp's position and fades organically via chained animate_scale (out_expo grow → in_expo shrink), making the movement trail look like a flowing energy streak rather than a series of snapshot copies. The ghosts are now managed independently from the shared particle system so the scale animation doesn't conflict with the per-frame particle decay
+- **Overheal barrier decay warning shimmer**: When the overheal barrier's decay delay enters its final second, the golden HP bar extension pulses much faster (14 Hz vs 4 Hz) and brighter — warning the player that the temporary buffer is about to start depleting. This gives a clear visual cue to seek healing or play defensively before the barrier fades, making the overheal mechanic more readable and strategic
+- **Collectible XP floating number distinct color**: Collectible XP gains now display as cyan-blue "+N XP" floating numbers, visually distinct from the green "+N" heal numbers they previously reused. This eliminates the ambiguity of whether picking up an item healed you or granted XP — the cyan-blue color matches the XP bar aesthetic so the player instantly reads it as an XP gain. A new `is_xp_gain` flag in the DamageNumber system handles the dedicated color and text format
 
 ### v2.49.0 — Combo Break Recovery, Enraged Death Burst & Trail LOD
 

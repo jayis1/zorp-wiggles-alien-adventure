@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.50.0"
+VERSION = "2.50.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1969,6 +1969,14 @@ PLAYER_TRAIL_LIFETIME = 0.20         # How long each trail ghost lives (seconds)
 PLAYER_TRAIL_SCALE = 1.0             # Scale of the trail ghost (matches Zorp)
 PLAYER_TRAIL_ALPHA = 40              # Alpha of each trail ghost (subtle)
 PLAYER_TRAIL_MIN_SPEED = 8.0         # Min velocity magnitude to spawn a trail
+# ── Trail Scale-In ── Trail ghosts now start at a fraction of full size and
+# grow to full scale over the first portion of their lifetime, then shrink as
+# before. This eliminates the abrupt "pop to full size" that made the trail
+# look slightly jittery — instead, each ghost emerges smoothly from Zorp's
+# position and fades organically, making the movement trail feel like a
+# flowing streak rather than a series of snapshots.
+PLAYER_TRAIL_SCALE_IN_START = 0.3    # Starting scale multiplier (30% of full)
+PLAYER_TRAIL_SCALE_IN_FRACTION = 0.35 # Fraction of lifetime spent growing (35%)
 
 # ─── Multi-Kill Announcement System ────────────────────────────────────────────
 # When the player kills 2+ enemies within a short time window, a dramatic
@@ -6313,12 +6321,22 @@ class DamageNumber:
     feel punchier and more satisfying instead of numbers appearing flat.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None, is_score=False):
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None, is_score=False, is_xp_gain=False):
         # Color: gold for flawless, green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
         if is_flawless:
             col = color.rgb(255, 215, 0)
             text_str = f"✦+{amount} XP"
             scale_factor = 1.45
+        elif is_xp_gain:
+            # ── Collectible XP Gain Popup ── A small floating "+N XP" number in
+            # bright cyan-blue, visually distinct from the green heal numbers.
+            # Previously collectible XP gains reused is_heal=True (green "+N"),
+            # making it ambiguous whether picking up an item healed you or
+            # granted XP. The cyan-blue color matches the XP bar aesthetic so
+            # the player instantly reads it as an XP gain, not a heal.
+            col = color.rgb(100, 200, 255)
+            text_str = f"+{amount} XP"
+            scale_factor = 0.95
         elif is_score:
             # ── Kill Score Popup ── A small "+N pts" floating number in bright
             # cyan-white appears at the kill location, showing exactly how many
@@ -6384,7 +6402,7 @@ class DamageNumber:
         # noticeably bigger than a 20-damage hit, enhancing the visual hierarchy
         # Skipped for heals, pickups, and XP/execution/flawless numbers
         # (those use fixed scales and aren't raw damage).
-        if not is_heal and not is_pickup and not is_flawless and not is_execution and not is_score and amount > 0:
+        if not is_heal and not is_xp_gain and not is_pickup and not is_flawless and not is_execution and not is_score and amount > 0:
             if amount > DMG_NUMBER_MAGNITUDE_BASE:
                 # Log curve: 0 boost at BASE, approaching MAX_BOOST at high damage
                 log_ratio = math.log(amount / DMG_NUMBER_MAGNITUDE_BASE) / DMG_NUMBER_MAGNITUDE_CURVE
@@ -6429,6 +6447,7 @@ class DamageNumber:
         self.is_flawless = is_flawless
         self.is_pickup = is_pickup
         self.is_score = is_score
+        self.is_xp_gain = is_xp_gain
         self.alive = True
         # ── Pop-In Animation ── The number scales in from small to an
         # overshoot peak then settles to normal, making damage feedback
@@ -6499,6 +6518,8 @@ class DamageNumber:
         # the color is always overridden below with hardcoded values.
         if self.is_flawless:
             self.text_ent.color = color.rgba(255, 215, 0, int(255 * alpha))
+        elif self.is_xp_gain:
+            self.text_ent.color = color.rgba(100, 200, 255, int(255 * alpha))
         elif self.is_score:
             self.text_ent.color = color.rgba(120, 255, 255, int(255 * alpha))
         elif self.is_pickup:
@@ -12068,11 +12089,26 @@ class Game:
             self.overheal_bar.scale_x = max(0.001, bar_w)
             self.overheal_bar.x = hp_right_edge
             self.overheal_bar.visible = True
-            # Gentle golden pulse so it's visually distinct from regular HP
-            pulse = 0.7 + 0.3 * math.sin(self.t * 4)
-            self.overheal_bar.color = color.rgba(
-                255, int(180 + 40 * pulse), int(40 + 30 * pulse), 230
-            )
+            # Gentle golden pulse so it's visually distinct from regular HP.
+            # ── Decay Warning Shimmer ── When the overheal decay delay is in its
+            # final second, the bar pulses much faster and brighter — warning
+            # the player that the barrier is about to start fading. This gives
+            # a clear visual cue to seek healing or play defensively before
+            # the temporary buffer begins depleting, making the overheal
+            # mechanic more readable and strategic.
+            if 0 < p.overheal_decay_delay < 1.0:
+                # Urgent warning pulse — fast and bright
+                pulse = 0.5 + 0.5 * math.sin(self.t * 14)
+                self.overheal_bar.color = color.rgba(
+                    255, int(200 + 55 * pulse), int(60 + 80 * pulse),
+                    int(200 + 55 * pulse)
+                )
+            else:
+                # Normal gentle golden pulse
+                pulse = 0.7 + 0.3 * math.sin(self.t * 4)
+                self.overheal_bar.color = color.rgba(
+                    255, int(180 + 40 * pulse), int(40 + 30 * pulse), 230
+                )
         else:
             self.overheal_bar.visible = False
 
@@ -15413,7 +15449,14 @@ def game_update():
     # energetic feel — you see Zorp's momentum as a trailing green streak
     # instead of the model just gliding across terrain. The trail only spawns
     # above a minimum speed threshold so it doesn't appear during slow
-    # adjustments. The ghosts use the particle system for automatic cleanup.
+    # adjustments.
+    # ── Trail Scale-In ── Each ghost now starts at a fraction of full size and
+    # grows to full scale via animate_scale, then shrinks back down — producing
+    # a smooth "emerge from Zorp" feel instead of an abrupt pop to full size.
+    # This makes the trail look like a flowing streak of energy rather than a
+    # series of snapshot copies. The ghost is managed independently (not via
+    # the shared particle system) so the scale-in animation doesn't conflict
+    # with the particle system's per-frame scale decay.
     if p.dash_timer <= 0:
         current_speed = p.velocity.length()
         if current_speed >= PLAYER_TRAIL_MIN_SPEED:
@@ -15421,13 +15464,30 @@ def game_update():
             if p._trail_accumulator >= PLAYER_TRAIL_INTERVAL:
                 p._trail_accumulator = 0.0
                 if len(game.particles) < MAX_PARTICLES:
+                    start_s = PLAYER_TRAIL_SCALE * PLAYER_TRAIL_SCALE_IN_START
                     trail_ghost = Entity(
                         model='sphere',
                         color=color.rgba(0, 200, 80, PLAYER_TRAIL_ALPHA),
-                        scale=PLAYER_TRAIL_SCALE,
+                        scale=start_s,
                         position=Vec3(p.x, p.y, p.z),
                     )
-                    game.particles.append((trail_ghost, Vec3(0, 0, 0), PLAYER_TRAIL_LIFETIME))
+                    # Grow from start scale to full, then shrink to zero —
+                    # a smooth emerge-then-fade lifecycle via Ursina animations.
+                    grow_dur = PLAYER_TRAIL_LIFETIME * PLAYER_TRAIL_SCALE_IN_FRACTION
+                    shrink_dur = PLAYER_TRAIL_LIFETIME - grow_dur
+                    trail_ghost.animate_scale(
+                        Vec3(PLAYER_TRAIL_SCALE, PLAYER_TRAIL_SCALE, PLAYER_TRAIL_SCALE),
+                        duration=grow_dur,
+                        curve=curve.out_expo,
+                    )
+                    # Chain the shrink phase after the grow completes
+                    trail_ghost.animate_scale(
+                        Vec3(0.01, 0.01, 0.01),
+                        duration=shrink_dur,
+                        delay=grow_dur,
+                        curve=curve.in_expo,
+                    )
+                    destroy(trail_ghost, delay=PLAYER_TRAIL_LIFETIME + 0.01)
         else:
             p._trail_accumulator = 0.0
 
@@ -19327,7 +19387,7 @@ def game_update():
                 # Only shown for non-trivial XP (2+) to avoid clutter from
                 # common Space Gloop (1 XP).
                 if collect_xp >= 2:
-                    game.damage_numbers.append(DamageNumber(col.position, collect_xp, is_heal=True))
+                    game.damage_numbers.append(DamageNumber(col.position, collect_xp, is_xp_gain=True))
                 # ── Rarity-Scaled Pickup Burst ── More valuable items produce a
                 # bigger particle burst — grabbing a Plasma Core should feel
                 # more rewarding than picking up Space Gloop.
