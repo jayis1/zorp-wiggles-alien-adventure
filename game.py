@@ -15919,7 +15919,16 @@ def game_update():
         # power surge window, not a permanent HP increase.
         milestone_tier = p.level // LEVEL_MILESTONE_INTERVAL
         overheal_amount = LEVEL_MILESTONE_OVERHEAL_BASE + (milestone_tier - 1) * LEVEL_MILESTONE_OVERHEAL_PER_TIER
-        p.overheal += overheal_amount
+        # BUG FIX: Cap overheal at OVERHEAL_MAX — every other overheal source (health
+        # fragments, adrenaline-boosted healing) uses min(gained, OVERHEAL_MAX -
+        # current) to prevent exceeding the cap, but this milestone grant did a
+        # raw += without clamping. At high milestone tiers (e.g. level 50 → tier 10
+        # → 30 + 9*10 = 120), the overheal vastly exceeded OVERHEAL_MAX (60), giving
+        # the player far more barrier than the bar could display or than the game
+        # intended. Now clamped to match the healing path's behavior.
+        overheal_before = p.overheal
+        p.overheal = min(p.overheal + overheal_amount, OVERHEAL_MAX)
+        actual_overheal_granted = p.overheal - overheal_before  # Actual amount added (may be < overheal_amount if capped)
         p.overheal_decay_delay = max(p.overheal_decay_delay, OVERHEAL_DECAY_DELAY)
         # Golden absorption-style particle burst to telegraph the barrier
         game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 220, 80), count=12)
@@ -15931,8 +15940,10 @@ def game_update():
         game._spawn_particles(p.position + Vec3(0, 2, 0), color.rgb(255, 180, 30), count=LEVEL_MILESTONE_PARTICLE_COUNT)
         # Screen shake
         game.screen_shake = max(game.screen_shake, LEVEL_MILESTONE_SCREEN_SHAKE)
-        # Announcement
-        game.add_message(f"★ MILESTONE Lv.{p.level}! Cooldowns reset +{overheal_amount} barrier!")
+        # Announcement — show the actual overheal granted (may be less than
+        # overheal_amount if the player already had some overheal, since the
+        # total is capped at OVERHEAL_MAX)
+        game.add_message(f"★ MILESTONE Lv.{p.level}! Cooldowns reset +{actual_overheal_granted} barrier!")
         # Bonus: also trigger a vacuum pulse-style pull of nearby collectibles
         # so the milestone feels like a power surge that gathers resources too
         magnet_range = LEVEL_UP_MAGNET_RADIUS
