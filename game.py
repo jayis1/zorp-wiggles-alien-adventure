@@ -4191,7 +4191,11 @@ class Enemy(Entity):
         self.is_void_bomber = (enemy_type == 'Void Bomber')
         self.fuse_timer = 0
         self.fuse_active = False
-        self.pulse_speed = 0
+        # BUG FIX: self.pulse_speed was dead — initialized here but never read
+        # or written anywhere. The original pulse_speed += accumulation bug
+        # (see game_update ~line 16825) was fixed by replacing pulse_speed with
+        # game.t directly, but this leftover init was never removed. Removed to
+        # avoid confusing future maintenance.
         # ── Void Bomber Warning Ring ── A ground ring showing the explosion
         # radius. Created when the fuse activates and destroyed on explosion.
         self.warning_ring = None
@@ -13432,15 +13436,25 @@ class Game:
         # color so the player can see the shield is active.
         p.pulse_wave_shield_timer = PULSE_WAVE_SHIELD_DURATION
         p.pulse_wave_shield_visual.visible = True
-        # Spawn an expanding activation ring at Zorp's position
+        # Spawn an expanding activation ring at Zorp's position.
+        # BUG FIX: is_shockwave=True — this is a VISUAL-ONLY ring showing the
+        # shield activating. Without this flag, the pulse wave enemy interaction
+        # loop (game_update ~line 18946) treats it as a real Pulse Wave ring and
+        # deals full damage + knockback to every enemy it touches, on top of the
+        # main pulse wave ring that was already spawned above. That's double
+        # damage/knockback from a purely cosmetic effect.
+        # BUG FIX: start_alpha=PULSE_WAVE_SHIELD_RING_ALPHA — the constant was
+        # defined (120) but never used; the ring was using the default 200 alpha,
+        # making the shield activation ring much more opaque than intended.
         shield_ring = PulseWaveRing(
             position=Vec3(p.x, 0, p.z),
             base_color=(0, 255, 200),
             max_scale=PULSE_WAVE_SHIELD_RING_MAX_SCALE,
+            start_alpha=PULSE_WAVE_SHIELD_RING_ALPHA,
+            is_shockwave=True,
         )
         shield_ring.lifetime = PULSE_WAVE_SHIELD_RING_DURATION
         shield_ring.max_lifetime = PULSE_WAVE_SHIELD_RING_DURATION
-        shield_ring._max_scale = PULSE_WAVE_SHIELD_RING_MAX_SCALE
         self.pulse_wave_rings.append(shield_ring)
 
     def _activate_vacuum_pulse(self):
