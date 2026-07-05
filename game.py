@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.51.0"
+VERSION = "2.51.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -732,6 +732,31 @@ TENTACLE_RECOIL_DURATION = 0.12    # How long the recoil whip lasts (seconds)
 TENTACLE_RECOIL_ANGLE = 55         # Max backward rotation angle (degrees)
 TENTACLE_RECOIL_RECOVERY = 14.0    # How fast tentacles spring back to normal
 
+# ── Tentacle Movement Reactivity ── The tentacles now react to Zorp's movement
+# state instead of always using the same sinusoidal wave. When moving, the
+# tentacles trail behind the movement direction (swept backward as if caught in
+# the slipstream) with a faster, wider sway that conveys speed. When idle, the
+# tentacles use a slower, gentler wave for a calm "treading water" feel. This
+# makes Zorp's tentacles feel like organic appendages that respond to motion
+# rather than a fixed decoration — improving the character's sense of life and
+# physicality during both exploration and combat.
+TENTACLE_IDLE_WAVE_SPEED = 2.5    # Wave frequency multiplier when standing still (slower, calmer)
+TENTACLE_MOVE_WAVE_SPEED = 5.0    # Wave frequency multiplier when moving (faster, more energetic)
+TENTACLE_IDLE_SWAY_AMP = 0.18     # Sway amplitude when idle (subtle)
+TENTACLE_MOVE_SWAY_AMP = 0.38      # Sway amplitude when moving (wider, more dynamic)
+TENTACLE_TRAIL_AMOUNT = 0.45       # How far the tentacles lag backward when moving (0=none, 1=full trail)
+
+# ── Dash Directional Body Stretch ── During the dash, Zorp's model stretches
+# along the dash direction and compresses perpendicular to it — a directional
+# squash & stretch that makes the dash feel like a powerful committed surge
+# rather than a flat position change. The stretch is decomposed into X/Z
+# components based on the dash direction so it works at any angle. The effect
+# is strongest at the dash start and eases back to normal as the dash ends,
+# composing on top of the existing squish/stretch and FOV zoom for a multi-
+# layered speed sensation. This adds classic "juice" to the core dodge ability.
+DASH_STRETCH_AMOUNT = 0.30        # Max elongation along dash direction (0.30 = 130%)
+DASH_STRETCH_SQUISH = 0.15        # Max compression perpendicular to dash (0.15 = 85%)
+
 # ─── Collectible Pickup Snap ──────────────────────────────────────────────────
 # When a collectible is very close to the player, the magnetic pull gets a
 # dramatic boost for a satisfying final "snap" into the player — instead of
@@ -739,6 +764,17 @@ TENTACLE_RECOIL_RECOVERY = 14.0    # How fast tentacles spring back to normal
 # speed that makes pickups feel snappy and responsive.
 COLLECT_SNAP_RADIUS = 1.5          # Within this distance, snap boost activates
 COLLECT_SNAP_STRENGTH = 2.5        # Pull strength multiplier during the final snap
+
+# ── Collectible Snap Stretch ── When a collectible enters the final snap zone
+# (COLLECT_SNAP_RADIUS), it briefly stretches along the pull direction — like
+# the item is being warped by the magnetic force as it zips into the player.
+# This adds a tactile "zip" feel to the last moment of collection, making
+# pickups feel snappier and more satisfying than a uniform scale-up. The
+# stretch decays as the item is consumed, so it's a brief impulse rather than
+# a persistent distortion. Only applies during the snap zone (not the full
+# pull range) so distant magnetic pulls look normal.
+COLLECT_SNAP_STRETCH = 0.35        # Max elongation along pull direction (0.35 = 135%)
+COLLECT_SNAP_SQUISH = 0.18         # Max compression perpendicular to pull (0.18 = 82%)
 
 # ─── Collectible Proximity Glow ──────────────────────────────────────────────
 # When a collectible is within COLLECT_PROX_GLOW_RADIUS but still outside the
@@ -3845,6 +3881,14 @@ class Player(Entity):
         reaction on the character model that makes each shot feel impactful.
         The recoil is applied as an additive rotation on top of the normal
         wave animation, and decays exponentially for a quick snap-then-recover.
+
+        ── Movement Reactivity ── The tentacles now react to Zorp's movement
+        state. When moving, the tentacles use a faster, wider wave and lag
+        behind the movement direction (swept backward as if caught in the
+        slipstream), conveying speed and momentum. When idle, the tentacles
+        use a slower, gentler wave for a calm "treading water" feel. This
+        makes the tentacles feel like organic appendages that respond to
+        motion rather than a fixed decoration.
         """
         # Compute recoil offset — decays from max to 0 over TENTACLE_RECOIL_DURATION
         recoil_offset = 0.0
@@ -3856,10 +3900,38 @@ class Player(Entity):
             # Exponential decay — strong at start, quick recovery
             recoil_offset = TENTACLE_RECOIL_ANGLE * recoil_progress ** 0.5
 
+        # ── Movement-Responsive Wave Parameters ── Choose wave speed and sway
+        # amplitude based on whether Zorp is currently moving. When moving,
+        # the tentacles sway faster and wider (energetic); when idle, they
+        # use a slower, calmer wave. This makes the tentacles feel reactive
+        # to Zorp's movement state instead of always using the same pattern.
+        if self.is_moving:
+            wave_speed = TENTACLE_MOVE_WAVE_SPEED
+            sway_amp = TENTACLE_MOVE_SWAY_AMP
+        else:
+            wave_speed = TENTACLE_IDLE_WAVE_SPEED
+            sway_amp = TENTACLE_IDLE_SWAY_AMP
+
+        # ── Movement Trail Rotation ── When moving, rotate all tentacles
+        # backward (negative rotation_x) proportional to TENTACLE_TRAIL_AMOUNT
+        # so they lag behind Zorp like they're caught in the slipstream.
+        # The trail uses the movement velocity direction, so tentacles sweep
+        # backward relative to where Zorp is heading. When idle, no trail
+        # rotation is applied so the tentacles hang naturally.
+        trail_rot = 0.0
+        if self.is_moving:
+            # Use the velocity direction for the trail; fallback to facing
+            vel = getattr(self, 'velocity', None)
+            if vel is not None and vel.length() > 0.5:
+                # The tentacles are on the front of the model (negative Z in
+                # local space), so "trailing behind" means tilting them further
+                # backward (negative rotation_x). We scale by TENTACLE_TRAIL_AMOUNT.
+                trail_rot = -TENTACLE_TRAIL_AMOUNT * 40.0  # Convert 0-1 to degrees
+
         for i, tent in enumerate(self.tentacles):
             angle_offset = (i - 1.5) * 0.5
-            wave = math.sin(t * 5 + i * 1.5) * 0.3
-            tent.rotation_x = wave * 40 + recoil_offset
+            wave = math.sin(t * wave_speed + i * 1.5) * sway_amp
+            tent.rotation_x = wave * 40 + recoil_offset + trail_rot
             tent.rotation_y = angle_offset * 30 + math.sin(t * 3 + i) * 10
 
     def update_pupils(self):
@@ -4027,6 +4099,38 @@ class Player(Entity):
                 self.scale_x * xz_bulge,
                 self.scale_y * y_stretch,
                 self.scale_z * xz_bulge,
+            )
+
+        # ── Dash Directional Body Stretch ── During the dash, Zorp's model
+        # stretches along the dash direction and compresses perpendicular to
+        # it — a directional squash & stretch that makes the dash feel like a
+        # powerful committed surge rather than a flat position change. The
+        # stretch is decomposed into X/Z components based on the dash
+        # direction's alignment with each axis, so it works at any angle. The
+        # effect is strongest at the dash start (dash_timer near DASH_DURATION)
+        # and eases back to normal as the dash ends, composing on top of the
+        # existing squish/stretch and FOV zoom for a multi-layered speed
+        # sensation. This adds classic "juice" to the core dodge ability.
+        if self.dash_timer > 0:
+            # dash_t goes from 1.0 (dash start) → 0.0 (dash end)
+            dash_t = self.dash_timer / DASH_DURATION
+            # Sine ease-out: strong at start, gentle settle near end
+            stretch_intensity = math.sin(dash_t * math.pi * 0.5)
+            ddx = abs(self.dash_direction.x)
+            ddz = abs(self.dash_direction.z)
+            dmag = max(0.001, math.sqrt(ddx * ddx + ddz * ddz))
+            # Normalized alignment factors (0 = perpendicular, 1 = aligned)
+            x_align = ddx / dmag
+            z_align = ddz / dmag
+            # Stretch along the dash direction, squish perpendicular
+            stretch_x = 1.0 + DASH_STRETCH_AMOUNT * stretch_intensity * x_align
+            stretch_z = 1.0 + DASH_STRETCH_AMOUNT * stretch_intensity * z_align
+            squish_x = 1.0 - DASH_STRETCH_SQUISH * stretch_intensity * z_align
+            squish_z = 1.0 - DASH_STRETCH_SQUISH * stretch_intensity * x_align
+            self.scale = Vec3(
+                self.scale_x * stretch_x * squish_x,
+                self.scale_y,
+                self.scale_z * stretch_z * squish_z,
             )
 
         # ── Direction-Change Lean ── The lean target is set by game_update when
@@ -19388,7 +19492,39 @@ def game_update():
                 col.rotation_y += 200 * closeness * time.dt
                 # Visual feedback: items scale up as they approach the player for satisfying snap
                 closeness_scale = COLLECT_PULL_SCALE_MIN + (COLLECT_PULL_SCALE_MAX - COLLECT_PULL_SCALE_MIN) * closeness
-                col.scale = closeness_scale
+                # ── Collectible Snap Stretch ── When the item enters the final
+                # snap zone (COLLECT_SNAP_RADIUS), it stretches along the pull
+                # direction and compresses perpendicular — like the item is
+                # being warped by the magnetic force as it zips into the player.
+                # This adds a tactile "zip" feel to the last moment of
+                # collection. The stretch intensity scales with how deep into
+                # the snap zone the item is (stronger at the very end), and is
+                # decomposed into X/Z components based on the pull direction so
+                # it works at any angle. Only applies in the snap zone so the
+                # distant magnetic pull looks normal.
+                if dist < COLLECT_SNAP_RADIUS:
+                    # snap_t: 0 at snap radius edge, 1 at point-blank
+                    snap_t = 1.0 - (dist / COLLECT_SNAP_RADIUS)
+                    snap_t = max(0.0, min(1.0, snap_t))
+                    # Sine ease-in so the stretch ramps up as the item nears
+                    # the player rather than snapping on instantly
+                    stretch_intensity = math.sin(snap_t * math.pi * 0.5)
+                    pdx = abs(pull_dir.x)
+                    pdz = abs(pull_dir.z)
+                    pdmag = max(0.001, math.sqrt(pdx * pdx + pdz * pdz))
+                    x_align = pdx / pdmag
+                    z_align = pdz / pdmag
+                    stretch_x = 1.0 + COLLECT_SNAP_STRETCH * stretch_intensity * x_align
+                    stretch_z = 1.0 + COLLECT_SNAP_STRETCH * stretch_intensity * z_align
+                    squish_x = 1.0 - COLLECT_SNAP_SQUISH * stretch_intensity * z_align
+                    squish_z = 1.0 - COLLECT_SNAP_SQUISH * stretch_intensity * x_align
+                    col.scale = Vec3(
+                        closeness_scale * stretch_x * squish_x,
+                        closeness_scale,
+                        closeness_scale * stretch_z * squish_z,
+                    )
+                else:
+                    col.scale = closeness_scale
                 # Glow brightens during pull for extra visual punch
                 glow_brightness = min(1.0, closeness * COLLECT_PULL_GLOW_INTENSITY)
                 glow_cfg = RARITY_GLOW_CONFIG.get(col.rarity, RARITY_GLOW_CONFIG['common'])
