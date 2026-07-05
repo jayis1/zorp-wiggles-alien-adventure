@@ -36,7 +36,7 @@ python game.py
 | **ESC** | Quit |
 | **R** | Restart (on Game Over) |
 
-## Features (v2.50.1 — 3D!)
+## Features (v2.51.0 — 3D!)
 
 - Full 3D open world with third-person camera
 - Procedurally generated terrain with **11 biomes**: Grass, Desert, Water, Lava, Forest, Crystal, Snow, Swamp, Alien Mushroom Forest, Floating Islands, **Toxic Bog**
@@ -296,6 +296,9 @@ python game.py
 - **Player movement trail scale-in** — trail ghosts now start at 30% scale and smoothly grow to full size before shrinking, instead of popping in at full size instantly. Each ghost emerges from Zorp's position and fades organically, making the movement trail look like a flowing energy streak rather than a series of snapshot copies
 - **Overheal barrier decay warning shimmer** — when the overheal barrier's decay delay enters its final second, the golden HP bar extension pulses much faster and brighter, warning the player that the temporary buffer is about to start depleting — a clear visual cue to seek healing or play defensively before the barrier fades
 - **Collectible XP floating number distinct color** — picking up collectibles now shows a cyan-blue "+N XP" floating number, visually distinct from the green heal numbers they previously reused. The cyan-blue color matches the XP bar aesthetic so you instantly read it as an XP gain, not a heal
+- **Pulse Wave Energy Shield** — activating Pulse Wave now grants a brief 0.5-second one-hit energy shield that absorbs the next incoming hit! This transforms Pulse Wave from pure offense (push + damage) into a tactical panic button — you can use it to create breathing room AND get a brief parry window for repositioning. A translucent teal shield sphere appears around Zorp and an expanding activation ring radiates outward in the pulse wave color. The shield is consumed on the first hit and is shorter than the Shield Crystal power-up (0.5s vs 5s) so it's an emergency parry, not a sustained barrier. Makes Pulse Wave a versatile tool for both offensive crowd control and defensive panic saves
+- **Flawless Streak Speed Surge** — each consecutive flawless kill (kill without taking damage) now grants a small movement speed bonus that stacks up to +15% at 10 consecutive flawless kills! This complements the existing Flawless Kill Streak milestone XP by adding a continuous, tangible gameplay benefit to avoiding damage — the longer you go without getting hit, the faster Zorp runs. The HUD displays the current speed bonus next to the flawless streak counter (e.g., "✦ FLAWLESS x7 (+10% SPD)"). Taking damage resets both the streak and the speed bonus. The bonus is modest (+1.5% per kill) so it's a nice edge, not a game-breaking multiplier. Distinct from Vengeful Surge and Adrenaline Rush (which trigger on taking damage) — this rewards NOT getting hit
+- **Low-HP Danger Pulse Ring** — when your HP drops below 30%, periodic red ground rings now pulse outward from Zorp's position in sync with the heartbeat vignette! This gives the danger a world-level spatial presence — you see the heartbeat in the ground, not just on the screen edges. The ring color intensifies from warm red to bright danger-red as HP drops toward 0, matching the escalating urgency of the existing heartbeat system. The rings spawn at a controlled interval (every 0.8s) so they create a rhythmic visual pulse without cluttering the screen. Creates a visual counterpart to the green heal pulse rings: green rings mean healing, red rings mean danger
 
 ## The Self-Improving Game
 
@@ -492,6 +495,12 @@ Golden popup notification appears when an achievement unlocks!
 MIT — Zorp is free to wiggle wherever it wants.
 
 ## Changelog
+
+### v2.51.0 — Pulse Wave Shield, Flawless Speed Surge & Low-HP Pulse Ring
+
+- **Pulse Wave Energy Shield**: Activating Pulse Wave (Q key) now grants a brief 0.5-second one-hit energy shield that absorbs the next incoming hit. This transforms Pulse Wave from pure offense (push + damage) into a tactical panic button — you can use it to create breathing room AND get a brief parry window for repositioning. A translucent teal shield sphere appears around Zorp and an expanding activation ring radiates outward in the pulse wave color. The shield is consumed on the first hit and is shorter than the Shield Crystal power-up (0.5s vs 5s) so it's an emergency parry, not a sustained barrier. The shield is checked in `take_damage()` before the Combo Shield and Overheal Barrier, so it takes priority as the first line of defense during the Pulse Wave window
+- **Flawless Streak Speed Surge**: Each consecutive flawless kill (kill without taking damage) now grants a small movement speed bonus that stacks up to +15% at 10 consecutive flawless kills (+1.5% per kill). This complements the existing Flawless Kill Streak milestone XP by adding a continuous, tangible gameplay benefit to avoiding damage — the longer you go without getting hit, the faster Zorp runs. The HUD displays the current speed bonus next to the flawless streak counter (e.g., "✦ FLAWLESS x7 (+10% SPD)"). Taking damage resets both the streak and the speed bonus via the existing `flawless_reset_flag` path. The bonus composes multiplicatively with other speed buffs (Speed Boost, Adrenaline, Berserk, Swarm Escape, Collection Rush, Monolith). Distinct from Vengeful Surge and Adrenaline Rush (which trigger on taking damage) — this rewards NOT getting hit
+- **Low-HP Danger Pulse Ring**: When HP drops below 30%, periodic red ground rings now pulse outward from Zorp's position in sync with the heartbeat vignette. This gives the danger a world-level spatial presence — you see the heartbeat in the ground, not just on the screen edges. The ring color intensifies from warm red (200,30,30) to bright danger-red (255,0,0) as HP drops toward 0, matching the escalating urgency of the existing heartbeat system. The rings spawn at a controlled interval (every 0.8s) so they create a rhythmic visual pulse without cluttering the screen. A new `LowHpPulseRing` entity class handles the expanding-and-fading animation, managed in a `low_hp_pulse_rings` list with proper cleanup on restart. Creates a visual counterpart to the green heal pulse rings: green rings mean healing, red rings mean danger
 
 ### v2.50.1 — Trail Scale-In, Overheal Decay Warning & XP Number Polish
 

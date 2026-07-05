@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.50.1"
+VERSION = "2.51.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -2607,6 +2607,49 @@ COMPASS_RARE_TIERS = {'rare', 'very_rare', 'legendary', 'mythic'}  # Tiers worth
 COMPASS_ARROW_COLOR = color.rgb(255, 200, 60)  # Golden arrow color
 COMPASS_ARROW_FADE_SPEED = 5.0      # How fast the arrow fades in/out
 
+# ─── Pulse Wave Energy Shield ──────────────────────────────────────────────────
+# When Pulse Wave is activated, Zorp gains a brief 0.5s energy shield that
+# absorbs one hit — a "panic button" defensive layer on top of the crowd
+# control ability. This makes Pulse Wave more tactical: you can use it as
+# pure offense (push + damage) OR as a panic defensive tool (push + shield
+# for repositioning). The shield is shorter than the Shield Crystal power-up
+# (0.5s vs 5s) so it's an emergency parry, not a sustained barrier. A teal
+# ring pulse radiates from Zorp on activation, matching the pulse wave color.
+PULSE_WAVE_SHIELD_DURATION = 0.5    # How long the energy shield lasts (seconds)
+PULSE_WAVE_SHIELD_RING_ALPHA = 120  # Alpha of the shield activation ring
+PULSE_WAVE_SHIELD_RING_MAX_SCALE = 3.0  # Max scale of the activation ring
+PULSE_WAVE_SHIELD_RING_DURATION = 0.35  # How long the activation ring lasts
+PULSE_WAVE_SHIELD_VISUAL_COLOR = color.rgba(0, 255, 200, 80)  # Teal shield sphere
+
+# ─── Flawless Streak Speed Surge ────────────────────────────────────────────────
+# Each flawless kill (kill without taking damage) adds a small movement speed
+# bonus that stacks up to FLAWLESS_SPEED_MAX_BONUS at FLAWLESS_SPEED_MAX_KILLS
+# consecutive flawless kills. This complements the existing Flawless Kill Streak
+# (which awards milestone XP every 5 kills) by adding a continuous, tangible
+# gameplay benefit to avoiding damage — the longer you go without getting hit,
+# the faster Zorp runs. Taking damage resets the speed bonus to 0 (via the
+# existing flawless_reset_flag path). The bonus is modest (+1.5% per kill, max
+# +15%) so it's a nice edge, not a game-breaking speed multiplier. Distinct
+# from the Vengeful Surge and Adrenaline Rush (which trigger on taking damage)
+# — this is about the POSITIVE reward for NOT getting hit.
+FLAWLESS_SPEED_PER_KILL = 0.015    # +1.5% speed per consecutive flawless kill
+FLAWLESS_SPEED_MAX_KILLS = 10      # Max kills counted toward speed bonus
+FLAWLESS_SPEED_MAX_BONUS = 0.15    # Max +15% speed at FLAWLESS_SPEED_MAX_KILLS
+
+# ─── Low-HP Danger Pulse Ring ──────────────────────────────────────────────────
+# When Zorp's HP is below the danger threshold (30%), periodic red ground rings
+# pulse outward from his position in sync with the existing heartbeat vignette
+# — a world-level visual that makes the danger feel visceral and spatial,
+# complementing the screen-edge vignette with a ground-level heartbeat. The
+# ring spawns at each heartbeat "thump" (the peak of the sin pulse), so the
+# visual rhythm matches what the player sees on screen. The ring color
+# intensifies from warm red to bright danger-red as HP drops toward 0.
+LOW_HP_PULSE_RING_INTERVAL = 0.8   # Min seconds between pulse ring spawns
+LOW_HP_PULSE_RING_SCALE = 2.5      # Starting scale of the pulse ring
+LOW_HP_PULSE_RING_MAX_SCALE = 6.0  # Max scale the ring reaches before fading
+LOW_HP_PULSE_RING_DURATION = 0.5   # How long each pulse ring lasts
+LOW_HP_PULSE_RING_ALPHA = 60       # Base alpha of the pulse ring
+
 # ─── Enemy Spawn Portal Vortex ──────────────────────────────────────────────
 # A spinning flat disc appears beneath the spawn warning ring, rotating faster
 # as the enemy materializes. This creates a visual "portal" effect that makes
@@ -3497,6 +3540,18 @@ class Player(Entity):
         self.adrenaline_visual = Entity(model='sphere', color=ADRENALINE_AURA_COLOR,
                                         scale=ADRENALINE_AURA_SCALE, parent=self, visible=False)
 
+        # ── Pulse Wave Energy Shield ── Brief one-hit shield granted when
+        # Pulse Wave is activated. Shorter than Shield Crystal (0.5s vs 5s) so
+        # it's an emergency parry, not a sustained barrier. The shield uses
+        # the same invuln_timer mechanism as regular invulnerability — when
+        # active, take_damage() returns False immediately. A teal visual
+        # sphere appears around Zorp while active.
+        self.pulse_wave_shield_timer = 0.0
+        self.pulse_wave_shield_visual = Entity(
+            model='sphere', color=PULSE_WAVE_SHIELD_VISUAL_COLOR,
+            scale=1.7, parent=self, visible=False,
+        )
+
         # ── Collection Rush Aura ── A mint-cyan energy sphere on the player
         # model, visible while the Collection Rush speed boost is active.
         # Complements the HUD text and speed boost with a 3D body-level visual
@@ -3674,6 +3729,14 @@ class Player(Entity):
             True if HP dropped to 0 (player is dead), False otherwise.
         """
         if self.invuln_timer > 0:
+            return False
+        # ── Pulse Wave Energy Shield ── When active (set by _activate_pulse_wave),
+        # absorbs one hit entirely — a brief "parry" window after using Pulse
+        # Wave. Shorter than the Combo Shield (0.5s vs indefinite) so it's an
+        # emergency window, not a sustained barrier. Consumed on the first hit.
+        if self.pulse_wave_shield_timer > 0:
+            self.pulse_wave_shield_timer = 0  # Consumed
+            self.pulse_wave_shield_visual.visible = False
             return False
         # ── Combo Shield Absorption ── If the combo shield is active (earned
         # at combo x15), it absorbs the next hit entirely — no HP loss, no
@@ -5185,6 +5248,55 @@ class HealPulseRing(Entity):
         # Fade out
         alpha = int(HEAL_PULSE_ALPHA * (1.0 - progress))
         self.color = color.rgba(80, 255, 120, max(0, alpha))
+        return False
+
+
+# ─── Low-HP Danger Pulse Ring ──────────────────────────────────────────────
+class LowHpPulseRing(Entity):
+    """A brief expanding red ring that radiates from Zorp's position at low HP.
+
+    Spawns in sync with the heartbeat vignette "thump" so the visual rhythm
+    matches between the screen overlay and the world-level ring. The ring
+    color intensifies from warm red to bright danger-red as HP drops toward 0,
+    making the danger feel visceral and spatial — you see the heartbeat in the
+    world, not just on the screen edges. Uses the same expanding-and-fading
+    pattern as HealPulseRing but in red, creating a visual counterpart: green
+    rings mean healing, red rings mean danger.
+    """
+
+    def __init__(self, position, danger_ratio):
+        # Color shifts from warm red (200,30,30) at threshold to bright
+        # danger-red (255,0,0) at near-zero HP, scaled by danger_ratio (0→1)
+        r = int(200 + (255 - 200) * danger_ratio)
+        g = int(30 - 30 * danger_ratio)
+        b = int(30 - 30 * danger_ratio)
+        alpha = int(LOW_HP_PULSE_RING_ALPHA * (0.5 + 0.5 * danger_ratio))
+        super().__init__(
+            model='quad',
+            color=color.rgba(r, g, b, alpha),
+            scale=LOW_HP_PULSE_RING_SCALE,
+            position=position + Vec3(0, 0.09, 0),
+            rotation_x=90,
+        )
+        self.lifetime = LOW_HP_PULSE_RING_DURATION
+        self.max_lifetime = LOW_HP_PULSE_RING_DURATION
+        self._r = r
+        self._g = g
+        self._b = b
+        self._start_alpha = alpha
+
+    def update_pulse(self, dt):
+        """Animate the danger pulse ring. Returns True when expired."""
+        self.lifetime -= dt
+        if self.lifetime <= 0:
+            return True
+        progress = 1.0 - (self.lifetime / self.max_lifetime)
+        # Expand outward with ease-out
+        ease = 1.0 - (1.0 - progress) ** 2
+        self.scale = LOW_HP_PULSE_RING_SCALE + (LOW_HP_PULSE_RING_MAX_SCALE - LOW_HP_PULSE_RING_SCALE) * ease
+        # Fade out
+        alpha = int(self._start_alpha * (1.0 - progress))
+        self.color = color.rgba(self._r, self._g, self._b, max(0, alpha))
         return False
 
 
@@ -6858,9 +6970,15 @@ class Game:
         # Idle HP regeneration — rewards standing still with slow HP regen
         self.idle_timer = 0.0        # How long the player has been idle
         self.idle_regen_tick = 0.0   # Accumulator for idle regen healing
+        # ── Low-HP Danger Pulse Ring ── Tracks time toward the next ground
+        # pulse ring spawn while the player is in the danger HP zone. The ring
+        # spawns in sync with the heartbeat vignette "thump" for a cohesive
+        # visual rhythm between the screen overlay and the world-level ring.
+        self.low_hp_pulse_ring_timer = 0.0
         self.spawn_warnings = []  # Enemy spawn warning rings
         self.spawn_vortices = []  # Enemy spawn portal vortex discs
         self.heal_pulse_rings = []  # Healing pulse ring effects
+        self.low_hp_pulse_rings = []  # Low-HP danger pulse rings
         self.collect_spawn_rings = []  # Collectible spawn ground rings
         self.collect_pickup_rings = []  # Collectible pickup ground rings
         self.dash_land_rings = []  # Dash landing impact rings
@@ -7734,6 +7852,12 @@ class Game:
             if hpr and hasattr(hpr, 'enabled') and hpr.enabled:
                 destroy(hpr)
         self.heal_pulse_rings.clear()
+
+        # Destroy low-HP danger pulse rings
+        for lhp in self.low_hp_pulse_rings:
+            if lhp and hasattr(lhp, 'enabled') and lhp.enabled:
+                destroy(lhp)
+        self.low_hp_pulse_rings.clear()
 
         # Destroy collectible spawn rings
         for csr in self.collect_spawn_rings:
@@ -10719,6 +10843,23 @@ class Game:
         else:
             self.danger_vignette.color = color.rgba(200, 0, 0, 0)
 
+        # ── Low-HP Danger Pulse Ring ── When HP is below the danger threshold,
+        # periodic red ground rings pulse outward from Zorp's position in sync
+        # with the heartbeat vignette. This gives the danger a world-level
+        # spatial presence — you see the heartbeat in the ground, not just on
+        # the screen edges. The ring spawns at the heartbeat "thump" peak
+        # (raw_pulse > 0.9) and is throttled by LOW_HP_PULSE_RING_INTERVAL to
+        # avoid spawning too many rings. The ring color intensifies from warm
+        # red to bright danger-red as HP drops toward 0.
+        if hp_ratio < LOW_HP_VIGNETTE_THRESHOLD:
+            self.low_hp_pulse_ring_timer -= time.dt
+            if self.low_hp_pulse_ring_timer <= 0:
+                self.low_hp_pulse_ring_timer = LOW_HP_PULSE_RING_INTERVAL
+                danger_ratio = 1.0 - (hp_ratio / LOW_HP_VIGNETTE_THRESHOLD)
+                self.low_hp_pulse_rings.append(
+                    LowHpPulseRing(Vec3(p.x, 0, p.z), danger_ratio)
+                )
+
         # Kill flash — brief white screen flash that fades on enemy kill
         if self.kill_flash_timer > 0:
             self.kill_flash_timer -= time.dt
@@ -11373,7 +11514,16 @@ class Game:
             # Scale slightly with streak count
             flawless_scale = 1.3 + min(self.flawless_streak * 0.03, 0.4)
             self.flawless_text.scale = flawless_scale
-            self.flawless_text.text = f'✦ FLAWLESS x{self.flawless_streak}'
+            # ── Flawless Speed Surge Indicator ── Append the current speed
+            # bonus to the flawless streak text so the player can see the
+            # tangible gameplay benefit of their streak. Only shown when the
+            # bonus is non-zero (streak >= 1).
+            capped_streak = min(self.flawless_streak, FLAWLESS_SPEED_MAX_KILLS)
+            speed_pct = int(capped_streak * FLAWLESS_SPEED_PER_KILL * 100)
+            if speed_pct > 0:
+                self.flawless_text.text = f'✦ FLAWLESS x{self.flawless_streak}  (+{speed_pct}% SPD)'
+            else:
+                self.flawless_text.text = f'✦ FLAWLESS x{self.flawless_streak}'
             # Count down the display timer
             self.flawless_display_timer -= time.dt
         else:
@@ -13258,7 +13408,9 @@ class Game:
     def _activate_pulse_wave(self):
         """Fire a pulse wave from the player's position.
 
-        Creates an expanding ring that pushes enemies away and deals minor damage.
+        Creates an expanding ring that pushes enemies away and deals minor
+        damage. Also grants a brief Pulse Wave Energy Shield — a 0.5s
+        one-hit parry that makes Pulse Wave a tactical panic button.
         """
         if self.pulse_wave_cooldown > 0:
             return
@@ -13272,6 +13424,24 @@ class Game:
         self._spawn_particles(p.position + Vec3(0, 0.5, 0), PULSE_WAVE_RING_COLOR, count=10)
         self.add_message("PULSE WAVE!")
         self.screen_shake = max(self.screen_shake, 0.15)
+
+        # ── Pulse Wave Energy Shield ── Grant a brief 0.5s one-hit shield
+        # that turns Pulse Wave into a tactical panic button. The shield
+        # visual is a translucent teal sphere around Zorp, and an
+        # expanding activation ring radiates outward in the pulse wave
+        # color so the player can see the shield is active.
+        p.pulse_wave_shield_timer = PULSE_WAVE_SHIELD_DURATION
+        p.pulse_wave_shield_visual.visible = True
+        # Spawn an expanding activation ring at Zorp's position
+        shield_ring = PulseWaveRing(
+            position=Vec3(p.x, 0, p.z),
+            base_color=(0, 255, 200),
+            max_scale=PULSE_WAVE_SHIELD_RING_MAX_SCALE,
+        )
+        shield_ring.lifetime = PULSE_WAVE_SHIELD_RING_DURATION
+        shield_ring.max_lifetime = PULSE_WAVE_SHIELD_RING_DURATION
+        shield_ring._max_scale = PULSE_WAVE_SHIELD_RING_MAX_SCALE
+        self.pulse_wave_rings.append(shield_ring)
 
     def _activate_vacuum_pulse(self):
         """Activate a collectible vacuum pulse that pulls all nearby items toward the player.
@@ -14056,6 +14226,21 @@ def game_update():
     if game.collection_rush_timer > 0:
         effective_speed *= COLLECTION_RUSH_SPEED_MULT
 
+    # ── Flawless Streak Speed Surge ── Each consecutive flawless kill (kill
+    # without taking damage) adds a small movement speed bonus that stacks
+    # up to FLAWLESS_SPEED_MAX_BONUS (+15%) at FLAWLESS_SPEED_MAX_KILLS (10)
+    # consecutive flawless kills. This complements the existing Flawless Kill
+    # Streak milestone XP by adding a continuous, tangible gameplay benefit to
+    # avoiding damage — the longer you go without getting hit, the faster Zorp
+    # runs. Taking damage resets the streak (and thus the speed bonus) to 0
+    # via the existing flawless_reset_flag path. The bonus is modest so it's
+    # a nice edge, not a game-breaking multiplier.
+    if game.flawless_streak > 0:
+        capped_streak = min(game.flawless_streak, FLAWLESS_SPEED_MAX_KILLS)
+        flawless_speed_bonus = capped_streak * FLAWLESS_SPEED_PER_KILL
+        if flawless_speed_bonus > 0:
+            effective_speed *= (1.0 + flawless_speed_bonus)
+
     # ── Threat Proximity Pulse Ring Update ── A red ground ring at Zorp's
     # feet that intensifies (alpha, radius, pulse speed) based on how many
     # enemies are within SWARM_ESCAPE_RADIUS. At 0 enemies it's invisible;
@@ -14509,6 +14694,19 @@ def game_update():
                     position=p.position + Vec3(0, 1, 0),
                 )
                 game.particles.append((shard, shard_vel, random.uniform(0.3, 0.5)))
+
+    # ── Pulse Wave Energy Shield visual update ── Brief teal shield sphere
+    # around Zorp while the pulse wave shield is active. Decays over the
+    # PULSE_WAVE_SHIELD_DURATION and hides the visual when expired.
+    if p.pulse_wave_shield_timer > 0:
+        p.pulse_wave_shield_timer -= time.dt
+        if p.pulse_wave_shield_timer <= 0:
+            p.pulse_wave_shield_timer = 0
+            p.pulse_wave_shield_visual.visible = False
+        else:
+            p.pulse_wave_shield_visual.visible = True
+            # Gentle pulse so the shield feels alive
+            p.pulse_wave_shield_visual.scale = 1.7 + math.sin(game.t * 14) * 0.08
 
     # Fireball aura visual update
     p.fireball_visual.visible = p.fireball_timer > 0
@@ -18677,6 +18875,14 @@ def game_update():
         if hpr.update_pulse(time.dt):
             destroy(hpr)
             game.heal_pulse_rings.remove(hpr)
+
+    # ── Update Low-HP Danger Pulse Rings ── Red ground rings that pulse
+    # outward from Zorp while in the danger HP zone, synced with the
+    # heartbeat vignette. Updated and removed when expired.
+    for lhp_ring in game.low_hp_pulse_rings[:]:
+        if lhp_ring.update_pulse(time.dt):
+            destroy(lhp_ring)
+            game.low_hp_pulse_rings.remove(lhp_ring)
 
     # ── Cleanup Health Fragments ── Remove destroyed/collected health fragment
     # orbs from the list. The HealthFragment.update() method handles its own
