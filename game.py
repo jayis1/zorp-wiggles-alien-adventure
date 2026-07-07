@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.51.1"
+VERSION = "2.52.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1082,6 +1082,50 @@ DASH_CAMERA_LERP_SPEED = 12.0  # Tighter camera follow during dash (faster than 
 DASH_INVULN_DURATION = 0.3  # Seconds of invulnerability during dash — makes dash a dodge tool
 DASH_READY_FLASH_DURATION = 0.4  # How long the dash-ready flash pulse lasts
 DASH_READY_FLASH_COLOR = color.rgba(0, 255, 255, 0)  # Brief cyan flash when dash comes off cooldown
+
+# ─── Dash Kill Cooldown Refund ──────────────────────────────────────────────────
+# When the player kills an enemy shortly after a dash ends (within DASH_KILL_REFUND_WINDOW
+# seconds), a portion of the dash cooldown is refunded. This rewards aggressive
+# dash-strike play — using the dash offensively to close distance and strike through
+# enemies is more efficient than using it purely for evasion. The refund is a fraction
+# of the total cooldown (DASH_KILL_REFUND_FRACTION), capped so it can't fully reset
+# the dash from a single kill. A brief cyan HUD message and particle pop on the player
+# indicate the refund. This makes the dash feel like a versatile combat tool: dash in,
+# kill, and your dash is partly ready again for the next engagement.
+DASH_KILL_REFUND_WINDOW = 1.0       # Seconds after dash ends during which kills refund cooldown
+DASH_KILL_REFUND_FRACTION = 0.5     # Fraction of dash cooldown refunded on a dash-strike kill (50%)
+DASH_KILL_REFUND_MIN_COOLDOWN = 0.3 # Minimum remaining cooldown after refund (prevents instant reset)
+
+# ─── Elite Kill Streak ───────────────────────────────────────────────────────────
+# Killing multiple golden elite enemies within a time window (ELITE_STREAK_WINDOW
+# seconds) grants an escalating XP bonus on top of the per-elite reward. The streak
+# counter increments with each elite kill and resets if the window expires. At 2
+# consecutive elites, a "★ ELITE HUNTER!" announcement appears; each additional elite
+# in the streak awards escalating bonus XP. This encourages the player to actively seek
+# out and hunt golden elite enemies rather than treating them as incidental — a
+# dedicated elite hunter playstyle that rewards targeting the toughest enemies.
+ELITE_STREAK_WINDOW = 10.0          # Seconds between elite kills to maintain the streak
+ELITE_STREAK_MIN_FOR_BONUS = 2      # Minimum consecutive elites needed for the streak bonus
+ELITE_STREAK_XP_BASE = 40           # Base bonus XP for the 2nd consecutive elite kill
+ELITE_STREAK_XP_PER_STEP = 40       # Additional XP per elite beyond the minimum (3rd = +80, 4th = +120...)
+ELITE_STREAK_ANNOUNCE_DURATION = 2.5  # How long the announcement stays visible
+ELITE_STREAK_PARTICLE_COUNT = 16    # Golden particle burst on streak milestone
+ELITE_STREAK_SCREEN_SHAKE = 0.25    # Screen shake on streak milestone
+ELITE_STREAK_COLOR = color.rgb(255, 200, 40)  # Golden-orange for the announcement
+
+# ─── Enemy Spawn Minimap Flash ──────────────────────────────────────────────────
+# When an enemy materializes from a spawn warning, a brief expanding red flash appears
+# on the minimap at the spawn location. This gives immediate spatial awareness of new
+# threats through the minimap — you can see exactly where on the map a new enemy
+# appeared without needing to look for the spawn warning ring or sky beam in the 3D
+# world. The flash is a small red dot that appears bright, expands briefly, then fades,
+# matching the visual language of the existing minimap enemy dots but as a transient
+# "ping" effect. This is especially useful during wave events where multiple enemies
+# spawn from different directions simultaneously.
+SPAWN_MINIMAP_FLASH_DURATION = 0.8  # How long the minimap flash stays visible
+SPAWN_MINIMAP_FLASH_START_SCALE = 0.012  # Initial scale of the flash dot
+SPAWN_MINIMAP_FLASH_END_SCALE = 0.005    # Final scale (shrinks as it fades)
+SPAWN_MINIMAP_FLASH_COLOR = color.rgba(255, 60, 60, 220)  # Bright red
 
 # ─── Ability Cooldown Bars ──────────────────────────────────────────────────────
 # Visual progress bars beneath the dash and pulse wave HUD text that fill up
@@ -7129,6 +7173,38 @@ class Game:
         # this run, displayed on the death screen for a satisfying "how many
         # rare enemies did I take down?" stat.
         self.elite_kills = 0
+        self.max_elite_streak = 0           # Highest elite kill streak this run (for death screen)
+
+        # ── Elite Kill Streak ── Tracks consecutive golden elite kills within
+        # a time window (ELITE_STREAK_WINDOW). When 2+ consecutive elites are
+        # killed within the window, an escalating bonus XP is awarded with a
+        # "★ ELITE HUNTER!" announcement. The streak counter increments on
+        # each elite kill and resets if the window expires. This encourages
+        # actively hunting high-value elite targets rather than treating them
+        # as incidental encounters.
+        self.elite_streak_count = 0
+        self.elite_streak_timer = 0.0
+        self.elite_streak_announce_timer = 0.0
+        self.elite_streak_announce_text = ''
+        self.elite_streak_announce_scale = 1.0
+        self.elite_streak_text = Text(
+            text='', position=(0, -0.12), scale=2.0,
+            color=color.rgba(255, 200, 40, 0),
+            origin=(0, 0), visible=False,
+        )
+
+        # ── Dash Kill Cooldown Refund ── Tracks the time since the last dash
+        # ended. If the player kills an enemy within DASH_KILL_REFUND_WINDOW
+        # seconds after a dash, a portion of the dash cooldown is refunded —
+        # rewarding aggressive dash-strike combat. The timer counts down from
+        # DASH_KILL_REFUND_WINDOW; while > 0, kills trigger the refund.
+        self.dash_kill_refund_timer = 0.0
+
+        # ── Minimap Spawn Flash List ── When enemies materialize from spawn
+        # warnings, a brief expanding red flash appears on the minimap at the
+        # spawn location. Each flash is a (Entity, timer, start_pos) tuple
+        # that expands and fades over SPAWN_MINIMAP_FLASH_DURATION seconds.
+        self.minimap_spawn_flashes = []
 
         # ── Enemy Slayer Tracking ── Tracks consecutive kills of the same
         # enemy type within a time window. When SLAYER_THRESHOLD same-type
@@ -7808,7 +7884,16 @@ class Game:
         # Clean up Echo Wraith decoy clones if present
         if hasattr(enemy, 'echo_clone_entities') and enemy.echo_clone_entities:
             for clone in enemy.echo_clone_entities:
-                if clone and hasattr(clone, 'enabled') and clone.enabled:
+                if clone:
+                    # BUG FIX: Destroy child eye entities first, then the clone
+                    # itself — matching the expired-clone cleanup path (line ~17862).
+                    # Previously, the `clone.enabled` guard skipped disabled clones,
+                    # leaking both the clone entity and its child eye entities.
+                    # Ursina's destroy() cascades to children, but only if the parent
+                    # is actually destroyed — the guard prevented that.
+                    for child in list(clone.children):
+                        if hasattr(child, 'enabled') and child.enabled:
+                            destroy(child)
                     destroy(clone)
             enemy.echo_clone_entities.clear()
         # Clean up Shard Golem shield entity if present
@@ -8206,6 +8291,16 @@ class Game:
             if dot and hasattr(dot, 'enabled'):
                 destroy(dot)
         self.minimap_enemy_dots.clear()
+
+        # Destroy minimap spawn flash entities
+        for flash_ent, _ in self.minimap_spawn_flashes:
+            if flash_ent and hasattr(flash_ent, 'enabled'):
+                destroy(flash_ent)
+        self.minimap_spawn_flashes.clear()
+
+        # Destroy elite kill streak announcement text
+        if hasattr(self, 'elite_streak_text') and self.elite_streak_text:
+            destroy(self.elite_streak_text)
 
         # Destroy camera pivot (player follow rig)
         if self.cam_pivot and hasattr(self.cam_pivot, 'enabled'):
@@ -8712,7 +8807,7 @@ class Game:
             f'Total Pickups: {self.total_items_collected}   Kills Per Minute: {kpm}',
             f'Best Combo: x{self.max_combo}   Best Pickup Streak: x{self.max_pickup_streak}',
             f'Best Flawless Streak: x{self.max_flawless}   Best Rapid Chain: x{self.max_rapid_chain}',
-            f'Golden Elites Slain: {self.elite_kills}',
+            f'Golden Elites Slain: {self.elite_kills}   Best Elite Streak: x{self.max_elite_streak}',
             f'Survival Bonuses: {self.survival_interval_count}',
             f'Last Stand Used: {"Yes" if p.last_stand_used else "No"}',
             f'Missions Completed: {p.completed_missions}   Enemies Defeated: {kill_details}',
@@ -10468,6 +10563,29 @@ class Game:
                 c.burst_active = True
                 self.collectibles.append(c)
 
+        # ── Elite Kill Streak ── Track consecutive elite kills within a time
+        # window. When 2+ elites are killed within ELITE_STREAK_WINDOW seconds,
+        # an escalating bonus XP is awarded on top of the per-elite reward.
+        # The streak counter increments and the window refreshes with each
+        # elite kill; if the window expires, the counter resets. This rewards
+        # actively hunting golden elite enemies — a dedicated elite hunter
+        # playstyle that targets the toughest enemies on the map.
+        self.elite_streak_count += 1
+        self.elite_streak_timer = ELITE_STREAK_WINDOW
+        self.max_elite_streak = max(self.max_elite_streak, self.elite_streak_count)
+        if self.elite_streak_count >= ELITE_STREAK_MIN_FOR_BONUS:
+            # XP scales with how deep the streak is: 2nd elite = base, 3rd = base+per_step, etc.
+            steps_above = self.elite_streak_count - ELITE_STREAK_MIN_FOR_BONUS
+            streak_xp = int((ELITE_STREAK_XP_BASE + steps_above * ELITE_STREAK_XP_PER_STEP) * monolith_xp_mult)
+            p.gain_xp(streak_xp)
+            self.elite_streak_announce_text = f"★ ELITE HUNTER! x{self.elite_streak_count} streak! +{streak_xp} XP!"
+            self.elite_streak_announce_timer = ELITE_STREAK_ANNOUNCE_DURATION
+            self.elite_streak_announce_scale = 2.0 + min(self.elite_streak_count - 1, 5) * 0.2
+            self._spawn_particles(p.position + Vec3(0, 1, 0), ELITE_STREAK_COLOR, count=ELITE_STREAK_PARTICLE_COUNT)
+            self._spawn_particles(enemy.position + Vec3(0, 2, 0), color.rgb(255, 240, 100), count=ELITE_STREAK_PARTICLE_COUNT // 2)
+            self.screen_shake = max(self.screen_shake, ELITE_STREAK_SCREEN_SHAKE)
+            self.add_message(self.elite_streak_announce_text)
+
     def _drop_loot(self, enemy_pos, enemy_name):
         """Drop loot collectibles in a fanned arc around the enemy's death position.
 
@@ -11435,6 +11553,34 @@ class Game:
             self.headhunter_text.color = color.rgba(140, 120, 255, alpha)
         else:
             self.headhunter_text.visible = False
+
+        # ── Elite Kill Streak Announcement ── Pop-in/hold/fade display for
+        # the "★ ELITE HUNTER!" announcement when 2+ golden elites are killed
+        # within the streak window. Uses the golden-orange color and the same
+        # pop-in/hold/fade pattern as the Headhunter and Berserk announcements.
+        if self.elite_streak_announce_timer > 0:
+            self.elite_streak_text.visible = True
+            self.elite_streak_text.text = self.elite_streak_announce_text
+            announce_progress = 1.0 - (self.elite_streak_announce_timer / ELITE_STREAK_ANNOUNCE_DURATION)
+            target_scale = self.elite_streak_announce_scale
+            if announce_progress < 0.15:
+                pop_t = announce_progress / 0.15
+                scale = target_scale * (0.5 + 0.5 * pop_t) * (1.0 + 0.3 * math.sin(pop_t * math.pi))
+            elif announce_progress < 0.7:
+                scale = target_scale
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                scale = target_scale * (1.0 - fade_t * 0.2)
+            self.elite_streak_text.scale = scale
+            if announce_progress < 0.7:
+                alpha = 255
+            else:
+                fade_t = (announce_progress - 0.7) / 0.3
+                alpha = int(255 * (1.0 - fade_t))
+            es_r, es_g, es_b = _c255_color(ELITE_STREAK_COLOR)
+            self.elite_streak_text.color = color.rgba(es_r, es_g, es_b, alpha)
+        else:
+            self.elite_streak_text.visible = False
 
         # ── Rapid Pickup Chain Display ── Shows the current rapid chain count
         # with a growing scale and mint-green color. Displays while the chain
@@ -12950,6 +13096,23 @@ class Game:
             # see your lasers charge up when you hit a kill streak milestone.
             for proj in self.projectiles:
                 proj._milestone_surge_timer = COMBO_MILESTONE_PROJ_SURGE_DURATION
+
+        # ── Dash Kill Cooldown Refund ── If the player kills an enemy within
+        # DASH_KILL_REFUND_WINDOW seconds after a dash ends, a portion of the
+        # dash cooldown is refunded — rewarding aggressive dash-strike play.
+        # The refund is a fraction of the total cooldown, capped at a minimum
+        # remaining cooldown so a single kill can't fully reset the dash. A
+        # brief cyan particle pop on the player and a HUD message indicate
+        # the refund. This makes the dash a versatile combat tool: dash in,
+        # kill, and your dash is partly ready for the next engagement.
+        if self.dash_kill_refund_timer > 0 and p.dash_cooldown > DASH_KILL_REFUND_MIN_COOLDOWN:
+            refund_amount = DASH_COOLDOWN * DASH_KILL_REFUND_FRACTION
+            new_cooldown = max(DASH_KILL_REFUND_MIN_COOLDOWN, p.dash_cooldown - refund_amount)
+            actual_refund = p.dash_cooldown - new_cooldown
+            p.dash_cooldown = new_cooldown
+            self.dash_kill_refund_timer = 0  # Consume the refund window
+            self._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(100, 255, 255), count=6)
+            self.add_message(f"⚡ Dash Refund! -{actual_refund:.1f}s cooldown!")
 
     def _chain_lightning(self, source_pos, combo_count):
         """Attempt to arc chain lightning from a killed enemy to nearby enemies.
@@ -14687,6 +14850,12 @@ def game_update():
             # visual cohesion with the environment.
             ring_col = game._biome_dust_color(game.current_biome)
             game.dash_land_rings.append(DashLandRing(position=Vec3(p.x, 0, p.z), col=ring_col))
+            # ── Dash Kill Cooldown Refund Window ── Set the refund timer so
+            # any kill within DASH_KILL_REFUND_WINDOW seconds after the dash
+            # ends triggers a partial dash cooldown refund. This rewards
+            # aggressive dash-strike play — dash into combat, kill, and your
+            # dash is partly ready again for the next engagement.
+            game.dash_kill_refund_timer = DASH_KILL_REFUND_WINDOW
     elif held_keys['space'] and p.dash_cooldown <= 0 and move_dir.length() > 0:
         # Initiate dash
         p.dash_direction = move_dir.normalized()
@@ -15407,6 +15576,24 @@ def game_update():
         game.berserk_announce_timer -= time.dt
     if game.berserk_screen_flash_timer > 0:
         game.berserk_screen_flash_timer -= time.dt
+
+    # ── Dash Kill Cooldown Refund Timer ── Count down the window during
+    # which a kill refunds part of the dash cooldown. When it expires, kills
+    # no longer trigger the refund until the next dash ends.
+    if game.dash_kill_refund_timer > 0:
+        game.dash_kill_refund_timer -= time.dt
+        if game.dash_kill_refund_timer < 0:
+            game.dash_kill_refund_timer = 0
+
+    # ── Elite Kill Streak Timer ── Count down the window for consecutive
+    # elite kills. When it expires, the streak counter resets — the player
+    # must kill elites within the window to build the streak bonus.
+    if game.elite_streak_timer > 0:
+        game.elite_streak_timer -= time.dt
+        if game.elite_streak_timer <= 0:
+            game.elite_streak_count = 0
+    if game.elite_streak_announce_timer > 0:
+        game.elite_streak_announce_timer -= time.dt
 
     # ── Vengeful Surge announcement timer ──
     if game.vengeful_surge_announce_timer > 0:
@@ -16808,7 +16995,10 @@ def game_update():
             # read. This simple separation force makes them naturally spread
             # into a ring around the player. Only applies to aggroed enemies
             # within visual range to avoid performance overhead.
-            if dist_to_player < VISUAL_CULL_RANGE:
+            # BUG FIX: Stationary enemies (Starburst Sentinel, speed=0) are
+            # skipped — they're turrets that must stay in their spawn position
+            # and should NOT be pushed around by separation force.
+            if dist_to_player < VISUAL_CULL_RANGE and enemy.speed > 0.1:
                 # ── Size-Scaled Separation Radius ── The separation radius
                 # scales with the enemy's own size so large enemies spread out
                 # more than small ones, keeping combat formations proportional.
@@ -17316,6 +17506,12 @@ def game_update():
                         enemy.graviton_cooldown_timer = random.uniform(GRAVITON_PULL_COOLDOWN_MIN, GRAVITON_PULL_COOLDOWN_MAX)
                         enemy.pull_ring.color = color.rgba(180, 0, 255, 0)
                         enemy.color = enemy.original_color
+                        # BUG FIX: Reset the per-tick damage counter when the pull
+                        # ends so the next pull cycle starts with a full 1.0s
+                        # interval before the first damage tick. Without this, the
+                        # leftover value from the previous pull carries over, making
+                        # the first damage tick of the next pull fire prematurely.
+                        enemy._grav_dmg_tick = 0
                 else:
                     # Cooldown phase: count down until next pull
                     enemy.graviton_cooldown_timer -= time.dt
@@ -17682,8 +17878,11 @@ def game_update():
                 er, eg, eb = _c255_color(enemy.original_color)
                 clone.color = color.rgba(er, eg, eb, fade_alpha)
             for clone in expired_clones:
-                if clone and hasattr(clone, 'enabled') and clone.enabled:
-                    # Destroy child eyes first
+                if clone:
+                    # BUG FIX: Destroy child eye entities first, then the clone
+                    # itself — unconditionally. The previous `clone.enabled` guard
+                    # would skip destruction of disabled clones while still
+                    # removing them from the list, leaking the entity + children.
                     for child in list(clone.children):
                         if hasattr(child, 'enabled') and child.enabled:
                             destroy(child)
@@ -19558,6 +19757,15 @@ def game_update():
         level_collect_bonus = (p.level - 1) * COLLECT_RADIUS_PER_LEVEL
         effective_collect_radius = COLLECT_RADIUS + level_collect_bonus
         if dist_sq < effective_collect_radius * effective_collect_radius:
+            # BUG FIX: Initialize score multiplier defaults BEFORE the if/elif
+            # chain so that all collectible types (including Combo Orb, which
+            # is handled in its own elif branch) have these variables defined.
+            # Without this, picking up a Combo Orb crashes with NameError at
+            # the floating score popup code below, because pickup_score_mult
+            # was only defined inside the else branch (regular items) and
+            # p_score_mult was only defined inside the power-up score block.
+            pickup_score_mult = 1.0
+            p_score_mult = 1.0
             # Apply power-up effects for special collectibles
             if col.name == 'Health Potion':
                 # Track HP ratio before heal for the low-HP heal flash trigger
@@ -19804,7 +20012,13 @@ def game_update():
                     score_mult = p_score_mult
                 else:
                     score_mult = pickup_score_mult
-                pickup_score_display = int(col.value * score_mult)
+                # BUG FIX: Combo Orb score is combo-scaled (COMBO_ORB_SCORE_BASE +
+                # current_combo * COMBO_ORB_SCORE_PER_COMBO), NOT col.value (300).
+                # Show the actual awarded score instead of the static base value.
+                if col.name == 'Combo Orb':
+                    pickup_score_display = combo_score
+                else:
+                    pickup_score_display = int(col.value * score_mult)
                 if pickup_score_display > 0:
                     game.damage_numbers.append(DamageNumber(
                         col.position, pickup_score_display,
@@ -20351,6 +20565,28 @@ def game_update():
             # has immediate spatial awareness of the new threat.
             game._show_spawn_indicator(Vec3(ex, 0, ez))
 
+            # ── Minimap Spawn Flash ── Create a brief expanding red flash on
+            # the minimap at the spawn location. This gives immediate spatial
+            # awareness of new threats through the minimap — you can see
+            # exactly where on the map a new enemy appeared without needing to
+            # look for the spawn warning ring or sky beam in the 3D world.
+            # The flash is a small red dot that appears bright, expands briefly,
+            # then fades over SPAWN_MINIMAP_FLASH_DURATION seconds. Especially
+            # useful during wave events where multiple enemies spawn from
+            # different directions simultaneously.
+            mm_cx, mm_cy = MINIMAP_POSITION
+            world_size = WORLD_SIZE * TILE_SCALE
+            flash_x_norm = (ex / world_size) - 0.5
+            flash_z_norm = (ez / world_size) - 0.5
+            flash_ent = Entity(
+                parent=camera.ui,
+                model='quad',
+                color=SPAWN_MINIMAP_FLASH_COLOR,
+                scale=(SPAWN_MINIMAP_FLASH_START_SCALE, SPAWN_MINIMAP_FLASH_START_SCALE),
+                position=(mm_cx + flash_x_norm * MINIMAP_SIZE, mm_cy + flash_z_norm * MINIMAP_SIZE),
+            )
+            game.minimap_spawn_flashes.append((flash_ent, SPAWN_MINIMAP_FLASH_DURATION))
+
     # ── Update Spawn Portal Vortices ── Spin and fade the vortex discs.
     # Vortices are paired with spawn warnings and expire at the same time.
     for vortex in game.spawn_vortices[:]:
@@ -20722,6 +20958,31 @@ def game_update():
     if game.minimap_refresh_timer <= 0 and game.minimap_shown:
         game.minimap_refresh_timer = MINIMAP_REFRESH_INTERVAL
         game._update_minimap_colors()
+
+    # ── Minimap Spawn Flash Update ── Animate and clean up the expanding red
+    # flash dots that appear on the minimap when enemies materialize. Each
+    # flash shrinks from SPAWN_MINIMAP_FLASH_START_SCALE to END_SCALE and
+    # fades from full alpha to 0 over SPAWN_MINIMAP_FLASH_DURATION seconds.
+    # The flashes are updated every frame (not on the minimap refresh
+    # interval) so the animation is smooth regardless of the refresh rate.
+    if game.minimap_spawn_flashes:
+        for flash_entry in game.minimap_spawn_flashes[:]:
+            flash_ent, flash_timer = flash_entry
+            flash_entry_new = (flash_ent, flash_timer - time.dt)
+            idx = game.minimap_spawn_flashes.index(flash_entry)
+            game.minimap_spawn_flashes[idx] = flash_entry_new
+            flash_timer = flash_entry_new[1]
+            if flash_timer <= 0:
+                if flash_ent and flash_ent.enabled:
+                    destroy(flash_ent)
+                game.minimap_spawn_flashes.pop(idx)
+            else:
+                # Animate: shrink from start to end scale, fade alpha
+                progress = 1.0 - (flash_timer / SPAWN_MINIMAP_FLASH_DURATION)
+                scale_t = SPAWN_MINIMAP_FLASH_START_SCALE + (SPAWN_MINIMAP_FLASH_END_SCALE - SPAWN_MINIMAP_FLASH_START_SCALE) * progress
+                flash_ent.scale = (scale_t, scale_t)
+                alpha = int(220 * (1.0 - progress))
+                flash_ent.color = color.rgba(255, 60, 60, alpha)
 
     # ── Enemy Proximity Radar Refresh ── Updates the position and color of
     # radar dots to show nearby enemies relative to the player's facing.
