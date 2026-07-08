@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.52.0"
+VERSION = "2.52.1"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -307,6 +307,18 @@ ENRAGE_PROXIMITY_RADIUS = 25.0      # How close the enemy must be to trigger the
 ENRAGE_PROXIMITY_NOTIFY_COOLDOWN = 4.0  # Min seconds between proximity warnings (prevents spam)
 ENRAGE_SPEED_MULT = 1.35           # Speed multiplier while enraged
 ENRAGE_COLOR_MIX = 0.6              # How far to lerp toward red (0=own color, 1=full red)
+# ── Smooth Enrage Color Transition ── When an enemy enters its enraged state
+# (HP drops below 25%), its color currently snaps instantly from the original
+# color to the red-tinted enraged color. This is a jarring visual pop that
+# breaks the flow of combat. A brief smooth transition (over ENRAGE_COLOR_TRANSITION
+# seconds) from the original color to the full enraged color makes the enrage
+# activation feel more organic and dramatic — the enemy visibly "flushes" with
+# rage over a fraction of a second instead of snapping. The transition is
+# tracked via enrage_color_transition timer (1.0 → 0.0), and the effective mix
+# amount scales from 0 (original color) to ENRAGE_COLOR_MIX (full enraged)
+# as the timer counts down. This composes cleanly with the existing per-frame
+# enrage color override since the timer just scales the mix parameter.
+ENRAGE_COLOR_TRANSITION = 0.3      # Seconds for the enrage color to transition from original to enraged
 ENRAGE_PARTICLE_INTERVAL = 0.4     # Seconds between rage particle emissions
 ENRAGE_PARTICLE_COUNT = 3          # Particles per emission
 # ── Desperation-Scaled Rage Particles ── As an enraged enemy's HP drops from
@@ -576,6 +588,20 @@ PLAYER_SQUISH_AMOUNT = 0.18   # How much the player squishes on landing/moving
 PLAYER_SQUISH_SPEED = 8.0     # How fast the squish animation runs
 PLAYER_STRETCH_FACTOR = 1.14  # Y stretch when moving (elongated alien look)
 PLAYER_SQUASH_FACTOR = 0.86   # X/Z squish when moving (compressed look)
+# ── Player Launch Stretch ── When the player accelerates from a near-stop to
+# a run, Zorp briefly stretches along the movement direction — a dynamic
+# "launch" impulse that makes starting to move feel more energetic and weighty,
+# complementing the existing stop squish (which fires when decelerating to a
+# stop). The stretch is applied as a brief forward elongation + perpendicular
+# compression that decays quickly, so it reads as a quick "lunge forward" at
+# the start of movement rather than a persistent distortion. Only triggers
+# when crossing from below the threshold to above it (rest → run), so normal
+# maneuvering doesn't constantly fire it. The effect composes cleanly with the
+# existing squish/stretch and dash directional stretch via the animate_bob
+# scale composition chain.
+PLAYER_LAUNCH_STRETCH = 0.14  # Max elongation along movement direction (0.14 = 114%)
+PLAYER_LAUNCH_SQUISH = 0.08   # Max compression perpendicular to movement (0.08 = 92%)
+PLAYER_LAUNCH_RECOVERY = 10.0  # How fast the launch stretch recovers (higher = snappier)
 
 # ─── Player Stop Squish ──────────────────────────────────────────────────────
 # When the player decelerates from a run to a near-stop, Zorp briefly squishes
@@ -1555,6 +1581,19 @@ DASH_STRIKE_DAMAGE_BASE = 15   # Base damage dealt by dash strike
 DASH_STRIKE_DAMAGE_PER_LEVEL = 3  # Additional damage per player level
 DASH_STRIKE_RADIUS = 2.5       # How close an enemy must be to be hit by the dash
 DASH_STRIKE_KNOCKBACK = 3.0    # Knockback force applied to enemies hit by dash
+# ── Dash Strike Player Impact Reactions ── When Zorp connects with a dash
+# strike on an enemy, he gets a brief forward tilt (lean into the strike) and
+# a quick scale squish (compress from the impact) — making the dash feel
+# physical on the PLAYER side, not just the enemy side. Currently Zorp shows
+# zero body reaction when he hits enemies during a dash, making the dash
+# strike feel like a pass-through rather than a committed physical strike.
+# The tilt uses the existing _lean_target mechanism (forward lean in the dash
+# direction), and the squish uses a new dash_impact_squish timer that composes
+# cleanly with other scale animations in animate_bob. The effect is brief so
+# it doesn't interfere with the dash directional stretch that's already active.
+DASH_STRIKE_PLAYER_TILT = 12.0     # Forward lean angle (degrees) on dash strike hit
+DASH_STRIKE_PLAYER_SQUISH = 0.20  # Max Y compression on dash strike hit (0.20 = 80%)
+DASH_STRIKE_PLAYER_SQUISH_RECOVERY = 14.0  # How fast the impact squish recovers
 
 # ─── Enemy Proximity Radar ──────────────────────────────────────────────────
 # A subtle radar overlay on the HUD that shows nearby off-screen enemies as
@@ -3683,6 +3722,17 @@ class Player(Entity):
         # Stop squish timer — decays from 1.0 to 0; while > 0, a gentle squish
         # is applied in animate_bob() for a weighty "landing" feel on stop
         self.stop_squish = 0.0
+        # ── Launch Stretch ── When the player accelerates from rest to a run,
+        # a brief forward stretch impulse fires, making movement starts feel
+        # dynamic and weighty. Decays from 1.0 to 0; while > 0, animate_bob
+        # applies a directional stretch along the movement direction.
+        self.launch_stretch = 0.0
+        self._launch_dir = Vec3(0, 0, 0)  # Direction of the launch stretch
+        # ── Dash Strike Impact Squish ── When Zorp connects with a dash
+        # strike on an enemy, a brief Y squish fires on the player model —
+        # making the dash feel like a physical committed strike on the player
+        # side. Decays from 1.0 to 0; while > 0, animate_bob applies the squish.
+        self.dash_impact_squish = 0.0
         # ── Direction-Change Lean ── When the player changes movement direction
         # sharply, Zorp briefly tilts (rolls) into the new direction — a subtle
         # banking/leaning effect that makes directional changes feel more dynamic
@@ -4145,6 +4195,53 @@ class Player(Entity):
                 self.scale_z * xz_bulge,
             )
 
+        # ── Launch Stretch ── When the player accelerates from rest to a run,
+        # Zorp briefly stretches along the movement direction — a dynamic
+        # "launch" impulse that makes starting to move feel more energetic.
+        # Composes on top of the existing scale (squish/damage/stop/pickup)
+        # as a directional XZ stretch, decomposed into axis components so it
+        # works at any angle. Decays quickly so it reads as a quick lunge at
+        # the start of movement, not a persistent distortion.
+        if self.launch_stretch > 0:
+            self.launch_stretch -= time.dt * PLAYER_LAUNCH_RECOVERY
+            if self.launch_stretch < 0:
+                self.launch_stretch = 0
+            launch_t = self.launch_stretch  # 1.0 → 0.0
+            # Sine curve for a smooth peak-then-settle feel
+            launch_intensity = math.sin(launch_t * math.pi * 0.5)
+            ldx = abs(self._launch_dir.x)
+            ldz = abs(self._launch_dir.z)
+            ldmag = max(0.001, math.sqrt(ldx * ldx + ldz * ldz))
+            x_align = ldx / ldmag
+            z_align = ldz / ldmag
+            stretch_x = 1.0 + PLAYER_LAUNCH_STRETCH * launch_intensity * x_align
+            stretch_z = 1.0 + PLAYER_LAUNCH_STRETCH * launch_intensity * z_align
+            squish_x = 1.0 - PLAYER_LAUNCH_SQUISH * launch_intensity * z_align
+            squish_z = 1.0 - PLAYER_LAUNCH_SQUISH * launch_intensity * x_align
+            self.scale = Vec3(
+                self.scale_x * stretch_x * squish_x,
+                self.scale_y,
+                self.scale_z * stretch_z * squish_z,
+            )
+
+        # ── Dash Strike Impact Squish ── When Zorp connects with a dash strike
+        # on an enemy, a brief Y compression + XZ bulge fires on the player
+        # model — making the dash feel like a physical committed strike on the
+        # player side. Composes on top of any existing scale and decays quickly
+        # so it's a punchy impulse, not a lingering distortion.
+        if self.dash_impact_squish > 0:
+            self.dash_impact_squish -= time.dt * DASH_STRIKE_PLAYER_SQUISH_RECOVERY
+            if self.dash_impact_squish < 0:
+                self.dash_impact_squish = 0
+            impact_t = self.dash_impact_squish  # 1.0 → 0.0
+            y_comp = 1.0 - DASH_STRIKE_PLAYER_SQUISH * impact_t
+            xz_bulge = 1.0 + DASH_STRIKE_PLAYER_SQUISH * 0.5 * impact_t
+            self.scale = Vec3(
+                self.scale_x * xz_bulge,
+                self.scale_y * y_comp,
+                self.scale_z * xz_bulge,
+            )
+
         # ── Dash Directional Body Stretch ── During the dash, Zorp's model
         # stretches along the dash direction and compresses perpendicular to
         # it — a directional squash & stretch that makes the dash feel like a
@@ -4353,6 +4450,13 @@ class Enemy(Entity):
         # controls the periodic red particle emission.
         self.enraged = False
         self.enrage_particle_timer = 0.0
+        # ── Smooth Enrage Color Transition ── When the enemy enters enraged
+        # state, the color doesn't snap to the red tint instantly — instead
+        # this timer counts down from 1.0 to 0.0 over ENRAGE_COLOR_TRANSITION
+        # seconds, and the effective color mix is scaled by (1 - timer). This
+        # produces a brief "flushing" transition from the original color to
+        # the full enraged color, making the enrage activation feel organic.
+        self.enrage_color_transition = 0.0
 
         # ── Near-Death Shudder ── When HP drops below ENEMY_SHUDDER_HP_THRESHOLD
         # (10%), the enemy periodically shudders — a brief rapid X/Z scale
@@ -14695,6 +14799,19 @@ def game_update():
             strike_dist = (enemy.position - p.position).length()
             if strike_dist < DASH_STRIKE_RADIUS:
                 p._dash_strike_hit.add(id(enemy))
+                # ── Dash Strike Player Impact Reactions ── When Zorp connects
+                # with a dash strike, he gets a brief forward tilt (lean into
+                # the strike direction) and a quick scale squish (compress from
+                # the impact) — making the dash feel physical on the player side,
+                # not just the enemy side. The tilt uses the existing lean
+                # mechanism with a sign derived from the dash direction relative
+                # to the player's right vector, and the squish uses a new
+                # dash_impact_squish timer that animate_bob applies.
+                p.dash_impact_squish = 1.0
+                # Forward lean into the dash direction — compute the lean sign
+                # from the cross product of the dash direction and the player's
+                # facing, so the tilt is toward the strike direction.
+                p._lean_target = DASH_STRIKE_PLAYER_TILT
                 # Dash strikes bypass the Shard Golem's crystal shield — dashing
                 # through the golem shatters its frontal protection.
                 enemy._bypass_shield = True
@@ -15913,6 +16030,19 @@ def game_update():
         if (p._prev_speed >= PLAYER_STOP_SQUISH_THRESHOLD
                 and current_speed < PLAYER_STOP_SQUISH_THRESHOLD):
             p.stop_squish = 1.0
+        # ── Launch Stretch Trigger ── Detect when the player accelerates from
+        # a near-stop to a run and trigger a brief forward stretch impulse.
+        # If we were nearly stopped (below threshold) and now we're running
+        # (above threshold), fire the launch stretch along the current
+        # movement direction. This makes starting to move feel dynamic —
+        # Zorp "lunges" forward into the run. Uses the move_dir (which
+        # reflects the input direction) rather than velocity (which is still
+        # accelerating and may not yet point in the final direction).
+        if (p._prev_speed < PLAYER_STOP_SQUISH_THRESHOLD * 0.5
+                and current_speed >= PLAYER_STOP_SQUISH_THRESHOLD
+                and move_dir.length() > 0.1):
+            p.launch_stretch = 1.0
+            p._launch_dir = Vec3(move_dir.x, 0, move_dir.z).normalized()
         p._prev_speed = current_speed
 
         # ── Movement-Based HP Regeneration ── Zorp regenerates a small trickle
@@ -16870,6 +17000,9 @@ def game_update():
             # normal enemies under the same debuff.
             if not enemy.enraged and enemy.hp > 0 and enemy.hp <= enemy.max_hp * ENRAGE_HP_THRESHOLD:
                 enemy.enraged = True
+                # Start the smooth color transition timer so the color "flushes"
+                # from original to enraged over ENRAGE_COLOR_TRANSITION seconds
+                enemy.enrage_color_transition = 1.0
                 # Show the persistent red enrage aura so players can identify
                 # enraged enemies at a glance
                 if hasattr(enemy, 'enrage_aura') and enemy.enrage_aura:
@@ -17809,7 +17942,18 @@ def game_update():
                 and not (enemy.is_void_stalker and enemy.cloak_state == 'cloaked')
                 and not enemy.dying):
             er, eg, eb = _c255_color(enemy.original_color)
-            mix = ENRAGE_COLOR_MIX
+            # ── Smooth Enrage Color Transition ── Scale the mix amount by the
+            # transition timer so the color smoothly "flushes" from the original
+            # color to the full enraged color over ENRAGE_COLOR_TRANSITION seconds.
+            # When the timer is 1.0 (just triggered), mix is 0 (original color).
+            # When the timer reaches 0 (transition complete), mix is ENRAGE_COLOR_MIX
+            # (full enraged color). This replaces the old instant snap to enraged.
+            if enemy.enrage_color_transition > 0:
+                enemy.enrage_color_transition -= time.dt
+                if enemy.enrage_color_transition < 0:
+                    enemy.enrage_color_transition = 0
+            transition_progress = 1.0 - enemy.enrage_color_transition  # 0→1
+            mix = ENRAGE_COLOR_MIX * transition_progress
             enemy.color = color.rgb(
                 min(255, int(er + (255 - er) * mix)),
                 max(0, int(eg * (1 - mix))),
