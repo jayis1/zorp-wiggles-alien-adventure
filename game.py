@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.52.1"
+VERSION = "2.53.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -1022,6 +1022,56 @@ HEALTH_FRAGMENT_BOB_HEIGHT = 0.3     # How high the orb bobs above ground
 HEALTH_FRAGMENT_BOB_SPEED = 3.0       # Bob oscillation speed
 HEALTH_FRAGMENT_SPIN_SPEED = 120.0    # Rotation speed (degrees/sec)
 HEALTH_FRAGMENT_PARTICLE_COUNT = 6   # Particles on spawn
+
+# ── Health Fragment Emergency Magnet ── When the player's HP drops below
+# EMERGENCY_HP_THRESHOLD (the same threshold used for Health Potions), nearby
+# Health Fragments are magnetically pulled toward the player — just like Health
+# Potions. Previously, Health Fragments only had a flat 2.0-unit pickup radius
+# with no magnetic pull, making them easy to miss during desperate low-HP
+# moments. Now they rush to Zorp when he needs them most, preventing
+# frustrating deaths where a fragment was just out of reach. The pull radius
+# and speed match the existing Emergency Health Potion Magnet for consistency,
+# and a brighter pulsing glow on the fragment signals that help is on the way.
+HEALTH_FRAGMENT_EMERGENCY_PULL_RADIUS = 14.0  # Pull radius at low HP (larger than base pickup)
+HEALTH_FRAGMENT_EMERGENCY_PULL_SPEED = 18.0   # Pull speed at low HP (faster than normal collectible pull)
+
+# ── Killstreak Boss Aura ── When the player reaches a very high combo (x20+),
+# Zorp gains a persistent pulsing golden aura that intensifies with each
+# additional combo tier. This gives extreme combo streaks a world-level visual
+# presence on the character model — complementing the existing combo edge glow
+# (screen-level) and combo damage tier aura (which fires briefly at x10
+# milestones). The boss aura is a continuous effect that grows brighter and
+# larger as the combo climbs past 20, making the player look and feel like a
+# unstoppable force of nature during deep kill chains. At x20 it's a subtle
+# golden shimmer; at x30+ it's a blazing golden sun that makes Zorp look
+# genuinely terrifying to approach.
+COMBO_BOSS_AURA_THRESHOLD = 20          # Combo count at which the boss aura activates
+COMBO_BOSS_AURA_BASE_SCALE = 2.0        # Base aura sphere scale at threshold
+COMBO_BOSS_AURA_SCALE_PER_TIER = 0.1     # Scale grows per combo tier above threshold
+COMBO_BOSS_AURA_MAX_SCALE = 3.5         # Maximum aura scale (capped)
+COMBO_BOSS_AURA_BASE_ALPHA = 50         # Base alpha at threshold
+COMBO_BOSS_AURA_ALPHA_PER_TIER = 8      # Alpha grows per combo tier above threshold
+COMBO_BOSS_AURA_MAX_ALPHA = 120         # Maximum aura alpha (capped)
+COMBO_BOSS_AURA_PULSE_SPEED = 6.0       # How fast the aura pulses in brightness/scale
+COMBO_BOSS_AURA_COLOR = color.rgb(255, 200, 40)  # Golden — the color of pure power
+
+# ── Enemy Pack Frenzy ── When an enemy's HP drops below 10% (the same threshold
+# as the Near-Death Shudder), nearby same-type enemies within a radius briefly
+# enter a "frenzy" state — they speed up and flash brightly — as if enraged by
+# seeing their ally about to die. This makes finishing off enemies in groups
+# more dynamic and dangerous: you can't just chip down one enemy in a pack
+# without the others responding. The frenzy is short-lived (1.5 seconds) and
+# only triggers once per enemy (on the HP threshold crossing), so it doesn't
+# create infinite loops. The speed boost stacks with the existing enrage
+# mechanic (25% HP) but is separate — frenzy is about pack behavior, enrage is
+# about the individual enemy's desperation.
+PACK_FRENZY_HP_THRESHOLD = 0.10       # HP fraction that triggers pack frenzy
+PACK_FRENZY_RADIUS = 8.0              # How far the frenzy spreads to same-type allies
+PACK_FRENZY_DURATION = 1.5            # How long the frenzy speed boost lasts
+PACK_FRENZY_SPEED_MULT = 1.4          # 40% speed boost while frenzied
+PACK_FRENZY_FLASH_DURATION = 0.3      # How long the bright flash lasts on frenzied allies
+PACK_FRENZY_MIN_ALLIES = 2            # Min same-type allies nearby to trigger (1 = just 1 other, 2 = 2 others)
+PACK_FRENZY_COOLDOWN = 3.0            # Cooldown before frenzy can trigger again on the same enemy
 
 # ─── Player Facing Direction Ground Arrow ─────────────────────────────────────
 # A small ground arrow beneath Zorp that points in the player's current facing
@@ -3678,6 +3728,21 @@ class Player(Entity):
         self.collection_rush_visual = Entity(model='sphere', color=COLLECTION_RUSH_AURA_COLOR,
                                             scale=COLLECTION_RUSH_AURA_SCALE, parent=self, visible=False)
 
+        # ── Killstreak Boss Aura ── A persistent golden aura sphere on Zorp
+        # that activates when the combo reaches COMBO_BOSS_AURA_THRESHOLD (x20)
+        # and grows brighter and larger with each additional combo tier. This
+        # gives extreme combo streaks a world-level visual presence on the
+        # character model, making Zorp look like an unstoppable force of nature
+        # during deep kill chains. The aura is lazily updated in the game loop
+        # based on the current combo count.
+        self.combo_boss_aura = Entity(
+            model='sphere',
+            color=color.rgba(255, 200, 40, COMBO_BOSS_AURA_BASE_ALPHA),
+            scale=COMBO_BOSS_AURA_BASE_SCALE,
+            parent=self,
+            visible=False,
+        )
+
         # Ground shadow beneath player for spatial awareness
         # Alpha 55 — slightly darker than before (was 40) for better depth
         # perception in the 3D world without being too heavy.
@@ -4467,6 +4532,18 @@ class Enemy(Entity):
         self.shudder_timer = random.uniform(ENEMY_SHUDDER_INTERVAL_MIN, ENEMY_SHUDDER_INTERVAL_MAX)
         self.shudder_active = 0.0  # >0 while a shudder burst is playing
 
+        # ── Pack Frenzy ── When this enemy's HP drops below
+        # PACK_FRENZY_HP_THRESHOLD (10%), nearby same-type allies briefly enter
+        # a frenzy state — they speed up and flash brightly. This simulates
+        # pack behavior: allies respond to seeing one of their own about to
+        # die. The frenzy_timer counts down while the frenzy speed boost is
+        # active on THIS enemy (set when a nearby same-type ally crosses the
+        # threshold). The frenzy_triggered flag prevents re-triggering on the
+        # same enemy. frenzy_cooldown prevents spamming.
+        self.frenzy_timer = 0.0
+        self.frenzy_triggered = False  # Has this enemy triggered a pack frenzy?
+        self.frenzy_cooldown = 0.0     # Cooldown before this enemy can trigger again
+
         # ── Per-Enemy Bob Variation ── Each enemy gets a random bob frequency
         # and amplitude so groups of enemies don't breathe in perfect sync.
         # Small/fast enemies bob quicker with smaller amplitude; large/slow
@@ -4741,6 +4818,46 @@ class Enemy(Entity):
         self.hit_flash = ENEMY_HIT_FLASH_DURATION
         self.hit_scale_punch = 1.0  # Trigger scale punch animation
         self.hit_flinch = 1.0       # Trigger vertical flinch pop
+
+        # ── Pack Frenzy Trigger ── When an enemy's HP first drops below the
+        # pack frenzy threshold (10%), check for nearby same-type allies. If
+        # enough allies are within range, they all enter a brief frenzy state
+        # (speed boost + bright flash). This only triggers once per enemy (on
+        # the threshold crossing) and has a cooldown to prevent spam. The
+        # frenzy makes finishing off enemies in groups more dangerous — the
+        # pack responds to seeing their ally about to die.
+        if (not self.frenzy_triggered and self.frenzy_cooldown <= 0
+                and self.hp > 0 and self.hp < self.max_hp * PACK_FRENZY_HP_THRESHOLD):
+            self.frenzy_triggered = True
+            self.frenzy_cooldown = PACK_FRENZY_COOLDOWN
+            _g = globals().get('game', None)
+            if _g is not None:
+                ally_count = 0
+                for ally in _g.enemies:
+                    if (ally is self or not ally.alive or ally.dying
+                            or ally.name != self.name):
+                        continue
+                    dx = ally.x - self.x
+                    dz = ally.z - self.z
+                    if dx * dx + dz * dz < PACK_FRENZY_RADIUS * PACK_FRENZY_RADIUS:
+                        ally_count += 1
+                        # Apply frenzy to this ally
+                        ally.frenzy_timer = PACK_FRENZY_DURATION
+                        # Brief bright flash on the frenzied ally
+                        or_, og, ob = _c255_color(ally.original_color)
+                        ally.color = color.rgb(
+                            min(255, int(or_ + (255 - or_) * 0.7)),
+                            min(255, int(og + (255 - og) * 0.7)),
+                            min(255, int(ob + (255 - ob) * 0.7)),
+                        )
+                        invoke(setattr, ally, 'color', ally.original_color,
+                               delay=PACK_FRENZY_FLASH_DURATION)
+                # Only show a message if enough allies responded
+                if ally_count >= PACK_FRENZY_MIN_ALLIES:
+                    _g.add_message(f"⚠ {self.name} pack frenzy! {ally_count} allies enraged!")
+                    # Small particle burst at the triggering enemy's position
+                    _g._spawn_particles(self.position + Vec3(0, 1, 0),
+                                         color.rgb(255, 100, 50), count=8)
         # ── Enemy Hit Directional Stretch ── Store the hit direction (in world
         # space XZ) so the hit scale punch code can stretch the enemy along the
         # shot direction. The direction is normalized and the Y component is
@@ -5265,7 +5382,35 @@ class HealthFragment(Entity):
         if p is not None and not self._collected:
             dx = p.x - self.x
             dz = p.z - self.z
-            if dx * dx + dz * dz < HEALTH_FRAGMENT_PICKUP_RADIUS * HEALTH_FRAGMENT_PICKUP_RADIUS:
+            dist_sq = dx * dx + dz * dz
+
+            # ── Health Fragment Emergency Magnet ── When the player's HP is
+            # critically low (below EMERGENCY_HP_THRESHOLD), Health Fragments
+            # within a larger radius are magnetically pulled toward the player
+            # at accelerated speed — just like the Emergency Health Potion
+            # Magnet. This prevents frustrating deaths where a health fragment
+            # was just out of reach during a desperate moment. The fragment's
+            # glow ring also pulses brighter to signal that help is incoming.
+            if (not self._collected and p.hp < p.max_hp * EMERGENCY_HP_THRESHOLD
+                    and dist_sq < HEALTH_FRAGMENT_EMERGENCY_PULL_RADIUS * HEALTH_FRAGMENT_EMERGENCY_PULL_RADIUS
+                    and dist_sq > 0.01):
+                dist = math.sqrt(dist_sq)
+                pull_dir = Vec3(dx, 0, dz).normalized()
+                # Acceleration curve: pull gets stronger as the fragment approaches
+                closeness = 1.0 - (dist / HEALTH_FRAGMENT_EMERGENCY_PULL_RADIUS)
+                pull_strength = closeness ** 0.6
+                self.position += pull_dir * HEALTH_FRAGMENT_EMERGENCY_PULL_SPEED * pull_strength * time.dt
+                # Brighten and enlarge the glow ring so the player sees help coming
+                if self._glow_ring is not None and self._glow_ring.enabled:
+                    emergency_pulse = 0.5 + 0.5 * math.sin(self.spawn_time * 10.0)
+                    emg_alpha = int(min(255, HEALTH_FRAGMENT_GLOW_ALPHA * (1.5 + 0.5 * emergency_pulse)))
+                    emg_scale = HEALTH_FRAGMENT_GLOW_RADIUS * (1.5 + 0.8 * emergency_pulse)
+                    self._glow_ring.color = color.rgba(
+                        HEALTH_FRAGMENT_COLOR[0], HEALTH_FRAGMENT_COLOR[1],
+                        HEALTH_FRAGMENT_COLOR[2], emg_alpha)
+                    self._glow_ring.scale = (emg_scale, 1, emg_scale)
+
+            if dist_sq < HEALTH_FRAGMENT_PICKUP_RADIUS * HEALTH_FRAGMENT_PICKUP_RADIUS:
                 # Only collect if the player actually needs healing
                 if p.hp < p.max_hp:
                     self._collected = True
@@ -12394,6 +12539,30 @@ class Game:
             # Fade out when combo drops below threshold
             self.combo_edge_glow.color = color.rgba(255, 255, 0, 0)
 
+        # ── Killstreak Boss Aura ── When the combo reaches the threshold (x20),
+        # Zorp gains a persistent pulsing golden aura that grows brighter and
+        # larger with each additional combo tier. This is a world-level visual
+        # on the character model, complementing the screen-level combo edge glow
+        # and the milestone-firing combo damage tier aura. The boss aura makes
+        # extreme kill streaks feel visceral — Zorp literally glows with power.
+        if self.combo_count >= COMBO_BOSS_AURA_THRESHOLD and self.combo_display_timer > 0:
+            tiers_above = self.combo_count - COMBO_BOSS_AURA_THRESHOLD
+            # Scale grows with combo tier, capped
+            aura_scale = min(COMBO_BOSS_AURA_MAX_SCALE,
+                             COMBO_BOSS_AURA_BASE_SCALE + tiers_above * COMBO_BOSS_AURA_SCALE_PER_TIER)
+            # Alpha grows with combo tier, capped
+            aura_alpha_base = min(COMBO_BOSS_AURA_MAX_ALPHA,
+                                  COMBO_BOSS_AURA_BASE_ALPHA + tiers_above * COMBO_BOSS_AURA_ALPHA_PER_TIER)
+            # Pulsing brightness and scale for a living, breathing energy effect
+            pulse = 0.5 + 0.5 * math.sin(self.t * COMBO_BOSS_AURA_PULSE_SPEED)
+            aura_alpha = int(aura_alpha_base * (0.7 + 0.3 * pulse))
+            aura_scale_pulsed = aura_scale * (0.92 + 0.08 * pulse)
+            p.combo_boss_aura.visible = True
+            p.combo_boss_aura.scale = aura_scale_pulsed
+            p.combo_boss_aura.color = color.rgba(255, 200, 40, aura_alpha)
+        else:
+            p.combo_boss_aura.visible = False
+
         # ── Nearby Enemy Threat Counter ── Shows how many enemies are near
         # the player, color-coded by threat level. Re-counts at an interval
         # to avoid iterating the enemy list every frame.
@@ -17078,6 +17247,22 @@ def game_update():
                     enemy.hit_slow_ring.scale = enemy.original_scale * 2.0 * (1.0 + 0.06 * slow_pulse)
             elif hasattr(enemy, 'hit_slow_ring') and enemy.hit_slow_ring is not None and enemy.hit_slow_ring.visible:
                 enemy.hit_slow_ring.visible = False
+            # ── Pack Frenzy Speed Boost ── When this enemy has been frenzied
+            # by a nearby same-type ally dropping below 10% HP, its movement
+            # speed is boosted for the frenzy duration. The frenzy stacks
+            # multiplicatively with enrage and hit slow (like those two stack
+            # with each other), so a frenzied enraged enemy is very fast —
+            # but a frenzied slowed enemy is still slower than normal.
+            if enemy.frenzy_timer > 0:
+                speed_mult *= PACK_FRENZY_SPEED_MULT
+                enemy.frenzy_timer -= time.dt
+                if enemy.frenzy_timer < 0:
+                    enemy.frenzy_timer = 0
+            # Decrement frenzy cooldown
+            if enemy.frenzy_cooldown > 0:
+                enemy.frenzy_cooldown -= time.dt
+                if enemy.frenzy_cooldown < 0:
+                    enemy.frenzy_cooldown = 0
             # ── Chase Predictive Lead ── Instead of always heading toward the
             # player's current position, enemies aim at a predicted future
             # position based on the player's velocity. This produces a pursuit
