@@ -13,7 +13,7 @@ import json
 app = Ursina(title='Zorp Wiggles: Alien Adventure', borderless=False, fullscreen=False)
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-VERSION = "2.53.0"
+VERSION = "2.54.0"
 
 # ─── World Generation ─────────────────────────────────────────────────────────
 WORLD_SIZE = 80
@@ -3389,6 +3389,79 @@ LAST_STAND_PARTICLE_COUNT = 30     # Golden particle burst
 LAST_STAND_SCREEN_SHAKE = 0.6     # Strong screen shake on the save
 LAST_STAND_COLOR = color.rgb(255, 215, 0)  # Gold — precious and dramatic
 
+# ─── Phoenix Rebirth ──────────────────────────────────────────────────────────
+# When the player dies and ALL other saves (Last Stand, Combo Shield, Overheal)
+# have been exhausted, if they've reached at least PHOENIX_MIN_LEVEL, Zorp is
+# reborn from the ashes with 50% HP, full cooldown resets, and a massive fiery
+# explosion that damages and knocks back all nearby enemies. A dramatic
+# "🔥 PHOENIX REBIRTH!" announcement with a fiery orange-red screen flash,
+# expanding ring, particle burst, and screen shake celebrates the resurrection.
+# This is a one-time per run mechanic — it only triggers once, making it a
+# precious second chance that rewards players who've invested enough time to
+# reach a high level. The phoenix explosion deals significant damage to all
+# enemies within a large radius, turning the death moment into a tactical
+# counterattack — enemies that were swarming you get blasted away. The
+# explosion damage scales with player level so it remains relevant in late game.
+PHOENIX_MIN_LEVEL = 10               # Minimum level to trigger Phoenix Rebirth
+PHOENIX_HP_RESTORE_PERCENT = 0.50    # HP restored as fraction of max_hp (50%)
+PHOENIX_INVULN_DURATION = 3.0        # Extended invulnerability after rebirth
+PHOENIX_EXPLOSION_RADIUS = 16.0      # Damage radius of the phoenix explosion
+PHOENIX_EXPLOSION_BASE_DAMAGE = 60   # Base damage at close range
+PHOENIX_EXPLOSION_LEVEL_BONUS = 5    # Additional damage per player level
+PHOENIX_EXPLOSION_KNOCKBACK = 12.0   # Knockback force on nearby enemies
+PHOENIX_ANNOUNCE_DURATION = 4.0      # How long the announcement stays visible
+PHOENIX_PARTICLE_COUNT = 50          # Fiery particle burst
+PHOENIX_SCREEN_SHAKE = 0.8           # Very strong screen shake
+PHOENIX_COLOR = color.rgb(255, 100, 20)  # Fiery orange-red
+PHOENIX_GOLD_COLOR = color.rgb(255, 200, 40)  # Gold accent for rebirth
+
+# ─── Frost Nova on Kill Streak ────────────────────────────────────────────────
+# At combo x7+, each enemy kill has a chance to drop a "Frost Nova" — a small
+# ice crystal that materializes at the kill point and detonates after a brief
+# delay, unleashing an expanding frost wave that significantly slows all
+# enemies within the blast radius for 2 seconds. This creates tactical freeze
+# zones during high-combo combat — skilled players who maintain kill streaks
+# get crowd-control support as a reward, making dense enemy groups easier to
+# manage. The crystal is visible as a pulsing ice-blue diamond on the ground
+# during its short fuse, giving the player a visual cue that a freeze is
+# incoming. The slow is stronger than the existing hit slow (70% vs 50%) and
+# stacks multiplicatively with Time Warp and enrage, making it a powerful
+# tactical tool. The nova chance scales with combo count — higher combos
+# produce more frost novas, making deep kill streaks progressively more
+# rewarding with crowd control.
+FROST_NOVA_COMBO_MIN = 7             # Combo count needed to start dropping novas
+FROST_NOVA_DROP_CHANCE_BASE = 0.15   # Base drop chance at combo x7 (15%)
+FROST_NOVA_DROP_CHANCE_MAX = 0.35    # Max drop chance at combo x17+ (35%)
+FROST_NOVA_FUSE_DURATION = 1.0       # Seconds before the crystal detonates
+FROST_NOVA_RADIUS = 10.0             # Slow radius of the frost explosion
+FROST_NOVA_SLOW_PERCENT = 0.70       # Enemies move at 30% speed (70% slow)
+FROST_NOVA_SLOW_DURATION = 2.0       # How long the slow lasts
+FROST_NOVA_DAMAGE = 10              # Small damage dealt by the nova
+FROST_NOVA_CRYSTAL_SCALE = 0.5      # Visual scale of the ice crystal
+FROST_NOVA_CRYSTAL_COLOR = color.rgb(150, 230, 255)  # Ice blue
+FROST_NOVA_RING_ALPHA = 120          # Alpha of the expanding frost ring
+FROST_NOVA_RING_MAX_SCALE = 10.0     # Max scale the frost ring reaches
+FROST_NOVA_RING_DURATION = 0.5       # How long the frost ring expands
+FROST_NOVA_PARTICLE_COUNT = 20       # Ice particles on detonation
+FROST_NOVA_SLOW_TINT = color.rgb(180, 230, 255)  # Blue tint on slowed enemies
+
+# ─── Loot Vacuum Trail ────────────────────────────────────────────────────────
+# When the Vacuum Pulse ability pulls collectibles toward the player, each
+# vacuumed item now leaves a golden trail particle effect — small sparkle
+# dots that fade behind the item as it flies toward Zorp. This makes the
+# vacuum pulse visually spectacular, turning a simple position interpolation
+# into a satisfying golden stream of loot rushing toward you. The trail
+# particles are spawned at a controlled interval (every 0.04s) per collectible
+# so the effect is dense enough to look like a comet trail but not so dense
+# that it floods the particle system. The particles use the vacuum pulse's
+# gold color and shrink/fade quickly, matching the established visual language
+# of projectile trails and movement trails.
+VACUUM_TRAIL_INTERVAL = 0.04         # Seconds between trail particles per item
+VACUUM_TRAIL_LIFETIME = 0.3          # How long each trail dot lives
+VACUUM_TRAIL_START_SCALE = 0.25      # Initial scale of trail dots
+VACUUM_TRAIL_END_SCALE = 0.02        # Scale at end of trail dot life
+VACUUM_TRAIL_COLOR = color.rgba(255, 200, 60, 180)  # Gold trail
+
 # ─── Cornered Beast ────────────────────────────────────────────────────────────
 # When the player's HP drops below CORNERED_BEAST_HP_THRESHOLD (30%), their
 # projectile damage increases — a "fight or flight" damage boost that
@@ -3861,6 +3934,15 @@ class Player(Entity):
         # announcement. last_stand_used prevents re-triggering.
         self.last_stand_used = False        # True once Last Stand has fired this run
         self.last_stand_trigger_flag = False  # Set by take_damage, checked by game_update
+        # ── Phoenix Rebirth ── A one-time per run second chance that triggers
+        # when the player dies and all other saves are exhausted. If the player
+        # has reached at least PHOENIX_MIN_LEVEL, they're revived with 50% HP
+        # and a fiery explosion that damages nearby enemies. The flag ensures
+        # it only triggers once per run. The trigger flag is set by
+        # take_damage() when the player actually dies (returns True); the
+        # game_update loop checks the flag and performs the rebirth.
+        self.phoenix_rebirth_used = False       # True once Phoenix Rebirth has fired
+        self.phoenix_rebirth_trigger_flag = False  # Set by take_damage on death
 
     def gain_xp(self, amount):
         """Add XP and level up if threshold reached. Sets level_up_pending flag.
@@ -4003,6 +4085,20 @@ class Player(Entity):
                     self.hp = LAST_STAND_HP_AFTER
                     self.invuln_timer = LAST_STAND_INVULN_DURATION
                     return False  # survived
+            # ── Phoenix Rebirth ── Before actually dying, check if the player
+            # qualifies for a Phoenix Rebirth. This is the last line of defense
+            # — it only fires when Last Stand didn't save you (or was already
+            # used). If the player has reached PHOENIX_MIN_LEVEL and hasn't
+            # used their rebirth yet, set the trigger flag and return False
+            # (survived). The game_update loop performs the actual rebirth VFX
+            # and explosion. The player is left at 1 HP temporarily until the
+            # rebirth fires next frame, which restores them to 50% HP.
+            if not self.phoenix_rebirth_used and self.level >= PHOENIX_MIN_LEVEL:
+                self.phoenix_rebirth_used = True
+                self.phoenix_rebirth_trigger_flag = True
+                self.hp = 1  # Temporary — rebirth will restore to 50%
+                self.invuln_timer = PHOENIX_INVULN_DURATION
+                return False  # survived — rebirth will fire next frame
             self.hp = 0
             return True  # dead
         return False
@@ -6040,6 +6136,52 @@ class Achievement:
 
 
 # ─── Shockwave Ring ────────────────────────────────────────────────────────
+# ─── Frost Nova Crystal ──────────────────────────────────────────────────────
+class FrostNovaCrystal(Entity):
+    """A small ice crystal that detonates after a short fuse, unleashing a
+    frost wave that slows all nearby enemies.
+
+    Dropped at combo x7+ on enemy kills, the crystal materializes as a
+    pulsing ice-blue diamond on the ground. After FROST_NOVA_FUSE_DURATION
+    seconds, it detonates: an expanding ice-blue ring radiates outward, ice
+    particles burst, and all enemies within FROST_NOVA_RADIUS are slowed to
+    30% speed for 2 seconds and take minor damage. The crystal entity is
+    destroyed after detonation. The fuse timer counts down via update_fuse(),
+    which returns True when the crystal should detonate.
+    """
+
+    def __init__(self, position):
+        super().__init__(
+            model='diamond',
+            color=FROST_NOVA_CRYSTAL_COLOR,
+            scale=FROST_NOVA_CRYSTAL_SCALE,
+            position=position + Vec3(0, 0.5, 0),
+        )
+        self.fuse_timer = FROST_NOVA_FUSE_DURATION
+        self.max_fuse = FROST_NOVA_FUSE_DURATION
+        self._t = 0.0  # For pulsing animation
+
+    def update_fuse(self, dt):
+        """Count down the fuse. Returns True when the crystal should detonate."""
+        self.fuse_timer -= dt
+        self._t += dt
+        # Pulse the crystal: scale oscillates and color brightens/darkens
+        pulse = 0.5 + 0.5 * math.sin(self._t * 10.0)
+        self.scale = FROST_NOVA_CRYSTAL_SCALE * (0.9 + 0.3 * pulse)
+        # Spin slowly
+        self.rotation_y += 120 * dt
+        # Brighten as fuse counts down (more urgent)
+        urgency = 1.0 - (self.fuse_timer / self.max_fuse)
+        brightness = 0.7 + 0.3 * urgency * pulse
+        cr, cg, cb = _c255_color(FROST_NOVA_CRYSTAL_COLOR)
+        self.color = color.rgb(
+            min(255, int(cr * brightness)),
+            min(255, int(cg * brightness)),
+            min(255, int(cb * brightness)),
+        )
+        return self.fuse_timer <= 0
+
+
 class ShockwaveRing(Entity):
     """An expanding ring projectile fired by the Starburst Sentinel.
 
@@ -6834,9 +6976,22 @@ class DamageNumber:
     feel punchier and more satisfying instead of numbers appearing flat.
     """
 
-    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None, is_score=False, is_xp_gain=False):
-        # Color: gold for flawless, green for heals, gold for crits, yellow for kills, red-orange for overkills, white for normal hits
-        if is_flawless:
+    def __init__(self, position, amount, is_kill=False, is_crit=False, is_overkill=False, is_heal=False, is_execution=False, is_flawless=False, is_pickup=False, pickup_color=None, is_score=False, is_xp_gain=False, is_pickup_milestone=False):
+        # Color: gold for flawless, mint-cyan for pickup streak milestones,
+        # green for heals, gold for crits, yellow for kills, red-orange for
+        # overkills, white for normal hits
+        if is_pickup_milestone:
+            # ── Pickup Streak Milestone XP Number ── A floating "✦+N XP"
+            # number in mint-cyan, matching the pickup streak's color identity.
+            # Previously pickup streak milestones reused is_flawless=True (gold),
+            # making them visually indistinguishable from flawless kill streak
+            # milestones. The mint-cyan color ties the floating XP number to
+            # the pickup streak's HUD color so the player instantly reads it
+            # as a collection reward, not a combat streak reward.
+            col = PICKUP_STREAK_COLOR
+            text_str = f"✦+{amount} XP"
+            scale_factor = 1.45
+        elif is_flawless:
             col = color.rgb(255, 215, 0)
             text_str = f"✦+{amount} XP"
             scale_factor = 1.45
@@ -6898,6 +7053,8 @@ class DamageNumber:
             scale_factor = 1.6
         elif is_execution:
             scale_factor = 1.5
+        elif is_pickup_milestone:
+            scale_factor = 1.45
         elif is_flawless:
             scale_factor = 1.45
         elif is_kill:
@@ -6913,9 +7070,9 @@ class DamageNumber:
         # between 0 and DMG_NUMBER_MAGNITUDE_MAX_BOOST, applied multiplicatively
         # on top of the category-based scale_factor. This makes a 80-damage crit
         # noticeably bigger than a 20-damage hit, enhancing the visual hierarchy
-        # Skipped for heals, pickups, and XP/execution/flawless numbers
-        # (those use fixed scales and aren't raw damage).
-        if not is_heal and not is_xp_gain and not is_pickup and not is_flawless and not is_execution and not is_score and amount > 0:
+        # Skipped for heals, pickups, and XP/execution/flawless/pickup-milestone
+        # numbers (those use fixed scales and aren't raw damage).
+        if not is_heal and not is_xp_gain and not is_pickup and not is_flawless and not is_execution and not is_score and not is_pickup_milestone and amount > 0:
             if amount > DMG_NUMBER_MAGNITUDE_BASE:
                 # Log curve: 0 boost at BASE, approaching MAX_BOOST at high damage
                 log_ratio = math.log(amount / DMG_NUMBER_MAGNITUDE_BASE) / DMG_NUMBER_MAGNITUDE_CURVE
@@ -6961,6 +7118,7 @@ class DamageNumber:
         self.is_pickup = is_pickup
         self.is_score = is_score
         self.is_xp_gain = is_xp_gain
+        self.is_pickup_milestone = is_pickup_milestone
         self.alive = True
         # ── Pop-In Animation ── The number scales in from small to an
         # overshoot peak then settles to normal, making damage feedback
@@ -7029,7 +7187,10 @@ class DamageNumber:
         alpha = max(0, min(1, self.lifetime / self.max_lifetime))
         # NOTE: r, g, b were previously read from text_ent.color but never used —
         # the color is always overridden below with hardcoded values.
-        if self.is_flawless:
+        if self.is_pickup_milestone:
+            # Mint-cyan for pickup streak milestones (matches PICKUP_STREAK_COLOR)
+            self.text_ent.color = color.rgba(100, 255, 200, int(255 * alpha))
+        elif self.is_flawless:
             self.text_ent.color = color.rgba(255, 215, 0, int(255 * alpha))
         elif self.is_xp_gain:
             self.text_ent.color = color.rgba(100, 200, 255, int(255 * alpha))
@@ -7593,6 +7754,23 @@ class Game:
             color=color.rgba(255, 215, 0, 0),
             origin=(0, 0), visible=False,
         )
+
+        # ── Phoenix Rebirth ── Tracks the announcement display timer for the
+        # fiery "PHOENIX REBIRTH!" HUD text. Reuses the last_stand_text entity
+        # since the two announcements never overlap (Phoenix only triggers when
+        # Last Stand didn't fire or was already used). The phoenix_announce_timer
+        # controls how long the text stays visible and its fade-out.
+        self.phoenix_announce_timer = 0.0
+        # ── Frost Nova Crystals ── Active frost nova crystal entities waiting
+        # to detonate. Each entry is a FrostNovaCrystal object that manages its
+        # own fuse timer and detonation. Detonated crystals are removed from
+        # this list after their explosion is processed.
+        self.frost_novas = []
+        # ── Vacuum Trail Accumulators ── Per-collectible trail timers for the
+        # loot vacuum trail. A dict mapping collectible entity id to a
+        # countdown timer; when the timer reaches 0, a trail particle is
+        # spawned at the collectible's position and the timer resets.
+        self._vacuum_trail_timers = {}
 
         # ── Cornered Beast ── Tracks the visual indicator timer for the
         # damage buff when at low HP. The visual is a subtle red-orange edge
@@ -8343,6 +8521,12 @@ class Game:
                 destroy(pdr)
         self.player_damage_rings.clear()
 
+        # Destroy frost nova crystals
+        for fn in self.frost_novas:
+            if fn and hasattr(fn, 'enabled') and fn.enabled:
+                destroy(fn)
+        self.frost_novas.clear()
+
         # Destroy meteor shower impact rings
         for mr in self.meteor_rings:
             if mr and hasattr(mr, 'enabled') and mr.enabled:
@@ -9059,6 +9243,7 @@ class Game:
             f'Golden Elites Slain: {self.elite_kills}   Best Elite Streak: x{self.max_elite_streak}',
             f'Survival Bonuses: {self.survival_interval_count}',
             f'Last Stand Used: {"Yes" if p.last_stand_used else "No"}',
+            f'Phoenix Rebirth: {"Yes" if p.phoenix_rebirth_used else "No"}',
             f'Missions Completed: {p.completed_missions}   Enemies Defeated: {kill_details}',
             f'Inventory: {item_details}',
         ]
@@ -11019,7 +11204,12 @@ class Game:
                 count=PICKUP_STREAK_MILESTONE_PARTICLES,
             )
             self.screen_shake = max(self.screen_shake, PICKUP_STREAK_MILESTONE_SCREEN_SHAKE)
-            self.damage_numbers.append(DamageNumber(self.player.position, bonus_xp, is_flawless=True))
+            # ── Pickup Streak Milestone XP Number ── Uses is_pickup_milestone=True
+            # so the floating XP number renders in mint-cyan (matching the pickup
+            # streak's color identity) instead of gold (which is used for flawless
+            # kill streaks). This makes collection rewards visually distinct from
+            # combat streak rewards at a glance.
+            self.damage_numbers.append(DamageNumber(self.player.position, bonus_xp, is_pickup_milestone=True))
 
     def shoot(self):
         """Fire tentacle laser toward the mouse cursor.
@@ -12099,15 +12289,29 @@ class Game:
             self.effect_text.color = color.gray
 
         # Kill feed display — show recent kills with fade-out
+        # ── Enemy-Typed Kill Feed Colors ── Each kill feed entry is now tinted
+        # with a brightened version of the slain enemy's own color instead of
+        # a flat gold for every entry. This makes the feed visually richer and
+        # more informative — you can tell at a glance what type of enemy was
+        # killed by the color of the entry (orange for Lava Crawler, cyan for
+        # Crystal Guardian, magenta for Plasma Drake, etc.), complementing the
+        # emoji prefix and enemy name with a color cue. The color is brightened
+        # 40% toward white so even dark enemy colors (Void Bomber, Void Stalker)
+        # remain readable against the dark UI background.
         now = self.t
-        self.kill_feed = [(t, txt) for t, txt in self.kill_feed if now - t < KILL_FEED_LIFETIME]
+        self.kill_feed = [(t, txt, col) for t, txt, col in self.kill_feed if now - t < KILL_FEED_LIFETIME]
         for i, kf_text in enumerate(self.kill_feed_texts):
             if i < len(self.kill_feed):
-                t, txt = self.kill_feed[-(i + 1)]  # Most recent first
+                t, txt, kf_col = self.kill_feed[-(i + 1)]  # Most recent first
                 age = now - t
                 alpha = max(0, min(255, int(255 * (1.0 - age / KILL_FEED_LIFETIME))))
                 kf_text.text = txt
-                kf_text.color = color.rgba(255, 200, 50, alpha)
+                # Brighten the enemy's color 40% toward white for readability
+                kr, kg, kb = _c255_color(kf_col)
+                kr = min(255, int(kr + (255 - kr) * 0.4))
+                kg = min(255, int(kg + (255 - kg) * 0.4))
+                kb = min(255, int(kb + (255 - kb) * 0.4))
+                kf_text.color = color.rgba(kr, kg, kb, alpha)
                 kf_text.visible = True
             else:
                 kf_text.text = ''
@@ -13605,7 +13809,7 @@ class Game:
                     col=enemy.original_color,
                     enemy_scale=enemy.original_scale,
                 ))
-                self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
+                self.kill_feed.append((self.t, f"⚡ {enemy.name}", enemy.original_color))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
@@ -13787,7 +13991,7 @@ class Game:
                     col=enemy.original_color,
                     enemy_scale=enemy.original_scale,
                 ))
-                self.kill_feed.append((self.t, f"⚡ {enemy.name}"))
+                self.kill_feed.append((self.t, f"⚡ {enemy.name}", enemy.original_color))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
@@ -14234,7 +14438,7 @@ class Game:
                 # standard ✦ used by projectile kills). Now matches the primary
                 # kill path's message and kill feed format.
                 self.add_message(f"Nova Blast defeated {enemy.name}!")
-                self.kill_feed.append((self.t, f"✦ {enemy.name}"))
+                self.kill_feed.append((self.t, f"✦ {enemy.name}", enemy.original_color))
                 self._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                 self._maybe_drop_combo_orb(enemy.position, self.combo_count)
                 enemy.alive = False
@@ -14650,6 +14854,9 @@ def game_update():
             if pdr.update_ring(time.dt):
                 destroy(pdr)
                 game.player_damage_rings.remove(pdr)
+        # Update frost nova crystals during freeze (visual only — no detonation)
+        for fn in game.frost_novas[:]:
+            fn.update_fuse(time.dt)
         # Star twinkling
         for star in game.stars:
             twinkle = 0.5 + 0.5 * math.sin(game.t * star.twinkle_speed + star.twinkle_offset)
@@ -14959,7 +15166,32 @@ def game_update():
         # once per dash (tracked by _dash_strike_hit set). The damage scales
         # with player level so it stays relevant throughout the game. Enemies
         # are knocked back in the dash direction for satisfying impact feedback.
+        # ── Dash Strike Damage Buff Consistency ── The dash strike damage now
+        # benefits from the same damage buffs as projectiles, Pulse Wave, and
+        # Nova Blast: combo damage buff (x10+), Berserk Mode, Monolith Power
+        # Surge, and Cornered Beast (low-HP damage buff). Previously the dash
+        # strike only scaled with player level, making it significantly weaker
+        # than other damage sources at high combos, during Berserk, at low HP,
+        # or with a Monolith damage buff active — undermining the dash-strike
+        # playstyle at exactly the moments when it should feel most powerful.
+        # Now all damage sources apply the same buff chain for consistency.
         dash_strike_dmg = DASH_STRIKE_DAMAGE_BASE + p.level * DASH_STRIKE_DAMAGE_PER_LEVEL
+        # Combo Damage Buff: at combo x10+, dash strikes deal +25% damage
+        if game.combo_count >= COMBO_DAMAGE_TIER:
+            dash_strike_dmg = int(dash_strike_dmg * COMBO_DAMAGE_MULT)
+        # Berserk Mode Damage Buff: +50% damage during berserk
+        if p.berserk_timer > 0:
+            dash_strike_dmg = int(dash_strike_dmg * BERSERK_DAMAGE_MULT)
+        # Monolith Power Surge damage buff
+        if p.monolith_damage_timer > 0:
+            dash_strike_dmg = int(dash_strike_dmg * MONOLITH_DAMAGE_MULT)
+        # Cornered Beast: low-HP damage buff (scales from +10% at 30% HP to +50% at 0 HP)
+        if p.max_hp > 0:
+            _ds_hp_ratio = p.hp / p.max_hp
+            if _ds_hp_ratio < CORNERED_BEAST_HP_THRESHOLD:
+                _ds_t = 1.0 - (_ds_hp_ratio / CORNERED_BEAST_HP_THRESHOLD)
+                _ds_cornered_mult = CORNERED_BEAST_MIN_MULT + (CORNERED_BEAST_MAX_MULT - CORNERED_BEAST_MIN_MULT) * _ds_t
+                dash_strike_dmg = int(dash_strike_dmg * _ds_cornered_mult)
         for enemy in game.enemies:
             if not enemy.alive or enemy.dying:
                 continue
@@ -15097,7 +15329,7 @@ def game_update():
                         col=enemy.original_color,
                         enemy_scale=enemy.original_scale,
                     ))
-                    game.kill_feed.append((game.t, f"⚡ {enemy.name}"))
+                    game.kill_feed.append((game.t, f"⚡ {enemy.name}", enemy.original_color))
                     game.add_message(f"Dash Strike! Defeated {enemy.name}!")
                     # Drop loot
                     game._drop_loot(enemy.position, enemy.name)
@@ -15705,6 +15937,38 @@ def game_update():
                 vacuum_dir = (p.position - col.position).normalized()
                 col.position += vacuum_dir * VACUUM_PULSE_PULL_SPEED * time.dt
                 col.rotation_y += 400 * time.dt  # Spin items as they get vacuumed
+                # ── Loot Vacuum Trail ── Each vacuumed collectible leaves a
+                # golden trail particle effect — small sparkle dots that fade
+                # behind the item as it flies toward Zorp. This makes the
+                # vacuum pulse visually spectacular, turning a simple position
+                # interpolation into a satisfying golden stream of loot. The
+                # trail is spawned at a controlled interval per collectible so
+                # it's dense enough to look like a comet trail but not so
+                # dense that it floods the particle system.
+                col_id = id(col)
+                trail_timer = game._vacuum_trail_timers.get(col_id, 0.0)
+                trail_timer -= time.dt
+                if trail_timer <= 0:
+                    # Spawn a golden trail dot at the collectible's current position
+                    trail_dot = Entity(
+                        model='sphere',
+                        color=VACUUM_TRAIL_COLOR,
+                        scale=VACUUM_TRAIL_START_SCALE,
+                        position=col.position + Vec3(0, 0.3, 0),
+                    )
+                    # Animate it shrinking and fading
+                    trail_dot.animate_scale(
+                        Vec3(VACUUM_TRAIL_END_SCALE, VACUUM_TRAIL_END_SCALE, VACUUM_TRAIL_END_SCALE),
+                        duration=VACUUM_TRAIL_LIFETIME, curve=curve.in_expo,
+                    )
+                    _vr, _vg, _vb = _c255_color(VACUUM_TRAIL_COLOR)
+                    trail_dot.animate_color(
+                        color.rgba(_vr, _vg, _vb, 0),
+                        duration=VACUUM_TRAIL_LIFETIME, curve=curve.linear,
+                    )
+                    destroy(trail_dot, delay=VACUUM_TRAIL_LIFETIME + 0.01)
+                    trail_timer = VACUUM_TRAIL_INTERVAL
+                game._vacuum_trail_timers[col_id] = trail_timer
         # ── Vacuum Pulse End Summary ── When the active timer reaches 0,
         # display a summary of how many items were vacuumed during the pulse
         # window. A gold message and small screen shake give the player
@@ -15713,6 +15977,8 @@ def game_update():
         # collected so empty vacuums don't spam the message feed.
         if game.vacuum_pulse_active_timer <= 0:
             game.vacuum_pulse_active_timer = 0
+            # Clear vacuum trail timers — no longer needed while pulse is inactive
+            game._vacuum_trail_timers.clear()
             if game.vacuum_pulse_collected_count > 0:
                 game.add_message(
                     f"🌀 Vacuum Pulse complete! {game.vacuum_pulse_collected_count} "
@@ -16577,6 +16843,213 @@ def game_update():
         game.last_stand_text.color = color.rgba(255, 215, 0, int(255 * alpha))
         if game.last_stand_announce_timer <= 0:
             game.last_stand_text.visible = False
+
+    # ── Phoenix Rebirth ── When the player's take_damage() sets the
+    # phoenix_rebirth_trigger_flag, perform the rebirth: restore HP to 50%,
+    # reset all cooldowns, damage and knockback all nearby enemies, and
+    # trigger dramatic VFX. This is the game_update-side handler for the
+    # one-time per run second chance mechanic. The flag is set by
+    # Player.take_damage() when the player would die but qualifies for
+    # rebirth (level >= PHOENIX_MIN_LEVEL, not yet used).
+    if p.phoenix_rebirth_trigger_flag:
+        p.phoenix_rebirth_trigger_flag = False
+        # Restore HP to 50% of max
+        rebirth_hp = int(p.max_hp * PHOENIX_HP_RESTORE_PERCENT)
+        p.hp = rebirth_hp
+        # Reset all ability cooldowns — a fresh start
+        p.dash_cooldown = 0
+        game.pulse_wave_cooldown = 0
+        game.vacuum_pulse_cooldown = 0
+        game.nova_blast_cooldown = 0
+        game.chrono_field_cooldown = 0
+        # Extended invulnerability
+        p.invuln_timer = PHOENIX_INVULN_DURATION
+        # Phoenix explosion: damage and knockback all nearby enemies
+        phoenix_dmg = PHOENIX_EXPLOSION_BASE_DAMAGE + p.level * PHOENIX_EXPLOSION_LEVEL_BONUS
+        for enemy in game.enemies:
+            if not enemy.alive or enemy.dying:
+                continue
+            dx = enemy.x - p.x
+            dz = enemy.z - p.z
+            dist_sq = dx * dx + dz * dz
+            if dist_sq < PHOENIX_EXPLOSION_RADIUS * PHOENIX_EXPLOSION_RADIUS:
+                # Damage falls off with distance
+                dist = math.sqrt(dist_sq) if dist_sq > 0.01 else 0.01
+                falloff = 1.0 - (dist / PHOENIX_EXPLOSION_RADIUS)
+                effective_dmg = max(1, int(phoenix_dmg * falloff))
+                # Apply knockback away from player
+                if dist > 0.01:
+                    kb_dir = Vec3(dx / dist, 0, dz / dist)
+                    enemy.knockback_vel = Vec3(
+                        kb_dir.x * PHOENIX_EXPLOSION_KNOCKBACK,
+                        ENEMY_KNOCKBACK_UP,
+                        kb_dir.z * PHOENIX_EXPLOSION_KNOCKBACK,
+                    )
+                # Damage the enemy — phoenix kills grant full rewards
+                killed_by_phoenix = enemy.take_damage(effective_dmg, hit_direction=Vec3(-dx, 0, -dz))
+                game.damage_numbers.append(DamageNumber(enemy.position, effective_dmg, is_kill=False))
+                if killed_by_phoenix:
+                    p.add_kill(enemy.name)
+                    game.total_kills += 1
+                    game._register_kill(enemy.name)
+                    game._check_combo_recovery()
+                    game.combo_count += 1
+                    game.max_combo = max(game.max_combo, game.combo_count)
+                    game.combo_timer = _effective_combo_timeout(game.combo_count)
+                    game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                    combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                    monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                    xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                    p.gain_xp(xp_gain)
+                    _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * (1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER)))
+                    p.score += _kill_score
+                    game._drop_loot(enemy.position, enemy.name)
+                    game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                    game._maybe_drop_combo_orb(enemy.position, game.combo_count)
+                    game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                    game.enemy_death_rings.append(EnemyDeathRing(
+                        position=Vec3(enemy.x, 0, enemy.z),
+                        col=enemy.original_color,
+                        enemy_scale=enemy.original_scale,
+                    ))
+                    game.kill_feed.append((game.t, f"🔥 {enemy.name}", enemy.original_color))
+                    if enemy.is_plasma_serpent:
+                        game._handle_plasma_serpent_split(enemy)
+        # ── Phoenix Rebirth VFX ──
+        game.phoenix_announce_timer = PHOENIX_ANNOUNCE_DURATION
+        game.last_stand_text.text = '🔥 PHOENIX REBIRTH!'
+        game.last_stand_text.visible = True
+        game.last_stand_text.color = color.rgba(255, 100, 20, 255)
+        # Fiery particle burst — orange-red and gold
+        game._spawn_particles(p.position + Vec3(0, 1, 0), PHOENIX_COLOR, count=PHOENIX_PARTICLE_COUNT)
+        game._spawn_particles(p.position + Vec3(0, 2, 0), PHOENIX_GOLD_COLOR, count=30)
+        game._spawn_particles(p.position + Vec3(0, 0.5, 0), PHOENIX_COLOR, count=25)
+        # Very strong screen shake
+        game.screen_shake = max(game.screen_shake, PHOENIX_SCREEN_SHAKE)
+        # Massive expanding fiery ring on the ground
+        phoenix_ring = Entity(
+            model='quad',
+            color=color.rgba(255, 100, 20, 150),
+            scale=1.0,
+            position=Vec3(p.x, 0.1, p.z),
+            rotation_x=90,
+        )
+        phoenix_ring.animate_scale(Vec3(20, 1, 20), duration=0.8, curve=curve.out_expo)
+        phoenix_ring.animate_color(color.rgba(255, 100, 20, 0), duration=0.8, curve=curve.linear)
+        destroy(phoenix_ring, delay=0.81)
+        # Second golden ring for layered effect
+        phoenix_gold_ring = Entity(
+            model='quad',
+            color=color.rgba(255, 200, 40, 100),
+            scale=0.5,
+            position=Vec3(p.x, 0.08, p.z),
+            rotation_x=90,
+        )
+        phoenix_gold_ring.animate_scale(Vec3(14, 1, 14), duration=0.6, curve=curve.out_expo)
+        phoenix_gold_ring.animate_color(color.rgba(255, 200, 40, 0), duration=0.6, curve=curve.linear)
+        destroy(phoenix_gold_ring, delay=0.61)
+        # Vertical fire beam — dramatic pillar of fire reaching skyward
+        phoenix_beam = Entity(
+            model='cube',
+            color=color.rgba(255, 100, 20, 180),
+            scale=(0.6, 30, 0.6),
+            position=Vec3(p.x, 15, p.z),
+        )
+        phoenix_beam.animate_color(color.rgba(255, 100, 20, 0), duration=1.0, curve=curve.linear)
+        phoenix_beam.animate_scale(Vec3(0.1, 30, 0.1), duration=1.0, curve=curve.linear)
+        destroy(phoenix_beam, delay=1.01)
+        game.add_message("🔥 PHOENIX REBIRTH! You rise from the ashes!")
+        # Kill flash for full-screen impact
+        game.kill_flash_timer = KILL_FLASH_DURATION * 2
+        game.kill_flash.color = color.rgba(255, 100, 20, KILL_FLASH_MAX_ALPHA)
+        # Camera FOV punch for cinematic effect
+        game.level_up_fov_timer = LEVEL_UP_FOV_PUNCH_DURATION
+        camera.fov = LEVEL_UP_FOV_PUNCH
+
+    # ── Phoenix Rebirth announcement timer decay ──
+    if game.phoenix_announce_timer > 0:
+        game.phoenix_announce_timer -= time.dt
+        alpha = max(0, min(1.0, game.phoenix_announce_timer / 0.5))
+        pulse = 1.0 + 0.15 * math.sin(game.t * 10)
+        game.last_stand_text.scale = 2.6 * pulse
+        game.last_stand_text.color = color.rgba(255, 100, 20, int(255 * alpha))
+        if game.phoenix_announce_timer <= 0:
+            game.last_stand_text.visible = False
+
+    # ── Frost Nova Crystal Processing ── Update fuse timers on all active
+    # frost nova crystals. When a crystal's fuse expires, it detonates: an
+    # expanding ice-blue ring, ice particle burst, and all enemies within
+    # the radius are slowed and take minor damage. The crystal entity is
+    # destroyed after detonation.
+    for fn in game.frost_novas[:]:
+        if fn.update_fuse(time.dt):
+            # Detonate!
+            detonation_pos = Vec3(fn.x, 0, fn.z)
+            # Expanding ice-blue ring
+            frost_ring = Entity(
+                model='quad',
+                color=color.rgba(150, 230, 255, FROST_NOVA_RING_ALPHA),
+                scale=0.5,
+                position=detonation_pos + Vec3(0, 0.1, 0),
+                rotation_x=90,
+            )
+            frost_ring.animate_scale(
+                Vec3(FROST_NOVA_RING_MAX_SCALE, 1, FROST_NOVA_RING_MAX_SCALE),
+                duration=FROST_NOVA_RING_DURATION, curve=curve.out_expo,
+            )
+            frost_ring.animate_color(
+                color.rgba(150, 230, 255, 0),
+                duration=FROST_NOVA_RING_DURATION, curve=curve.linear,
+            )
+            destroy(frost_ring, delay=FROST_NOVA_RING_DURATION + 0.01)
+            # Ice particle burst
+            game._spawn_particles(fn.position, FROST_NOVA_CRYSTAL_COLOR, count=FROST_NOVA_PARTICLE_COUNT)
+            game._spawn_particles(fn.position, color.rgb(200, 240, 255), count=10)
+            # Small screen shake
+            game.screen_shake = max(game.screen_shake, 0.15)
+            # Slow and damage all enemies within radius
+            for enemy in game.enemies:
+                if not enemy.alive or enemy.dying:
+                    continue
+                dx = enemy.x - detonation_pos.x
+                dz = enemy.z - detonation_pos.z
+                if dx * dx + dz * dz < FROST_NOVA_RADIUS * FROST_NOVA_RADIUS:
+                    # Apply the frost slow — stacks with existing slows
+                    enemy.hit_slow_timer = max(enemy.hit_slow_timer, FROST_NOVA_SLOW_DURATION)
+                    # Apply a brief blue tint to show the freeze
+                    invoke(setattr, enemy, 'color', FROST_NOVA_SLOW_TINT, delay=ENEMY_HIT_FLASH_DURATION)
+                    invoke(setattr, enemy, 'color', enemy.original_color,
+                           delay=ENEMY_HIT_FLASH_DURATION + 0.3)
+                    # Small damage
+                    killed_by_frost = enemy.take_damage(FROST_NOVA_DAMAGE)
+                    if killed_by_frost:
+                        p.add_kill(enemy.name)
+                        game.total_kills += 1
+                        game._register_kill(enemy.name)
+                        game._check_combo_recovery()
+                        game.combo_count += 1
+                        game.max_combo = max(game.max_combo, game.combo_count)
+                        game.combo_timer = _effective_combo_timeout(game.combo_count)
+                        game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                        combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                        monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                        xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                        p.gain_xp(xp_gain)
+                        _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * (1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER)))
+                        p.score += _kill_score
+                        game._drop_loot(enemy.position, enemy.name)
+                        game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
+                        game._maybe_drop_combo_orb(enemy.position, game.combo_count)
+                        game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                        game.enemy_death_rings.append(EnemyDeathRing(
+                            position=Vec3(enemy.x, 0, enemy.z),
+                            col=enemy.original_color,
+                            enemy_scale=enemy.original_scale,
+                        ))
+                        game.kill_feed.append((game.t, f"❄ {enemy.name}", enemy.original_color))
+            # Destroy the crystal entity
+            destroy(fn)
+            game.frost_novas.remove(fn)
 
     # ── Overheal Absorption Burst ── When the Overheal Barrier absorbs a hit,
     # fire a golden particle burst and expanding ring from the player so the
@@ -17576,7 +18049,7 @@ def game_update():
                                         col=other_enemy.original_color,
                                         enemy_scale=other_enemy.original_scale,
                                     ))
-                                    game.kill_feed.append((game.t, f"💥 {other_enemy.name}"))
+                                    game.kill_feed.append((game.t, f"💥 {other_enemy.name}", other_enemy.original_color))
                                     game._maybe_drop_health_fragment(other_enemy.position, other_enemy.max_hp)
                                     # BUG FIX: Friendly-fire kills were missing
                                     # _maybe_drop_combo_orb — every other primary kill
@@ -18775,7 +19248,7 @@ def game_update():
                                 camera.fov = CAMERA_KILL_ZOOM_FOV
                                 game.kill_flash_timer = KILL_FLASH_DURATION
                                 game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
-                                game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}"))
+                                game.kill_feed.append((game.t, f"💥 {nearby_enemy.name}", nearby_enemy.original_color))
                                 game._drop_loot(nearby_enemy.position, nearby_enemy.name)
                                 game._apply_elite_kill_bonus(nearby_enemy)
                                 game._maybe_drop_health_fragment(nearby_enemy.position, nearby_enemy.max_hp)
@@ -18915,7 +19388,7 @@ def game_update():
                             enemy_scale=enemy.original_scale,
                         ))
                         game.add_message(f"Defeated {enemy.name}!")
-                        game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                        game.kill_feed.append((game.t, f"✦ {enemy.name}", enemy.original_color))
                         if enemy.is_plasma_serpent:
                             game._handle_plasma_serpent_split(enemy)
                         if getattr(enemy, 'enraged', False):
@@ -19040,7 +19513,7 @@ def game_update():
                                 enemy_scale=enemy.original_scale,
                             ))
                             game.add_message(f"Defeated {enemy.name}!")
-                            game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                            game.kill_feed.append((game.t, f"✦ {enemy.name}", enemy.original_color))
                             if enemy.is_plasma_serpent:
                                 game._handle_plasma_serpent_split(enemy)
                             if getattr(enemy, 'enraged', False):
@@ -19225,7 +19698,7 @@ def game_update():
                     ))
                     game.add_message(f"Defeated {enemy.name}!")
                     # Add to kill feed
-                    game.kill_feed.append((game.t, f"✦ {enemy.name}"))
+                    game.kill_feed.append((game.t, f"✦ {enemy.name}", enemy.original_color))
                     # ── Plasma Serpent: Split into mini-enemies on death ──
                     if enemy.is_plasma_serpent:
                         game._handle_plasma_serpent_split(enemy)
@@ -19235,6 +19708,19 @@ def game_update():
                     # enemies in the dying enemy's color for a domino effect
                     # that makes clustered kills feel physically connected.
                     game._trigger_death_shock(enemy)
+                    # ── Frost Nova on Kill Streak ── At combo x7+, each kill has
+                    # a chance to drop a Frost Nova crystal at the kill point.
+                    # The crystal detonates after a short fuse, slowing all
+                    # nearby enemies. The drop chance scales with combo count.
+                    if game.combo_count >= FROST_NOVA_COMBO_MIN:
+                        # Scale chance from base at x7 to max at x17+
+                        combo_above_min = game.combo_count - FROST_NOVA_COMBO_MIN
+                        frost_chance = min(
+                            FROST_NOVA_DROP_CHANCE_MAX,
+                            FROST_NOVA_DROP_CHANCE_BASE + combo_above_min * 0.02,
+                        )
+                        if random.random() < frost_chance:
+                            game.frost_novas.append(FrostNovaCrystal(position=Vec3(enemy.x, 0, enemy.z)))
                 break
 
         # BUG FIX: If the projectile was destroyed by an enemy hit (normal or
@@ -19760,7 +20246,7 @@ def game_update():
                         enemy_scale=enemy.original_scale,
                     ))
                     game.add_message(f"Pulse Wave defeated {enemy.name}!")
-                    game.kill_feed.append((game.t, f"🌀 {enemy.name}"))
+                    game.kill_feed.append((game.t, f"🌀 {enemy.name}", enemy.original_color))
                     # BUG FIX: Plasma Serpent split was missing from Pulse Wave kills —
                     # killing a serpent with Pulse Wave didn't produce mini-enemies.
                     if enemy.is_plasma_serpent:
