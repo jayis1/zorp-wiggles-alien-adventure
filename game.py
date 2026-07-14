@@ -17023,6 +17023,22 @@ def game_update():
                     # Small damage
                     killed_by_frost = enemy.take_damage(FROST_NOVA_DAMAGE)
                     if killed_by_frost:
+                        # BUG FIX: Frost Nova kills were missing critical kill
+                        # feedback present in every other kill path (projectile,
+                        # dash, Pulse Wave, Void Bomber, AOE, chain lightning,
+                        # overkill surge, nova blast): hit-stop, FOV punch, kill
+                        # flash, chain lightning, combo milestone fireworks,
+                        # combo shield, combo bar refresh, kill score popup, kill
+                        # burst particles, combo-scaled screen shake, elite kill
+                        # bonus, overkill/execution bonuses, boss slow-mo, plasma
+                        # serpent split, enrage death burst, death shock. Without
+                        # these, Frost Nova kills felt flat and unrewarding.
+                        if enemy.max_hp >= BOSS_DEATH_HP_THRESHOLD:
+                            game.boss_slowmo_timer = BOSS_DEATH_SLOWMO_DURATION
+                            game.boss_slowmo_time_scale = BOSS_DEATH_SLOWMO_SCALE
+                            game.add_message("BOSS DOWN! SLOW-MO!")
+                        overkill_amount = abs(enemy.hp) if enemy.hp < 0 else 0
+                        is_overkill = overkill_amount >= OVERKILL_DAMAGE_THRESHOLD
                         p.add_kill(enemy.name)
                         game.total_kills += 1
                         game._register_kill(enemy.name)
@@ -17031,22 +17047,85 @@ def game_update():
                         game.max_combo = max(game.max_combo, game.combo_count)
                         game.combo_timer = _effective_combo_timeout(game.combo_count)
                         game.combo_display_timer = COMBO_DISPLAY_LIFETIME
+                        game.combo_bar_refresh_flash = COMBO_BAR_REFRESH_FLASH_DURATION
+                        # Chain Lightning at high combos
+                        game._chain_lightning(enemy.position, game.combo_count)
+                        # Combo milestone fireworks
+                        if game.combo_count > 1 and game.combo_count % COMBO_MILESTONE_INTERVAL == 0:
+                            milestone_colors = [color.rgb(255, 50, 50), color.rgb(50, 255, 50), color.rgb(50, 50, 255),
+                                               color.rgb(255, 255, 50), color.rgb(255, 50, 255), color.rgb(50, 255, 255)]
+                            for _ in range(COMBO_MILESTONE_PARTICLES):
+                                burst_color = random.choice(milestone_colors)
+                                burst_offset = Vec3(random.uniform(-3, 3), random.uniform(1, 4), random.uniform(-3, 3))
+                                game._spawn_particles(p.position + burst_offset, burst_color, count=1)
+                            game.screen_shake = max(game.screen_shake, 0.4)
+                            game.add_message(f"COMBO x{game.combo_count} MILESTONE!")
+                            milestone_tier = game.combo_count // COMBO_MILESTONE_INTERVAL
+                            milestone_xp = COMBO_MILESTONE_XP_BASE + (milestone_tier - 1) * COMBO_MILESTONE_XP_PER_TIER
+                            monolith_xp_mult_milestone = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
+                            milestone_xp = int(milestone_xp * monolith_xp_mult_milestone)
+                            p.gain_xp(milestone_xp)
+                        # Combo shield
+                        if game.combo_count == COMBO_SHIELD_THRESHOLD and not p.combo_shield_active:
+                            p.combo_shield_active = True
+                            game.add_message("⚡ COMBO SHIELD! Next hit absorbed!")
+                            game._spawn_particles(p.position + Vec3(0, 1, 0), color.rgb(255, 215, 50), count=15)
                         combo_xp_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_XP_BONUS_PER_TIER
+                        combo_score_mult = 1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER
                         monolith_xp_mult = MONOLITH_XP_MULT if p.monolith_xp_timer > 0 else 1.0
                         xp_gain = int((BASE_KILL_XP + enemy.max_hp // KILL_XP_HP_DIVISOR) * combo_xp_mult * monolith_xp_mult)
+                        if is_overkill:
+                            overkill_xp = int(OVERKILL_XP_BONUS * combo_xp_mult * monolith_xp_mult)
+                            xp_gain += overkill_xp
+                            game.add_message(f"OVERKILL! +{overkill_xp} bonus XP!")
+                            game._spawn_particles(enemy.position, color.rgb(255, 80, 0), count=OVERKILL_PARTICLE_COUNT)
+                            game.screen_shake = max(game.screen_shake, OVERKILL_SCREEN_SHAKE)
+                            game.overkill_flash_timer = OVERKILL_FLASH_DURATION
+                            game.overkill_flash.color = color.rgba(255, 100, 0, OVERKILL_FLASH_MAX_ALPHA)
+                        if getattr(enemy, 'enraged', False):
+                            exec_xp = int((EXECUTION_XP_BONUS_BASE + enemy.max_hp * EXECUTION_XP_BONUS_PER_HP) * combo_xp_mult * monolith_xp_mult)
+                            xp_gain += exec_xp
+                            game.add_message(f"⚡ EXECUTION! +{exec_xp} bonus XP!")
+                            game._spawn_particles(enemy.position, color.rgb(255, 200, 40), count=EXECUTION_PARTICLE_COUNT)
+                            game.screen_shake = max(game.screen_shake, EXECUTION_SCREEN_SHAKE)
+                            game.damage_numbers.append(DamageNumber(enemy.position, exec_xp, is_execution=True))
                         p.gain_xp(xp_gain)
-                        _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * (1.0 + (min(game.combo_count, COMBO_MAX_TIER) - 1) * COMBO_SCORE_BONUS_PER_TIER)))
+                        _kill_score = max(KILL_SCORE_MIN, int(enemy.max_hp * combo_score_mult))
                         p.score += _kill_score
+                        game._spawn_kill_score_popup(enemy.position, _kill_score)
+                        # Hit-stop, FOV punch, kill flash
+                        game.hit_stop_timer = HIT_STOP_KILL_DURATION
+                        game.kill_fov_timer = CAMERA_KILL_ZOOM_DURATION
+                        camera.fov = CAMERA_KILL_ZOOM_FOV
+                        game.kill_flash_timer = KILL_FLASH_DURATION
+                        game.kill_flash.color = color.rgba(255, 255, 255, KILL_FLASH_MAX_ALPHA)
+                        # Kill damage number
+                        if is_overkill:
+                            game.damage_numbers.append(DamageNumber(enemy.position, FROST_NOVA_DAMAGE, is_kill=True, is_overkill=True))
+                        else:
+                            game.damage_numbers.append(DamageNumber(enemy.position, FROST_NOVA_DAMAGE, is_kill=True))
+                        # Combo-scaled screen shake
+                        game.screen_shake = max(game.screen_shake, game._combo_scaled_kill_shake())
                         game._drop_loot(enemy.position, enemy.name)
+                        game._apply_elite_kill_bonus(enemy)
                         game._maybe_drop_health_fragment(enemy.position, enemy.max_hp)
                         game._maybe_drop_combo_orb(enemy.position, game.combo_count)
                         game._spawn_particles(enemy.position, enemy.original_color, count=PARTICLE_KILL_COUNT)
+                        game._spawn_kill_burst(enemy.position, enemy.original_color, enemy_max_hp=enemy.max_hp, shatter_model=getattr(enemy, 'model_name', 'sphere'))
                         game.enemy_death_rings.append(EnemyDeathRing(
                             position=Vec3(enemy.x, 0, enemy.z),
                             col=enemy.original_color,
                             enemy_scale=enemy.original_scale,
                         ))
                         game.kill_feed.append((game.t, f"❄ {enemy.name}", enemy.original_color))
+                        # Plasma serpent split
+                        if enemy.is_plasma_serpent:
+                            game._handle_plasma_serpent_split(enemy)
+                        # Enrage death burst
+                        if getattr(enemy, 'enraged', False):
+                            game._spawn_enrage_death_burst(enemy)
+                        # Death proximity shock
+                        game._trigger_death_shock(enemy)
             # Destroy the crystal entity
             destroy(fn)
             game.frost_novas.remove(fn)
@@ -18488,8 +18567,12 @@ def game_update():
                 game._spawn_attack_sparks(enemy.position)
                 # Show damage direction indicator pointing toward the enemy
                 game._show_damage_indicator(enemy.position)
-                if effective_damage > enemy.damage:
-                    game.damage_numbers.append(DamageNumber(p.position, effective_damage, is_kill=False))
+                # BUG FIX: Always show a damage number for melee hits, not just
+                # for Void Stalker ambush bonus damage. Every other damage source
+                # (projectiles, explosions, drain, graviton, shockwaves) shows a
+                # damage number — melee attacks were the only exception, leaving
+                # the player with no numeric feedback for melee damage taken.
+                game.damage_numbers.append(DamageNumber(p.position, effective_damage, is_kill=False))
                 if died:
                     game._show_death_screen(p)
             enemy.attack_cd = ENEMY_ATTACK_COOLDOWN
